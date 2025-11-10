@@ -39,7 +39,7 @@ const Tenants = () => {
 
   const token = localStorage.getItem("token");
 
-  // 🔹 Fetch tenants
+  // 🔹 Fetch tenants with pagination
   const fetchTenants = async () => {
     setLoading(true);
     setError("");
@@ -48,9 +48,11 @@ const Tenants = () => {
         `${process.env.REACT_APP_BASE_URL}/votebase/v1/api/tenant?page=${page}&size=${pageSize}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
       if (!response.ok) throw new Error("Failed to fetch tenants");
+
       const data = await response.json();
-      setTenants(data.content);
+      setTenants(data.content || []);
       setTotalPages(data.totalPages);
     } catch (err) {
       setError(err.message);
@@ -64,7 +66,7 @@ const Tenants = () => {
     // eslint-disable-next-line
   }, [page, pageSize]);
 
-  // 🔹 Add tenant
+  // ➕ Add Tenant
   const handleAddTenant = async () => {
     try {
       const response = await fetch(
@@ -79,7 +81,7 @@ const Tenants = () => {
         }
       );
       if (!response.ok) throw new Error("Failed to create tenant");
-      alert("✅ Tenant created");
+      alert("✅ Tenant created successfully");
       setOpenAddDialog(false);
       setNewTenant({
         name: "",
@@ -94,7 +96,7 @@ const Tenants = () => {
     }
   };
 
-  // 🔹 Update tenant
+  // ✏️ Update Tenant
   const handleUpdateTenant = async () => {
     try {
       const response = await fetch(
@@ -108,7 +110,9 @@ const Tenants = () => {
           body: JSON.stringify(selectedTenant),
         }
       );
+
       if (!response.ok) throw new Error("Failed to update tenant");
+
       alert("✅ Tenant updated successfully");
       setOpenEditDialog(false);
       fetchTenants();
@@ -117,12 +121,13 @@ const Tenants = () => {
     }
   };
 
+  // Open edit dialog
   const handleEditClick = (tenant) => {
     setSelectedTenant({ ...tenant });
     setOpenEditDialog(true);
   };
 
-  // 🔹 Columns
+  // Table columns
   const columns = [
     { field: "name", headerName: "Name", flex: 1 },
     { field: "description", headerName: "Description", flex: 1.5 },
@@ -131,13 +136,15 @@ const Tenants = () => {
     {
       field: "active",
       headerName: "Active",
-      type: "boolean",
       width: 120,
+      renderCell: (params) => (
+        <Switch checked={params.value} disabled size="small" />
+      ),
     },
     {
       field: "actions",
       headerName: "Actions",
-      width: 150,
+      width: 140,
       renderCell: (params) => (
         <Button
           variant="outlined"
@@ -188,17 +195,23 @@ const Tenants = () => {
       {/* ➕ Add Tenant Dialog */}
       <Dialog open={openAddDialog} onClose={() => setOpenAddDialog(false)}>
         <DialogTitle>Add New Tenant</DialogTitle>
-        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
+        <DialogContent
+          sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
+        >
           <TextField
             label="Name"
             value={newTenant.name}
-            onChange={(e) => setNewTenant({ ...newTenant, name: e.target.value })}
+            onChange={(e) =>
+              setNewTenant({ ...newTenant, name: e.target.value })
+            }
             required
           />
           <TextField
             label="Description"
             value={newTenant.description}
-            onChange={(e) => setNewTenant({ ...newTenant, description: e.target.value })}
+            onChange={(e) =>
+              setNewTenant({ ...newTenant, description: e.target.value })
+            }
           />
           <TextField
             label="Email"
@@ -239,7 +252,9 @@ const Tenants = () => {
       {/* ✏️ Edit Tenant Dialog */}
       <Dialog open={openEditDialog} onClose={() => setOpenEditDialog(false)}>
         <DialogTitle>Edit Tenant</DialogTitle>
-        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
+        <DialogContent
+          sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
+        >
           <TextField
             label="Name"
             value={selectedTenant?.name || ""}
