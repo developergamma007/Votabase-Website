@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Box,
   Typography,
@@ -12,10 +12,52 @@ import {
   TextField,
   FormControlLabel,
   Switch,
+  Snackbar,
 } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
+
+const TenantForm = ({ tenant, onChange, disabledFields = [], title }) => {
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
+      <TextField
+        label="Name"
+        value={tenant.name}
+        onChange={(e) => onChange({ ...tenant, name: e.target.value })}
+        required
+        disabled={disabledFields.includes("name")}
+      />
+      <TextField
+        label="Description"
+        value={tenant.description}
+        onChange={(e) => onChange({ ...tenant, description: e.target.value })}
+      />
+      <TextField
+        label="Email"
+        type="email"
+        value={tenant.contactEmail}
+        onChange={(e) => onChange({ ...tenant, contactEmail: e.target.value })}
+        required
+        disabled={disabledFields.includes("contactEmail")}
+      />
+      <TextField
+        label="Phone"
+        value={tenant.contactPhone}
+        onChange={(e) => onChange({ ...tenant, contactPhone: e.target.value })}
+      />
+      <FormControlLabel
+        control={
+          <Switch
+            checked={tenant.active}
+            onChange={(e) => onChange({ ...tenant, active: e.target.checked })}
+          />
+        }
+        label="Active"
+      />
+    </Box>
+  );
+};
 
 const Tenants = () => {
   const [tenants, setTenants] = useState([]);
@@ -23,12 +65,11 @@ const Tenants = () => {
   const [error, setError] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
-  const [totalPages, setTotalPages] = useState(0);
+  const [totalItems, setTotalItems] = useState(0);
 
   const [openAddDialog, setOpenAddDialog] = useState(false);
   const [openEditDialog, setOpenEditDialog] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState(null);
-
   const [newTenant, setNewTenant] = useState({
     name: "",
     description: "",
@@ -37,10 +78,11 @@ const Tenants = () => {
     active: true,
   });
 
+  const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
+
   const token = localStorage.getItem("token");
 
-  // 🔹 Fetch tenants with pagination
-  const fetchTenants = async () => {
+  const fetchTenants = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -48,55 +90,41 @@ const Tenants = () => {
         `${process.env.REACT_APP_BASE_URL}/votebase/v1/api/tenant?page=${page}&size=${pageSize}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
       if (!response.ok) throw new Error("Failed to fetch tenants");
-
       const data = await response.json();
       setTenants(data.content || []);
-      setTotalPages(data.totalPages);
+      setTotalItems(data.totalElements || (data.totalPages * pageSize));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, pageSize, token]);
 
   useEffect(() => {
     fetchTenants();
-    // eslint-disable-next-line
-  }, [page, pageSize]);
+  }, [fetchTenants]);
 
-  // ➕ Add Tenant
   const handleAddTenant = async () => {
     try {
-      const response = await fetch(
-        `${process.env.REACT_APP_BASE_URL}/votebase/v1/api/tenant`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(newTenant),
-        }
-      );
-      if (!response.ok) throw new Error("Failed to create tenant");
-      alert("✅ Tenant created successfully");
-      setOpenAddDialog(false);
-      setNewTenant({
-        name: "",
-        description: "",
-        contactEmail: "",
-        contactPhone: "",
-        active: true,
+      const response = await fetch(`${process.env.REACT_APP_BASE_URL}/votebase/v1/api/tenant`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(newTenant),
       });
+      if (!response.ok) throw new Error("Failed to create tenant");
+      setSnackbar({ open: true, message: "Tenant created successfully", severity: "success" });
+      setOpenAddDialog(false);
+      setNewTenant({ name: "", description: "", contactEmail: "", contactPhone: "", active: true });
       fetchTenants();
     } catch (err) {
-      alert(`❌ ${err.message}`);
+      setSnackbar({ open: true, message: err.message, severity: "error" });
     }
   };
 
-  // ✏️ Update Tenant
   const handleUpdateTenant = async () => {
     try {
       const response = await fetch(
@@ -110,24 +138,20 @@ const Tenants = () => {
           body: JSON.stringify(selectedTenant),
         }
       );
-
       if (!response.ok) throw new Error("Failed to update tenant");
-
-      alert("✅ Tenant updated successfully");
+      setSnackbar({ open: true, message: "Tenant updated successfully", severity: "success" });
       setOpenEditDialog(false);
       fetchTenants();
     } catch (err) {
-      alert(`❌ ${err.message}`);
+      setSnackbar({ open: true, message: err.message, severity: "error" });
     }
   };
 
-  // Open edit dialog
   const handleEditClick = (tenant) => {
     setSelectedTenant({ ...tenant });
     setOpenEditDialog(true);
   };
 
-  // Table columns
   const columns = [
     { field: "name", headerName: "Name", flex: 1 },
     { field: "description", headerName: "Description", flex: 1.5 },
@@ -137,21 +161,14 @@ const Tenants = () => {
       field: "active",
       headerName: "Active",
       width: 120,
-      renderCell: (params) => (
-        <Switch checked={params.value} disabled size="small" />
-      ),
+      renderCell: (params) => <Switch checked={params.value} disabled size="small" />,
     },
     {
       field: "actions",
       headerName: "Actions",
       width: 140,
       renderCell: (params) => (
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<EditIcon />}
-          onClick={() => handleEditClick(params.row)}
-        >
+        <Button variant="outlined" size="small" startIcon={<EditIcon />} onClick={() => handleEditClick(params.row)}>
           Edit
         </Button>
       ),
@@ -162,11 +179,7 @@ const Tenants = () => {
     <Box sx={{ p: 3 }}>
       <Box sx={{ display: "flex", justifyContent: "space-between", mb: 3 }}>
         <Typography variant="h4">Tenant Management</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setOpenAddDialog(true)}
-        >
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpenAddDialog(true)}>
           Add Tenant
         </Button>
       </Box>
@@ -182,64 +195,22 @@ const Tenants = () => {
           <DataGrid
             rows={tenants}
             columns={columns}
-            getRowId={(row) => row.id}
+            getRowId={(row) => row.tenantId}
             paginationMode="server"
+            page={page}
             pageSize={pageSize}
             onPageChange={(newPage) => setPage(newPage)}
             onPageSizeChange={(newSize) => setPageSize(newSize)}
-            rowCount={totalPages * pageSize}
+            rowCount={totalItems}
           />
         </Box>
       )}
 
-      {/* ➕ Add Tenant Dialog */}
+      {/* Add Tenant Dialog */}
       <Dialog open={openAddDialog} onClose={() => setOpenAddDialog(false)}>
         <DialogTitle>Add New Tenant</DialogTitle>
-        <DialogContent
-          sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
-        >
-          <TextField
-            label="Name"
-            value={newTenant.name}
-            onChange={(e) =>
-              setNewTenant({ ...newTenant, name: e.target.value })
-            }
-            required
-          />
-          <TextField
-            label="Description"
-            value={newTenant.description}
-            onChange={(e) =>
-              setNewTenant({ ...newTenant, description: e.target.value })
-            }
-          />
-          <TextField
-            label="Email"
-            type="email"
-            value={newTenant.contactEmail}
-            onChange={(e) =>
-              setNewTenant({ ...newTenant, contactEmail: e.target.value })
-            }
-            required
-          />
-          <TextField
-            label="Phone"
-            value={newTenant.contactPhone}
-            onChange={(e) =>
-              setNewTenant({ ...newTenant, contactPhone: e.target.value })
-            }
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={newTenant.active}
-                onChange={(e) =>
-                  setNewTenant({ ...newTenant, active: e.target.checked })
-                }
-              />
-            }
-            label="Active"
-          />
+        <DialogContent>
+          <TenantForm tenant={newTenant} onChange={setNewTenant} />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenAddDialog(false)}>Cancel</Button>
@@ -249,57 +220,14 @@ const Tenants = () => {
         </DialogActions>
       </Dialog>
 
-      {/* ✏️ Edit Tenant Dialog */}
+      {/* Edit Tenant Dialog */}
       <Dialog open={openEditDialog} onClose={() => setOpenEditDialog(false)}>
         <DialogTitle>Edit Tenant</DialogTitle>
-        <DialogContent
-          sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
-        >
-          <TextField
-            label="Name"
-            value={selectedTenant?.name || ""}
-            onChange={(e) =>
-              setSelectedTenant({ ...selectedTenant, name: e.target.value })
-            }
-          />
-          <TextField
-            label="Description"
-            value={selectedTenant?.description || ""}
-            onChange={(e) =>
-              setSelectedTenant({
-                ...selectedTenant,
-                description: e.target.value,
-              })
-            }
-          />
-          <TextField
-            label="Email"
-            value={selectedTenant?.contactEmail || ""}
-            disabled
-          />
-          <TextField
-            label="Phone"
-            value={selectedTenant?.contactPhone || ""}
-            onChange={(e) =>
-              setSelectedTenant({
-                ...selectedTenant,
-                contactPhone: e.target.value,
-              })
-            }
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={selectedTenant?.active || false}
-                onChange={(e) =>
-                  setSelectedTenant({
-                    ...selectedTenant,
-                    active: e.target.checked,
-                  })
-                }
-              />
-            }
-            label="Active"
+        <DialogContent>
+          <TenantForm
+            tenant={selectedTenant || {}}
+            onChange={setSelectedTenant}
+            disabledFields={["contactEmail"]}
           />
         </DialogContent>
         <DialogActions>
@@ -309,6 +237,14 @@ const Tenants = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Snackbar for success/error */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        message={snackbar.message}
+      />
     </Box>
   );
 };

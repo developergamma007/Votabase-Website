@@ -49,8 +49,6 @@ const LoginPage = () => {
       localStorage.setItem("userName", result.userName);
       localStorage.setItem("tenantId", result.tenantId || "");
 
-      alert("✅ Login successful!");
-
       if (result.role === "SUPER_ADMIN") navigate("/tenants");
       else if (result.role === "ADMIN") navigate("/dashboard");
       else navigate("/login");
