@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+'use client';
+
+import { useState } from 'react';
 import {
   Box,
   AppBar,
@@ -11,31 +13,33 @@ import {
   ListItemText,
   IconButton,
   Button,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Menu as MenuIcon,
   Dashboard as DashboardIcon,
   People as PeopleIcon,
   BarChart as BarChartIcon,
   Logout as LogoutIcon,
-} from "@mui/icons-material";
-import { Link, useNavigate } from "react-router-dom";
+} from '@mui/icons-material';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 const drawerWidth = 240;
 
-const MainLayout = ({ children }) => {
+export default function MainLayout({ children }) {
   const [open, setOpen] = useState(true);
-  const navigate = useNavigate();
+  const router = useRouter();
 
   const handleToggleDrawer = () => setOpen(!open);
 
   const handleLogout = () => {
     localStorage.clear();
-    navigate("/login");
+    document.cookie = 'token=; path=/; max-age=0';
+    router.push('/login');
   };
 
   return (
-    <Box sx={{ display: "flex" }}>
+    <Box sx={{ display: 'flex' }}>
       {/* Header */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
@@ -58,29 +62,29 @@ const MainLayout = ({ children }) => {
         sx={{
           width: open ? drawerWidth : 60,
           flexShrink: 0,
-          transition: "width 0.3s",
+          transition: 'width 0.3s',
           [`& .MuiDrawer-paper`]: {
             width: open ? drawerWidth : 60,
-            transition: "width 0.3s",
-            boxSizing: "border-box",
+            transition: 'width 0.3s',
+            boxSizing: 'border-box',
           },
         }}
       >
         <Toolbar />
         <List>
-          <ListItemButton component={Link} to="/dashboard">
+          <ListItemButton component={Link} href="/dashboard">
             <ListItemIcon>
               <DashboardIcon />
             </ListItemIcon>
             {open && <ListItemText primary="Dashboard" />}
           </ListItemButton>
-          <ListItemButton component={Link} to="/tenants">
+          <ListItemButton component={Link} href="/tenants">
             <ListItemIcon>
               <PeopleIcon />
             </ListItemIcon>
             {open && <ListItemText primary="Tenants" />}
           </ListItemButton>
-          <ListItemButton component={Link} to="/reports">
+          <ListItemButton component={Link} href="/reports">
             <ListItemIcon>
               <BarChartIcon />
             </ListItemIcon>
@@ -95,6 +99,5 @@ const MainLayout = ({ children }) => {
       </Box>
     </Box>
   );
-};
+}
 
-export default MainLayout;
