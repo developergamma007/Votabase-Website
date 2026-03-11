@@ -20,6 +20,8 @@ import { DataGrid } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://13.233.40.235';
+
 const TenantForm = ({ tenant, onChange, disabledFields = [], title }) => {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
@@ -90,7 +92,7 @@ export default function Tenants() {
     setError('');
     try {
       const response = await fetch(
-        `http://api.iswot.in:8081/votebase/v1/api/tenant?page=${page}&size=${pageSize}`,
+        `${API_BASE_URL}/votebase/v1/api/tenant?page=${page}&size=${pageSize}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!response.ok) throw new Error('Failed to fetch tenants');
@@ -110,7 +112,7 @@ export default function Tenants() {
 
   const handleAddTenant = async () => {
     try {
-      const response = await fetch(`http://api.iswot.in:8081/votebase/v1/api/tenant`, {
+      const response = await fetch(`${API_BASE_URL}/votebase/v1/api/tenant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +133,7 @@ export default function Tenants() {
   const handleUpdateTenant = async () => {
     try {
       const response = await fetch(
-        `http://api.iswot.in:8081/votebase/v1/api/tenant/${selectedTenant.tenantId}`,
+        `${API_BASE_URL}/votebase/v1/api/tenant/${selectedTenant.tenantId}`,
         {
           method: 'PUT',
           headers: {
@@ -256,4 +258,3 @@ export default function Tenants() {
       </Box>
   );
 }
-

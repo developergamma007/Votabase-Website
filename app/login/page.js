@@ -2,174 +2,100 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { mobileApi } from '../lib/mobileApi';
 
-export default function LoginRegisterLight() {
-  const [mode, setMode] = useState('login'); // login | register
-  const [formData, setFormData] = useState({ userName: "", password: "" });
+export default function LoginPage() {
+  const [formData, setFormData] = useState({ firstName: '', phone: '' });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const router = useRouter();
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!formData.firstName.trim() || !formData.phone.trim()) {
+      setError('Please enter first name and mobile number');
+      return;
+    }
+
     setLoading(true);
+    setError('');
 
     try {
-      const response = await fetch(
-        `http://api.iswot.in:8081/votebase/v1/api/auth/login`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userName: formData.userName,
-            password: formData.password,
-          }),
-        }
-      );
-
-      if (!response.ok) throw new Error("Invalid username or password");
-
-      const data = await response.json();
+      const data = await mobileApi.loginApi({
+        firstName: formData.firstName.trim(),
+        phone: formData.phone.trim(),
+      });
       const result = data?.data?.result;
 
-      if (!result?.token) throw new Error("Invalid response from server");
+      if (!data?.success || !result?.token) {
+        throw new Error('Invalid first name or mobile number');
+      }
 
-      localStorage.setItem("token", result.token);
-      localStorage.setItem("role", result.role);
-      localStorage.setItem("userName", result.userName);
-      localStorage.setItem("tenantId", result.tenantId || "");
+      localStorage.setItem('token', result.token);
+      localStorage.setItem('X_INIT_TOKEN', result.token);
+      localStorage.setItem('role', result.role || '');
+      localStorage.setItem('userName', result.userName || result.firstName || formData.firstName.trim());
+      localStorage.setItem('tenantId', result.tenantId || '');
+      localStorage.setItem('userInfo', JSON.stringify(result));
+      document.cookie = `token=${result.token}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
 
-      if (result.role === "SUPER_ADMIN") router.push("/tenants");
-      else if (result.role === "ADMIN") router.push("/dashboard");
-      else router.push("/login");
+      if (result.role === 'SUPER_ADMIN') router.push('/tenants');
+      else router.push('/home');
     } catch (err) {
-      alert(`❌ ${err.message}`);
+      setError(err.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-300 via-blue-300 to-blue-900">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl px-10 py-10">
-        {/* Title */}
-        <h3 className="text-2xl font-semibold text-black-700 text-center">
-          {mode === 'login' ? 'Admin Login' : 'Admin Register'}
-        </h3>
+    <div className="min-h-screen flex items-center justify-center bg-[linear-gradient(160deg,#0C7BB3_0%,#0796A1_100%)] px-6">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-[380px] rounded-[24px] bg-[#4fa3c7] px-6 py-6 shadow-2xl"
+      >
+        <h1 className="mb-8 text-center text-3xl font-bold text-white">Votabase</h1>
 
-        {/* Toggle */}
-        <div className="flex mt-5 bg-blue-100 rounded-full p-1">
-          <button
-            type="button"
-            onClick={() => setMode('login')}
-            className={`w-1/2 py-2 rounded-full text-sm font-medium transition ${
-              mode === 'login'
-                ? 'bg-white text-blue-700 shadow'
-                : 'text-blue-600'
-            }`}
-          >
-            Login
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('register')}
-            className={`w-1/2 py-2 rounded-full text-sm font-medium transition ${
-              mode === 'register'
-                ? 'bg-white text-blue-700 shadow'
-                : 'text-blue-600'
-            }`}
-          >
-            Register
-          </button>
-        </div>
+        <label className="mb-1 block text-sm text-white">First Name</label>
+        <input
+          type="text"
+          name="firstName"
+          value={formData.firstName}
+          onChange={handleChange}
+          placeholder="First Name"
+          className="mb-5 h-[38px] border-0 bg-[#6bb6d6] px-4 text-white placeholder:text-[#d0e7f2] focus:ring-2 focus:ring-white/40"
+        />
 
-        {/* Form */}
-        <form className="mt-5 space-y-6" onSubmit={handleSubmit}>
-          {mode === 'register' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Full Name
-              </label>
-              <input
-                type="text"
-                name="fullName"
-                value={formData.fullName || ''}
-                onChange={handleChange}
-                placeholder="Enter full name"
-                className="w-full h-12 px-4 rounded-lg border border-gray-200
-                           focus:outline-none focus:ring-2 focus:ring-blue-500
-                           focus:border-blue-500 transition"
-              />
-            </div>
-          )}
+        <label className="mb-1 block text-sm text-white">Mobile Number</label>
+        <input
+          type="tel"
+          name="phone"
+          value={formData.phone}
+          onChange={handleChange}
+          placeholder="Mobile Number"
+          maxLength={10}
+          className="mb-6 h-[38px] border-0 bg-[#6bb6d6] px-4 text-white placeholder:text-[#d0e7f2] focus:ring-2 focus:ring-white/40"
+        />
 
-          {/* Username */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Username
-            </label>
-            <input
-              type="text"
-              name="userName"
-              value={formData.userName}
-              onChange={handleChange}
-              placeholder="Enter username"
-              className="w-full h-12 px-4 rounded-lg border border-gray-200
-                         focus:outline-none focus:ring-2 focus:ring-blue-500
-                         focus:border-blue-500 transition"
-            />
-          </div>
+        {error && <p className="mb-3 text-center font-medium text-red-200">{error}</p>}
 
-          {/* Password */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="Enter password"
-              className="w-full h-12 px-4 rounded-lg border border-gray-200
-                         focus:outline-none focus:ring-2 focus:ring-blue-500
-                         focus:border-blue-500 transition"
-            />
-          </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="mb-5 w-full rounded-lg bg-blue-600 py-3 text-base font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? 'Please wait...' : 'Login'}
+        </button>
 
-          {mode === 'register' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Confirm Password
-              </label>
-              <input
-                type="password"
-                name="confirmPassword"
-                value={formData.confirmPassword || ''}
-                onChange={handleChange}
-                placeholder="Confirm password"
-                className="w-full h-12 px-4 rounded-lg border border-gray-200
-                           focus:outline-none focus:ring-2 focus:ring-blue-500
-                           focus:border-blue-500 transition"
-              />
-            </div>
-          )}
-
-          {/* Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full h-12 rounded-lg bg-blue-600
-                       hover:bg-blue-700 text-white font-semibold
-                       transition shadow-md disabled:opacity-50"
-          >
-            {loading ? "Please wait..." : mode === 'login' ? 'Login' : 'Register'}
-          </button>
-        </form>
-      </div>
+        <p className="text-center text-xs text-[#e0f1f8]">
+          By continuing you agree to our <span className="underline">Terms &amp; Privacy</span>
+        </p>
+      </form>
     </div>
   );
 }

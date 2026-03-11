@@ -8,7 +8,6 @@ export default function Home() {
   if (!token) {
     redirect('/login');
   } else {
-    redirect('/dashboard');
+    redirect('/home');
   }
 }
-

@@ -1,51 +1,58 @@
 'use client';
 
-import { useState } from 'react';
-import {
-  Box,
-  AppBar,
-  Toolbar,
-  Typography,
-  Drawer,
-  IconButton,
-  Button,
-} from '@mui/material';
+import { useMemo, useState } from 'react';
 import {
   Menu as MenuIcon,
-  Dashboard as DashboardIcon,
-  People as PeopleIcon,
-  BarChart as BarChartIcon,
-  Logout as LogoutIcon,
+  Home as HomeIcon,
   LiveTv,
   Groups,
+  HowToVote,
   TrackChanges,
   Assessment,
   Campaign,
   Apartment,
+  BarChart,
+  Smartphone,
+  Search as SearchIcon,
+  FamilyRestroom,
+  EventNote,
+  HowToVote as HowToVoteIcon,
+  Print as PrintIcon,
+  Logout as LogoutIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
-
-const drawerWidth = 240;
+import { usePathname, useRouter } from 'next/navigation';
 
 const menuItems = [
-  { label: 'Home', path: '/home', icon: <DashboardIcon /> },
-  { label: 'Live Updates', path: '/liveUpdates', icon: <LiveTv /> },
-  { label: 'Volunteers', path: '/volunteers', icon: <Groups /> },
-  { label: 'Voters Data', path: '/votersData', icon: <PeopleIcon /> },
-  { label: 'Voters Reach', path: '/votersReach', icon: <TrackChanges /> },
-  { label: 'Result Analysis', path: '/resultAnalysis', icon: <Assessment /> },
-  { label: 'Client Banners', path: '/clientBanners', icon: <Campaign /> },
-  { label: 'Tenants', path: '/tenants', icon: <Apartment /> },
-  { label: 'Reports', path: '/reports', icon: <BarChartIcon /> },
+  // Core dashboard
+  // { label: 'Home', path: '/home', icon: <HomeIcon fontSize="small" /> },
+  // { label: 'Live Updates', path: '/liveUpdates', icon: <LiveTv fontSize="small" /> },
+  // { label: 'Volunteers', path: '/volunteers', icon: <Groups fontSize="small" /> },
+  // { label: 'Voters Data', path: '/votersData', icon: <HowToVote fontSize="small" /> },
+  // { label: 'Voters Reach', path: '/votersReach', icon: <TrackChanges fontSize="small" /> },
+  // { label: 'Result Analysis', path: '/resultAnalysis', icon: <Assessment fontSize="small" /> },
+  // { label: 'Client Banners', path: '/clientBanners', icon: <Campaign fontSize="small" /> },
+  // { label: 'Tenants', path: '/tenants', icon: <Apartment fontSize="small" /> },
+  // { label: 'Reports', path: '/reports', icon: <BarChart fontSize="small" /> },
+
+  // Mobile suite (these paths are more specific than '/mobile', so should come first)
+  { label: 'Search Voter', path: '/mobile/search-voter', icon: <SearchIcon fontSize="small" /> },
+  { label: 'Search Booth', path: '/mobile/search-booth', icon: <HowToVoteIcon fontSize="small" /> },
+  { label: 'Voters Family', path: '/mobile/voters-family', icon: <FamilyRestroom fontSize="small" /> },
+  { label: 'Meetings', path: '/mobile/meetings', icon: <EventNote fontSize="small" /> },
+  { label: 'Poll Day', path: '/mobile/poll-day', icon: <TrackChanges fontSize="small" /> },
+  { label: 'Print', path: '/mobile/print', icon: <PrintIcon fontSize="small" /> },
 ];
 
-export default function MainLayout({ children }) {
+export default function MainLayout({ children, hidePrimaryNav = false }) {
   const [open, setOpen] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
 
-  const handleToggleDrawer = () => setOpen(!open);
+  const activeLabel = useMemo(() => {
+    const found = menuItems.find((item) => pathname.startsWith(item.path));
+    return found?.label || 'Dashboard';
+  }, [pathname]);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -54,95 +61,48 @@ export default function MainLayout({ children }) {
   };
 
   return (
-    <Box className="flex min-h-screen">
-      {/* ================= HEADER ================= */}
-      <AppBar
-        position="fixed"
-        className="bg-white text-gray-800 shadow-sm"
-        sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
-      >
-        <Toolbar className="flex justify-between">
-          <div className="flex items-center gap-2">
-            <IconButton onClick={handleToggleDrawer}>
-              <MenuIcon />
-            </IconButton>
-            <Typography variant="h6" className="font-semibold">
-              Admin Panel
-            </Typography>
+    <div className="app-shell app-font">
+      {!hidePrimaryNav && (
+        <aside className={`side-nav ${open ? 'expanded' : 'collapsed'}`}>
+          <div className="brand-row">
+            <button className="icon-btn" onClick={() => setOpen((value) => !value)} aria-label="Toggle navigation">
+              <MenuIcon fontSize="small" />
+            </button>
+            {open && (
+              <div>
+                <p className="brand-title">Votabase</p>
+                <p className="brand-subtitle">Premium Console</p>
+              </div>
+            )}
           </div>
 
-        <button
-  onClick={handleLogout}
-  startIcon={<LogoutIcon />}
-  className="text-red-600 hover:bg-red-50 bg-white p-3 rounded-2xl"
->
-  Logout
-</button>
+          <nav className="menu-grid">
+            {menuItems.map((item) => {
+              const isActive = pathname.startsWith(item.path);
+              return (
+                <Link key={item.path} href={item.path} className={`menu-item ${isActive ? 'active' : ''}`}>
+                  <span className="menu-icon">{item.icon}</span>
+                  {open && <span>{item.label}</span>}
+                </Link>
+              );
+            })}
+          </nav>
+        </aside>
+      )}
 
-        </Toolbar>
-      </AppBar>
+      <div className="main-wrap">
+        <header className="top-bar">
+          <div>
+            <h6 className="top-title">{activeLabel}</h6>
+          </div>
+          <button onClick={handleLogout} className="logout-btn">
+            <LogoutIcon fontSize="small" />
+            Logout
+          </button>
+        </header>
 
-      {/* ================= SIDEBAR ================= */}
-      <Drawer
-        variant="permanent"
-        sx={{
-          width: open ? drawerWidth : 72,
-          flexShrink: 0,
-          [`& .MuiDrawer-paper`]: {
-            width: open ? drawerWidth : 72,
-            backgroundColor: '#e5e7eb', // ash color
-            borderRight: '1px solid #d1d5db',
-            transition: 'width 0.3s',
-            overflowX: 'hidden',
-          },
-        }}
-      >
-        <Toolbar />
-
-        <div className="px-2 space-y-1 mt-2">
-          {menuItems.map((item) => {
-            const isActive = pathname === item.path;
-
-            return (
-              <Link
-                key={item.path}
-                href={item.path}
-                className={`
-                  flex items-center gap-3 rounded-lg px-3 py-2
-                  transition-all duration-200
-                  ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-gray-700 hover:bg-gray-300 hover:text-blue-700'
-                  }
-                `}
-              >
-                <span
-                  className={`flex items-center justify-center ${
-                    isActive ? 'text-white' : 'text-gray-600'
-                  }`}
-                >
-                  {item.icon}
-                </span>
-
-                {open && (
-                  <span className="text-sm font-medium truncate">
-                    {item.label}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      </Drawer>
-
-      {/* ================= CONTENT ================= */}
-      <Box
-        component="main"
-        className="flex-1 bg-gray-50 p-6 mt-16"
-      >
-        {children}
-      </Box>
-    </Box>
+        <main className="content-area">{children}</main>
+      </div>
+    </div>
   );
 }
