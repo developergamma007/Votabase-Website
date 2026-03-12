@@ -8,6 +8,6 @@ export default function Home() {
   if (!token) {
     redirect('/login');
   } else {
-    redirect('/home');
+    redirect('/mobile/search-voter');
   }
 }

@@ -45,7 +45,7 @@ export default function LoginPage() {
       document.cookie = `token=${result.token}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
 
       if (result.role === 'SUPER_ADMIN') router.push('/tenants');
-      else router.push('/home');
+      else router.push('/mobile/search-voter');
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
     } finally {

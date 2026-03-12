@@ -75,6 +75,61 @@ function qs(params = {}) {
   return queryString ? `?${queryString}` : '';
 }
 
+const PUBLIC_VOTER_UPDATE_FIELDS = new Set([
+  'mobile',
+  'dob',
+  'community',
+  'caste',
+  'motherTongue',
+  'education',
+  'residenceType',
+  'ownership',
+  'voterPoints',
+  'govtSchemeTracking',
+  'engagementPotential',
+  'ifShifted',
+  'status',
+  'civicIssue',
+  'natureOfVoter',
+  'notes',
+  'presentAddress',
+  'newWard',
+  'newBoothNo',
+  'newSerialNo',
+  'notAvailableReason',
+  'latitude',
+  'longitude',
+  'gender',
+  'age',
+  'houseNoEn',
+  'houseNoLocal',
+  'firstMiddleNameEn',
+  'lastNameEn',
+  'firstMiddleNameLocal',
+  'lastNameLocal',
+  'addressEn',
+  'addressLocal',
+  'relationFirstMiddleNameEn',
+  'relationLastNameEn',
+  'relationFirstMiddleNameLocal',
+  'relationLastNameLocal',
+  'relationType',
+  'team',
+]);
+
+function buildPublicVoterUpdatePayload(jsonReq = {}, options = {}) {
+  const updateRequest = Object.entries(jsonReq?.updateRequest || {}).reduce((acc, [key, value]) => {
+    if (PUBLIC_VOTER_UPDATE_FIELDS.has(key)) acc[key] = value;
+    return acc;
+  }, {});
+
+  return {
+    wardCode: options.wardCode || undefined,
+    boothNo: options.boothNo != null ? String(options.boothNo) : undefined,
+    updateRequest,
+  };
+}
+
 export const mobileApi = {
   loginApi: async (data) => {
     try {
@@ -143,11 +198,11 @@ export const mobileApi = {
     }
   },
 
-  updateVoter: async (voterId, jsonReq) => {
+  updateVoter: async (epicNo, jsonReq, options = {}) => {
     try {
-      return await request(`/votebase/v1/api/voters/${encodeURIComponent(voterId)}`, {
+      return await request(`/votebase/v1/api/voters/by-epic/${encodeURIComponent(epicNo)}`, {
         method: 'PUT',
-        body: JSON.stringify(jsonReq),
+        body: JSON.stringify(buildPublicVoterUpdatePayload(jsonReq, options)),
       });
     } catch (error) {
       console.log('Update Voter API Error:', error);
