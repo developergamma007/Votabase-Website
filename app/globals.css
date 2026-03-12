@@ -431,15 +431,26 @@ a {
   background: #f8fbff;
   color: var(--text);
   font-size: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.mobile-web-input:focus,
+.mobile-web-multiselect-trigger:focus {
+  outline: none;
+  border-color: rgba(47, 86, 217, 0.5);
+  box-shadow: 0 0 0 4px rgba(47, 86, 217, 0.12);
+  background: #ffffff;
 }
 
 .mobile-web-search-input-wrap .mobile-web-input {
   padding-left: 46px;
 }
 
-.mobile-web-select-wrap .mobile-web-input {
+.mobile-web-select-wrap .mobile-web-input,
+.mobile-web-select-input {
   appearance: none;
   padding-right: 42px;
+  cursor: pointer;
 }
 
 .mobile-web-form-grid {
@@ -1593,8 +1604,87 @@ textarea {
   min-height: 96px;
 }
 
-.mobile-web-multiselect {
-  min-height: 150px;
+.mobile-web-multiselect-wrap {
+  position: relative;
+}
+
+.mobile-web-multiselect-trigger {
+  position: relative;
+  width: 100%;
+  min-height: 54px;
+  padding: 14px 42px 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: #f8fbff;
+  color: var(--text);
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-web-multiselect-trigger .mobile-web-select-icon {
+  right: 14px;
+}
+
+.mobile-web-multiselect-trigger .is-placeholder {
+  color: #6b7280;
+}
+
+.mobile-web-multiselect-trigger .has-value {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.mobile-web-multiselect-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+}
+
+.mobile-web-multiselect-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.mobile-web-multiselect-option:hover,
+.mobile-web-multiselect-option.checked {
+  background: rgba(47, 86, 217, 0.08);
+}
+
+.mobile-web-single-select-option {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #1f2937;
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-web-single-select-option:hover,
+.mobile-web-single-select-option.checked {
+  background: rgba(47, 86, 217, 0.08);
+}
+
+.mobile-web-multiselect-option input {
+  margin-top: 2px;
 }
 
 .mobile-web-other-input {
@@ -1628,6 +1718,13 @@ textarea {
   border: 0;
   background: #16a34a;
   color: #ffffff;
+}
+
+.mobile-web-update-btn:disabled {
+  background: #9ca3af;
+  color: #f9fafb;
+  cursor: not-allowed;
+  opacity: 0.85;
 }
 
 .mobile-web-slip-btn {
