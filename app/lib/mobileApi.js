@@ -322,6 +322,44 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchAssignments: async (type) => {
+    try {
+      return await request(`/votebase/v1/api/assignments?type=${encodeURIComponent(type)}`);
+    } catch (error) {
+      console.log('Error while fetching assignments:', error);
+      throw error;
+    }
+  },
+  fetchVolunteerDropdown: async (level, parentId) => {
+    try {
+      const query = parentId ? `?level=${encodeURIComponent(level)}&parentId=${encodeURIComponent(parentId)}` : `?level=${encodeURIComponent(level)}`;
+      return await request(`/votebase/v1/api/volunteers/dropdown${query}`);
+    } catch (error) {
+      console.log('Error while fetching volunteer dropdown:', error);
+      throw error;
+    }
+  },
+  fetchWards: async (assemblyId) => {
+    try {
+      const query = assemblyId ? `?assemblyId=${encodeURIComponent(assemblyId)}` : '';
+      return await request(`/votebase/v1/api/wards${query}`);
+    } catch (error) {
+      console.log('Error while fetching wards:', error);
+      throw error;
+    }
+  },
+  fetchBooths: async (assemblyCode, wardId) => {
+    try {
+      const params = new URLSearchParams();
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
+      if (wardId) params.set('wardId', String(wardId));
+      const qs = params.toString();
+      return await request(`/votebase/v1/api/booths${qs ? `?${qs}` : ''}`);
+    } catch (error) {
+      console.log('Error while fetching booths:', error);
+      throw error;
+    }
+  },
 
   fetchFamilies: async (hasAssociation, page, size, boothId) => {
     try {
