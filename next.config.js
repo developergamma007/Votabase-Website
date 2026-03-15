@@ -2,6 +2,6 @@
 const nextConfig = {
   basePath: "/ui",
   reactStrictMode: true,
-}
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;

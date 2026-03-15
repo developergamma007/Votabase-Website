@@ -20,7 +20,7 @@ import { DataGrid } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://13.233.40.235';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
 const TenantForm = ({ tenant, onChange, disabledFields = [], title }) => {
   return (
