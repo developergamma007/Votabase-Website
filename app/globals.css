@@ -70,6 +70,24 @@ a {
   width: 88px;
 }
 
+.top-bar-menu {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(12, 123, 179, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+}
+
+.top-bar-menu.hidden {
+  display: none;
+}
+
 .brand-row {
   display: flex;
   align-items: center;
@@ -158,6 +176,11 @@ a {
   margin: 0;
   font-size: clamp(1.25rem, 2vw, 1.7rem);
   font-weight: 800;
+}
+
+.top-bar-title {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .eyebrow {
@@ -940,12 +963,26 @@ textarea {
     width: 264px;
   }
 
+  .side-nav-fab {
+    display: inline-flex;
+  }
+
   .content-area {
     padding: 18px;
   }
 
   .top-bar {
     padding: 16px 18px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .top-bar-title {
+    justify-content: center;
+  }
+
+  .top-bar-menu {
+    display: inline-flex;
   }
 
   .mobile-screen {

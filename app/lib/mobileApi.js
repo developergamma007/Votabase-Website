@@ -131,6 +131,15 @@ function buildPublicVoterUpdatePayload(jsonReq = {}, options = {}) {
 }
 
 export const mobileApi = {
+  getBoothList: async (assemblyCode = getAssemblyCode() || DEFAULT_ASSEMBLY_CODE) => {
+    const res = await mobileApi.loadDataLite(assemblyCode);
+    if (res?.snapshotMode === 'link' && typeof res?.data?.result === 'string') {
+      const response = await fetch(res.data.result, { headers: buildHeaders({}) });
+      const payload = await response.json();
+      return payload;
+    }
+    return res;
+  },
   loginApi: async (data) => {
     try {
       return await request('/votebase/v1/api/auth/login', {

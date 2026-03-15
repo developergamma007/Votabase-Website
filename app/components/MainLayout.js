@@ -63,8 +63,14 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     router.push('/login');
   };
 
+  const handleNavClick = () => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+      setOpen(false);
+    }
+  };
+
   return (
-    <div className="app-shell app-font">
+    <div className={`app-shell app-font ${open ? 'nav-open' : 'nav-closed'}`}>
       {!hidePrimaryNav && (
         <aside className={`side-nav ${open ? 'expanded' : 'collapsed'}`}>
           <div className="brand-row">
@@ -78,12 +84,11 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
               </div>
             )}
           </div>
-
           <nav className="menu-grid">
             {menuItems.map((item) => {
               const isActive = pathname.startsWith(item.path);
               return (
-                <Link key={item.path} href={item.path} className={`menu-item ${isActive ? 'active' : ''}`}>
+                <Link key={item.path} href={item.path} className={`menu-item ${isActive ? 'active' : ''}`} onClick={handleNavClick}>
                   <span className="menu-icon">{item.icon}</span>
                   {open && <span>{item.label}</span>}
                 </Link>
@@ -92,10 +97,19 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
           </nav>
         </aside>
       )}
-
       <div className="main-wrap">
         <header className="top-bar">
-          <div>
+          {!hidePrimaryNav && (
+            <button
+              className={`top-bar-menu ${open ? 'hidden' : ''}`}
+              onClick={() => setOpen(true)}
+              aria-label="Open navigation"
+              type="button"
+            >
+              <MenuIcon fontSize="small" />
+            </button>
+          )}
+          <div className="top-bar-title">
             <h6 className="top-title">{activeLabel}</h6>
           </div>
           <button onClick={handleLogout} className="logout-btn">
