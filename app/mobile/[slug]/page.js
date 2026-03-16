@@ -609,13 +609,12 @@ function AddVolunteerScreen() {
         return;
       }
       const payload = {
-        profilePicUrl: '',
         firstName: form.firstName.trim(),
         phone: form.phone.trim(),
-        assignmentType: assignment.assignmentType,
-        assignmentId: assignment.assignmentId,
-        tenantId: userInfo?.tenantId || '',
-        role: 'USER',
+        workingLevel: form.workingLevel,
+        assemblyIds: form.assemblyId ? [Number(form.assemblyId)] : [],
+        wardIds: form.wardIds.map((id) => Number(id)),
+        boothIds: form.boothIds.map((id) => Number(id)),
       };
       const res = await mobileApi.addVolunteer(payload);
       if (res?.success) {

@@ -26,9 +26,9 @@ import { usePathname, useRouter } from 'next/navigation';
 
 const menuItems = [
   // Core dashboard
-  // { label: 'Home', path: '/home', icon: <HomeIcon fontSize="small" /> },
-  // { label: 'Live Updates', path: '/liveUpdates', icon: <LiveTv fontSize="small" /> },
-  // { label: 'Volunteers', path: '/volunteers', icon: <Groups fontSize="small" /> },
+  { label: 'Home', path: '/home', icon: <HomeIcon fontSize="small" /> },
+  { label: 'Live Updates', path: '/liveUpdates', icon: <LiveTv fontSize="small" /> },
+  { label: 'Volunteers', path: '/volunteers', icon: <Groups fontSize="small" /> },
   // { label: 'Voters Data', path: '/votersData', icon: <HowToVote fontSize="small" /> },
   // { label: 'Voters Reach', path: '/votersReach', icon: <TrackChanges fontSize="small" /> },
   // { label: 'Result Analysis', path: '/resultAnalysis', icon: <Assessment fontSize="small" /> },

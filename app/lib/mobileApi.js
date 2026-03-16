@@ -255,7 +255,7 @@ export const mobileApi = {
   getVolunteerList: async (role, page, size, search, blocked, sortBy, direction, assignmentType) => {
     try {
       return await request(
-        `/votebase/v1/api/user?role=${encodeURIComponent(role)}&page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&search=${encodeURIComponent(search)}&blocked=${encodeURIComponent(blocked)}&sortBy=${encodeURIComponent(sortBy)}&direction=${encodeURIComponent(direction)}&assignmentType=${encodeURIComponent(assignmentType)}`
+        `/votebase/v1/api/volunteers?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&search=${encodeURIComponent(search)}&blocked=${encodeURIComponent(blocked)}&sortBy=${encodeURIComponent(sortBy)}&direction=${encodeURIComponent(direction)}&workingLevel=${encodeURIComponent(assignmentType)}`
       );
     } catch (error) {
       console.log('Error while fetching volunteer data:', error);
@@ -265,7 +265,7 @@ export const mobileApi = {
 
   addVolunteer: async (data) => {
     try {
-      return await request('/votebase/v1/api/user/register', {
+      return await request('/votebase/v1/api/volunteers', {
         method: 'POST',
         body: JSON.stringify(data),
       });
