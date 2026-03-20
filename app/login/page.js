@@ -33,7 +33,12 @@ export default function LoginPage() {
       const result = data?.data?.result;
 
       if (!data?.success || !result?.token) {
-        throw new Error('Invalid first name or mobile number');
+        const message =
+          data?.detail ||
+          data?.message ||
+          data?.error ||
+          'Invalid first name or mobile number';
+        throw new Error(message);
       }
 
       localStorage.setItem('token', result.token);
@@ -46,7 +51,7 @@ export default function LoginPage() {
 
       router.push('/mobile/search-voter');
     } catch (err) {
-      setError(err.message || 'Something went wrong. Please try again.');
+      setError(err?.detail || err?.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -81,7 +86,7 @@ export default function LoginPage() {
           className="mb-6 h-[38px] border-0 bg-[#6bb6d6] px-4 text-white placeholder:text-[#d0e7f2] focus:ring-2 focus:ring-white/40"
         />
 
-        {error && <p className="mb-3 text-center font-medium text-red-200">{error}</p>}
+        {error && <p className="mb-3 text-center text-sm font-medium text-white bg-red-600 p-1 rounded ">{error}</p>}
 
         <button
           type="submit"

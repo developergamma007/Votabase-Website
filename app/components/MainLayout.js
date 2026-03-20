@@ -51,11 +51,29 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
   const [open, setOpen] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+  const role = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const info = JSON.parse(localStorage.getItem('userInfo') || '{}');
+      return (info.role || localStorage.getItem('role') || '').replace('ROLE_', '').toUpperCase();
+    } catch {
+      return (localStorage.getItem('role') || '').replace('ROLE_', '').toUpperCase();
+    }
+  }, []);
+
+  const filteredMenuItems = useMemo(() => {
+    if (role === 'BOOTH') {
+      return menuItems.filter(
+        (item) => !['/mobile/add-volunteer', '/mobile/my-volunteers'].includes(item.path)
+      );
+    }
+    return menuItems;
+  }, [role]);
 
   const activeLabel = useMemo(() => {
-    const found = menuItems.find((item) => pathname.startsWith(item.path));
+    const found = filteredMenuItems.find((item) => pathname.startsWith(item.path));
     return found?.label || 'Dashboard';
-  }, [pathname]);
+  }, [pathname, filteredMenuItems]);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -85,7 +103,7 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
             )}
           </div>
           <nav className="menu-grid">
-            {menuItems.map((item) => {
+            {filteredMenuItems.map((item) => {
               const isActive = pathname.startsWith(item.path);
               return (
                 <Link key={item.path} href={item.path} className={`menu-item ${isActive ? 'active' : ''}`} onClick={handleNavClick}>
