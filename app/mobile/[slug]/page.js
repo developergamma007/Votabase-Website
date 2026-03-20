@@ -47,7 +47,7 @@ const labels = {
     description: 'Create a volunteer profile and assign a working level.',
   },
   'my-volunteers': {
-    title: 'My Volunteers',
+    title: 'Manage Volunteers',
     description: 'Search, manage, and block volunteers in a web-first layout.',
   },
 };
@@ -304,7 +304,7 @@ function SearchVoterScreen() {
               value={selectedWardLabel}
               customValue=""
               onSelect={(option) => handleChange('wards', wardItems.find((item) => item.label === option)?.value || '')}
-              onCustomValueChange={() => {}}
+              onCustomValueChange={() => { }}
             />
             <input className="mobile-web-input" placeholder="Booth Number" value={form.boothNumber} onChange={(e) => handleChange('boothNumber', e.target.value)} />
             <input className="mobile-web-input" placeholder="Mobile" value={form.mobileNumber} onChange={(e) => handleChange('mobileNumber', e.target.value)} />
@@ -657,27 +657,27 @@ function AddVolunteerScreen() {
               <input className="mobile-web-input" placeholder="First Name" value={form.firstName} onChange={(e) => handleChange('firstName', e.target.value)} />
             </div>
             <div className="mobile-web-field">
-              <label>Phone</label>
+              <label>Phone : </label>
               <input className="mobile-web-input" placeholder="Phone" value={form.phone} maxLength={10} inputMode="numeric" onChange={(e) => handleChange('phone', e.target.value)} />
             </div>
             <div className="mobile-web-field">
               <label>Working Level</label>
-              <SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => handleChange('workingLevel', levelOptions.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => {}} />
+              <SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => handleChange('workingLevel', levelOptions.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
             </div>
             {form.workingLevel === 'ASSEMBLY' ? (
               <>
                 <div className="mobile-web-field">
                   <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => {}} />
+                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
                 </div>
                 <div className="mobile-web-field">
                   <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.assemblyId} />
+                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
                   {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
                 </div>
                 <div className="mobile-web-field">
                   <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.wardIds.length} />
+                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
                   {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
                 </div>
               </>
@@ -686,16 +686,16 @@ function AddVolunteerScreen() {
               <>
                 <div className="mobile-web-field">
                   <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => {}} />
+                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
                 </div>
                 <div className="mobile-web-field">
                   <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.assemblyId} />
+                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
                   {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
                 </div>
                 <div className="mobile-web-field">
                   <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.wardIds.length} />
+                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
                   {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
                 </div>
               </>
@@ -704,16 +704,16 @@ function AddVolunteerScreen() {
               <>
                 <div className="mobile-web-field">
                   <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => {}} />
+                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
                 </div>
                 <div className="mobile-web-field">
                   <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.assemblyId} />
+                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
                   {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
                 </div>
                 <div className="mobile-web-field">
                   <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => {}} disabled={!form.wardIds.length} />
+                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
                   {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
                 </div>
               </>
@@ -730,5 +730,252 @@ function AddVolunteerScreen() {
     </ScreenFrame>
   );
 }
-function MyVolunteersScreen() { const [volunteers, setVolunteers] = useState([]); const [search, setSearch] = useState(''); const [workingLevel, setWorkingLevel] = useState(''); const [loading, setLoading] = useState(false); const [selected, setSelected] = useState([]); const [feedback, setFeedback] = useState({ error: '', success: '' }); const userInfo = useMemo(() => getUserInfoSafe(), []); const role = userInfo?.role || 'ADMIN'; const loadVolunteers = async () => { setLoading(true); setFeedback({ error: '', success: '' }); try { const res = await mobileApi.getVolunteerList(role, 0, 50, search, '', 'firstName', 'desc', workingLevel); const list = res?.content ?? []; setVolunteers(list); } catch (error) { setFeedback({ error: error?.message || 'Unable to load volunteers.', success: '' }); } finally { setLoading(false); } }; useEffect(() => { loadVolunteers(); }, [search, workingLevel]); const toggleSelect = (email) => { setSelected((prev) => prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]); }; const handleBlock = async (email, block) => { try { await mobileApi.blockVolunteer({ userEmail: email, block }); await loadVolunteers(); } catch { setFeedback({ error: 'Unable to update volunteer.', success: '' }); } }; const handleDelete = async (email, del) => { try { await mobileApi.removeVolunteer({ userEmail: email, delete: del }); await loadVolunteers(); } catch { setFeedback({ error: 'Unable to update volunteer.', success: '' }); } }; const handleBulkDelete = async () => { if (selected.length === 0) return; try { await mobileApi.bulkRemoveVolunteer({ userEmails: selected, action: true }); setSelected([]); await loadVolunteers(); } catch { setFeedback({ error: 'Unable to delete volunteers.', success: '' }); } }; const handleBulkBlock = async () => { if (selected.length === 0) return; try { await mobileApi.bulkBlockVolunteer({ userEmails: selected, action: true }); setSelected([]); await loadVolunteers(); } catch { setFeedback({ error: 'Unable to block volunteers.', success: '' }); } }; const levelOptions = [{ label: 'All Levels', value: '' }, { label: 'Assembly', value: 'ASSEMBLY' }, { label: 'Ward', value: 'WARD' }, { label: 'Booth', value: 'BOOTH' }]; const selectedLevelLabel = levelOptions.find((item) => item.value === workingLevel)?.label || ''; return <ScreenFrame accent="light"><section className="mobile-web-card"><MobileHeader title="My Volunteers" subtitle="Search and manage volunteer profiles." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} /><div className="mobile-web-stack"><div className="mobile-web-form-grid"><div className="mobile-web-field"><label>Search</label><input className="mobile-web-input" placeholder="Search by name / phone" value={search} onChange={(e) => setSearch(e.target.value)} /></div><div className="mobile-web-field"><label>Working Level</label><SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => setWorkingLevel(levelOptions.find((item) => item.label === option)?.value ?? '')} onCustomValueChange={() => {}} /></div></div>{loading ? <div className="mobile-web-empty">Loading volunteers...</div> : null}{!loading && volunteers.length === 0 ? <div className="mobile-web-empty">No volunteers found.</div> : null}{!loading && volunteers.length > 0 ? <div className="mobile-web-stack">{volunteers.map((v) => { const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1; const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1; const name = `${v.firstName || ''} ${v.lastName || ''}`.trim() || v.userName || 'Volunteer'; return <div key={v.userName || v.phone || name} className="mobile-web-summary-card"><h3>{name}</h3><p><span>Phone: <strong>{v.phone || '-'}</strong></span><span>Level: <strong>{v.assignmentType || '-'}</strong></span><span>Status: <strong>{deleted ? 'Deleted' : blocked ? 'Blocked' : 'Active'}</strong></span></p><div className="mobile-web-actions"><label className="mobile-web-secondary-btn"><input type="checkbox" checked={selected.includes(v.userName)} onChange={() => toggleSelect(v.userName)} /> Select</label><button className="mobile-web-secondary-btn" type="button" onClick={() => handleDelete(v.userName, !deleted)}>{deleted ? 'Undelete' : 'Delete'}</button><button className="mobile-web-primary-btn" type="button" onClick={() => handleBlock(v.userName, !blocked)}>{blocked ? 'Unblock' : 'Block'}</button></div></div>; })}</div> : null}<div className="mobile-web-actions"><button className="mobile-web-secondary-btn" type="button" onClick={handleBulkDelete} disabled={selected.length === 0}>Delete Selected</button><button className="mobile-web-primary-btn" type="button" onClick={handleBulkBlock} disabled={selected.length === 0}>Block Selected</button></div>{feedback.error ? <p className="mobile-web-error">{feedback.error}</p> : null}{feedback.success ? <p className="mobile-web-success">{feedback.success}</p> : null}</div></section></ScreenFrame>; }
+function MyVolunteersScreen() {
+  const [volunteers, setVolunteers] = useState([]);
+  const [search, setSearch] = useState('');
+  const [workingLevel, setWorkingLevel] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [actionLoading, setActionLoading] = useState({});
+  const [feedback, setFeedback] = useState({ error: '', success: '' });
+  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const role = userInfo?.role || 'ADMIN';
+
+  const loadVolunteers = async () => {
+    setLoading(true);
+    setFeedback({ error: '', success: '' });
+    try {
+      const res = await mobileApi.getVolunteerList(role, 0, 50, search, '', 'firstName', 'desc', workingLevel);
+      const list = res?.content ?? [];
+      setVolunteers(list);
+    } catch (error) {
+      setFeedback({ error: error?.message || 'Unable to load volunteers.', success: '' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadVolunteers();
+  }, [search, workingLevel]);
+
+  const toggleSelect = (email) => {
+    setSelected((prev) => (prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]));
+  };
+
+  const handleBlock = async (email, block) => {
+    setActionLoading((prev) => ({ ...prev, [`block-${email}`]: true }));
+    try {
+      await mobileApi.blockVolunteer({ userEmail: email, block });
+      await loadVolunteers();
+    } catch {
+      setFeedback({ error: 'Unable to update volunteer.', success: '' });
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [`block-${email}`]: false }));
+    }
+  };
+
+  const handleDelete = async (email, del) => {
+    setActionLoading((prev) => ({ ...prev, [`delete-${email}`]: true }));
+    try {
+      await mobileApi.removeVolunteer({ userEmail: email, delete: del });
+      await loadVolunteers();
+    } catch {
+      setFeedback({ error: 'Unable to update volunteer.', success: '' });
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [`delete-${email}`]: false }));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.length === 0) return;
+    setActionLoading((prev) => ({ ...prev, bulkDelete: true }));
+    try {
+      await mobileApi.bulkRemoveVolunteer({ userEmails: selected, action: true });
+      setSelected([]);
+      await loadVolunteers();
+    } catch {
+      setFeedback({ error: 'Unable to delete volunteers.', success: '' });
+    } finally {
+      setActionLoading((prev) => ({ ...prev, bulkDelete: false }));
+    }
+  };
+
+  const handleBulkBlock = async () => {
+    if (selected.length === 0) return;
+    setActionLoading((prev) => ({ ...prev, bulkBlock: true }));
+    try {
+      await mobileApi.bulkBlockVolunteer({ userEmails: selected, action: true });
+      setSelected([]);
+      await loadVolunteers();
+    } catch {
+      setFeedback({ error: 'Unable to block volunteers.', success: '' });
+    } finally {
+      setActionLoading((prev) => ({ ...prev, bulkBlock: false }));
+    }
+  };
+
+  const levelOptions = [
+    { label: 'All Levels', value: '' },
+    { label: 'Assembly', value: 'ASSEMBLY' },
+    { label: 'Ward', value: 'WARD' },
+    { label: 'Booth', value: 'BOOTH' },
+  ];
+  const selectedLevelLabel = levelOptions.find((item) => item.value === workingLevel)?.label || '';
+
+  const stats = volunteers.reduce(
+    (acc, v) => {
+      const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
+      const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
+      if (deleted) acc.deleted += 1;
+      else if (blocked) acc.blocked += 1;
+      else acc.active += 1;
+      acc.total += 1;
+      return acc;
+    },
+    { total: 0, active: 0, blocked: 0, deleted: 0 }
+  );
+
+  return (
+    <ScreenFrame accent="light">
+      <section className="mobile-web-card mobile-web-volunteer-shell">
+        <MobileHeader title="Manage Volunteers" subtitle="Search and manage volunteer profiles." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+        <div className="mobile-web-stack">
+          <div className="mobile-web-volunteer-toolbar">
+            <div className="mobile-web-form-grid">
+              <div className="mobile-web-field">
+                <label>Search</label>
+                <input className="mobile-web-input" placeholder="Search by name / phone" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Working Level</label>
+                <SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => setWorkingLevel(levelOptions.find((item) => item.label === option)?.value ?? '')} onCustomValueChange={() => { }} />
+              </div>
+            </div>
+            <div className="mobile-web-volunteer-stats">
+              <div className="mobile-web-volunteer-pill total">Total <strong>{stats.total}</strong></div>
+              <div className="mobile-web-volunteer-pill active">Active <strong>{stats.active}</strong></div>
+              <div className="mobile-web-volunteer-pill blocked">Blocked <strong>{stats.blocked}</strong></div>
+              <div className="mobile-web-volunteer-pill deleted">Deleted <strong>{stats.deleted}</strong></div>
+            </div>
+          </div>
+
+          {loading ? <div className="mobile-web-empty">Loading volunteers...</div> : null}
+          {!loading && volunteers.length === 0 ? <div className="mobile-web-empty">No volunteers found.</div> : null}
+          {!loading && volunteers.length > 0 ? (
+            <div className="mobile-web-stack">
+              {volunteers.map((v) => {
+                const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
+                const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
+                const name = `${v.firstName || ''} ${v.lastName || ''}`.trim() || v.userName || 'Volunteer';
+                const levelLabel = (v.assignmentType || '-').toUpperCase();
+                const statusLabel = deleted ? 'Deleted' : blocked ? 'Blocked' : 'Active';
+                return (
+                  <div key={v.userName || v.phone || name} className="mobile-web-volunteer-card" style={{ opacity: blocked || deleted ? 0.5 : 1 }}>
+                    <div className="mobile-web-volunteer-head">
+                      <div className="mobile-web-volunteer-avatar">{name.slice(0, 1).toUpperCase()}</div>
+                      <div className="mobile-web-volunteer-meta">
+                        <h3>{name}</h3>
+                        <div className="mobile-web-volunteer-tags">
+                          <span className="mobile-web-volunteer-tag level">{levelLabel}</span>
+                          <span className={`mobile-web-volunteer-tag status ${statusLabel.toLowerCase()}`}>{statusLabel}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mobile-web-volunteer-details-row">
+                      <div className="mobile-web-volunteer-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(v.userName)}
+                          onChange={() => toggleSelect(v.userName)}
+                        />
+                      </div>
+                      <div className="mobile-web-volunteer-inline">
+                        <div>
+                          <span>Phone : </span>
+                          <strong>{v.phone || '-'}</strong>
+                        </div>
+                        <div>
+                          <span>User ID : </span>
+                          <strong>{v.userName || '-'}</strong>
+                        </div>
+                      </div>
+                      <div className="mobile-web-volunteer-inline-actions">
+                        {/* <button className="mobile-web-secondary-btn" type="button" onClick={() => handleDelete(v.userName, !deleted)} disabled={actionLoading[`delete-${v.userName}`]}>
+                          {actionLoading[`delete-${v.userName}`] ? <span className="mobile-web-spinner" /> : null}
+                          {deleted ? 'Undelete' : 'Delete'}
+                        </button> */}
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(v.userName, !deleted)}
+                          disabled={actionLoading[`delete-${v.userName}`]}
+                          className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition
+                              ${deleted
+                              ? "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+                              : "bg-gray-600 hover:bg-gray-700 active:bg-gray-800"}
+                              disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {actionLoading[`delete-${v.userName}`] && (
+                            <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                          )}
+                          {deleted ? "Undelete" : "Delete"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBlock(v.userName, !blocked)}
+                          disabled={actionLoading[`block-${v.userName}`]}
+                          className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition
+                              ${blocked
+                              ? "bg-green-600 hover:bg-green-700 active:bg-green-800"
+                              : "bg-red-600 hover:bg-red-700 active:bg-red-800"}
+                              disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {actionLoading[`block-${v.userName}`] && (
+                            <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                          )}
+                          {blocked ? "Unblock" : "Block"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <div className="flex gap-3">
+            {/* Delete Selected (Gray) */}
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={selected.length === 0 || actionLoading.bulkDelete}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 active:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {actionLoading.bulkDelete && (
+                <span className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
+              )}
+              Delete Selected
+            </button>
+
+            {/* Block Selected (Red) */}
+            <button
+              type="button"
+              onClick={handleBulkBlock}
+              disabled={selected.length === 0 || actionLoading.bulkBlock}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 active:bg-red-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {actionLoading.bulkBlock && (
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              )}
+              Block Selected
+            </button>
+          </div>
+
+          {feedback.error ? <p className="mobile-web-error">{feedback.error}</p> : null}
+          {feedback.success ? <p className="mobile-web-success">{feedback.success}</p> : null}
+        </div>
+      </section>
+    </ScreenFrame>
+  );
+}
 export default function MobileDetailPage({ params }) { const slug = params.slug; const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' }; if (slug === 'search-voter') return <SearchVoterScreen />; if (slug === 'search-booth') return <SearchBoothScreen />; if (slug === 'add-volunteer') return <AddVolunteerScreen />; if (slug === 'my-volunteers') return <MyVolunteersScreen />; return <ScreenFrame><section className="mobile-web-card"><p className="text-slate-600">{screen.description}</p><p className="text-slate-500 mt-3">Search Booth and Search Voter now support booth list, voter list, and voter info drill-down.</p><div className="mt-4"><Link href="/mobile/search-voter" className="mobile-web-primary-btn">Go to Search Voter</Link></div></section></ScreenFrame>; }

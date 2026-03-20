@@ -44,7 +44,7 @@ const menuItems = [
   { label: 'Poll Day', path: '/mobile/poll-day', icon: <TrackChanges fontSize="small" /> },
   { label: 'Print', path: '/mobile/print', icon: <PrintIcon fontSize="small" /> },
   { label: 'Add Volunteer', path: '/mobile/add-volunteer', icon: <PersonAddAlt fontSize="small" /> },
-  { label: 'My Volunteers', path: '/mobile/my-volunteers', icon: <Groups fontSize="small" /> },
+  { label: 'Manage Volunteers', path: '/mobile/my-volunteers', icon: <Groups fontSize="small" /> },
 ];
 
 export default function MainLayout({ children, hidePrimaryNav = false }) {
