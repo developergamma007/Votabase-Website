@@ -45,6 +45,7 @@ const menuItems = [
   { label: 'Print', path: '/mobile/print', icon: <PrintIcon fontSize="small" /> },
   { label: 'Add Volunteer', path: '/mobile/add-volunteer', icon: <PersonAddAlt fontSize="small" /> },
   { label: 'Manage Volunteers', path: '/mobile/my-volunteers', icon: <Groups fontSize="small" /> },
+  { label: 'Volunteer Analysis', path: '/mobile/volunteer-analysis', icon: <BarChart fontSize="small" /> },
 ];
 
 export default function MainLayout({ children, hidePrimaryNav = false }) {
@@ -71,6 +72,7 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
             '/volunteers',
             '/mobile/add-volunteer',
             '/mobile/my-volunteers',
+            '/mobile/volunteer-analysis',
           ].includes(item.path)
       );
     }

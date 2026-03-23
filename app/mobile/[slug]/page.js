@@ -50,6 +50,10 @@ const labels = {
     title: 'Manage Volunteers',
     description: 'Search, manage, and block volunteers in a web-first layout.',
   },
+  'volunteer-analysis': {
+    title: 'Volunteer Analysis',
+    description: 'Track volunteer data collection coverage.',
+  },
 };
 
 const dropdownOptions = {
@@ -1014,4 +1018,80 @@ function MyVolunteersScreen() {
     </ScreenFrame>
   );
 }
-export default function MobileDetailPage({ params }) { const slug = params.slug; const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' }; if (slug === 'search-voter') return <SearchVoterScreen />; if (slug === 'search-booth') return <SearchBoothScreen />; if (slug === 'add-volunteer') return <AddVolunteerScreen />; if (slug === 'my-volunteers') return <MyVolunteersScreen />; return <ScreenFrame><section className="mobile-web-card"><p className="text-slate-600">{screen.description}</p><p className="text-slate-500 mt-3">Search Booth and Search Voter now support booth list, voter list, and voter info drill-down.</p><div className="mt-4"><Link href="/mobile/search-voter" className="mobile-web-primary-btn">Go to Search Voter</Link></div></section></ScreenFrame>; }
+
+function VolunteerAnalysisScreen() {
+  const [rows, setRows] = useState([]);
+  const [fields, setFields] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const role = (userInfo?.role || '').toUpperCase();
+
+  const loadAnalysis = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await mobileApi.fetchVolunteerAnalysis();
+      const payload = res?.data?.result || res?.result || {};
+      setRows(payload?.rows || []);
+      setFields(payload?.fields || []);
+    } catch (err) {
+      setError(err?.message || 'Unable to load volunteer analysis.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (role !== 'BOOTH') loadAnalysis();
+  }, [role]);
+
+  if (role === 'BOOTH') {
+    return (
+      <ScreenFrame accent="light">
+        <section className="mobile-web-card mobile-web-volunteer-shell">
+          <MobileHeader title="Volunteer Analysis" subtitle="Access restricted for booth users." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+          <div className="mobile-web-empty">This section is available for Assembly and Ward roles only.</div>
+        </section>
+      </ScreenFrame>
+    );
+  }
+
+  return (
+    <ScreenFrame accent="light">
+      <section className="mobile-web-card mobile-web-volunteer-shell">
+        <MobileHeader title="Volunteer Analysis" subtitle="Data collection coverage by volunteer." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+        {error ? <div className="mobile-web-error">{error}</div> : null}
+        {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
+        {!loading && rows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
+        {!loading && rows.length > 0 ? (
+          <div className="mobile-web-analysis-table-wrap">
+            <table className="mobile-web-analysis-table">
+              <thead>
+                <tr>
+                  <th>Agent Name</th>
+                  <th>Mobile No</th>
+                  {fields.map((field) => (
+                    <th key={field.key}>{field.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.userId}>
+                    <td>{row.agentName || '-'}</td>
+                    <td>{row.phone || '-'}</td>
+                    {fields.map((field) => (
+                      <td key={`${row.userId}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+    </ScreenFrame>
+  );
+}
+export default function MobileDetailPage({ params }) { const slug = params.slug; const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' }; if (slug === 'search-voter') return <SearchVoterScreen />; if (slug === 'search-booth') return <SearchBoothScreen />; if (slug === 'add-volunteer') return <AddVolunteerScreen />; if (slug === 'my-volunteers') return <MyVolunteersScreen />; if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen />; return <ScreenFrame><section className="mobile-web-card"><p className="text-slate-600">{screen.description}</p><p className="text-slate-500 mt-3">Search Booth and Search Voter now support booth list, voter list, and voter info drill-down.</p><div className="mt-4"><Link href="/mobile/search-voter" className="mobile-web-primary-btn">Go to Search Voter</Link></div></section></ScreenFrame>; }

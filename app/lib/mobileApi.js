@@ -348,6 +348,14 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchVolunteerAnalysis: async () => {
+    try {
+      return await request('/votebase/v1/api/volunteers/analysis');
+    } catch (error) {
+      console.log('Error while fetching volunteer analysis:', error);
+      throw error;
+    }
+  },
   fetchWards: async (assemblyId) => {
     try {
       const query = assemblyId ? `?assemblyId=${encodeURIComponent(assemblyId)}` : '';
