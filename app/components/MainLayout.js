@@ -64,7 +64,14 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
   const filteredMenuItems = useMemo(() => {
     if (role === 'BOOTH') {
       return menuItems.filter(
-        (item) => !['/mobile/add-volunteer', '/mobile/my-volunteers'].includes(item.path)
+        (item) =>
+          ![
+            '/home',
+            '/liveUpdates',
+            '/volunteers',
+            '/mobile/add-volunteer',
+            '/mobile/my-volunteers',
+          ].includes(item.path)
       );
     }
     return menuItems;
