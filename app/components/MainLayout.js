@@ -90,8 +90,17 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     router.push('/login');
   };
 
+  const isSmallScreen = () =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+
   const handleNavClick = () => {
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+    if (isSmallScreen()) {
+      setOpen(false);
+    }
+  };
+
+  const handleBackdropClick = () => {
+    if (isSmallScreen() && open) {
       setOpen(false);
     }
   };
@@ -145,7 +154,7 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
           </button>
         </header>
 
-        <main className="content-area">{children}</main>
+        <main className="content-area" onClick={handleBackdropClick}>{children}</main>
       </div>
     </div>
   );
