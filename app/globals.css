@@ -1378,6 +1378,375 @@ textarea {
   pointer-events: none;
 }
 
+.mobile-web-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0 18px;
+}
+
+.mobile-web-family-shell,
+.mobile-web-meetings-shell,
+.mobile-web-pollday-shell,
+.mobile-web-print-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.mobile-web-family-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.mobile-web-family-members {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mobile-web-member-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.mobile-web-table {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.mobile-web-table-head,
+.mobile-web-table-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 0.9rem;
+}
+
+.mobile-web-table-head {
+  background: #f1f5ff;
+  font-weight: 700;
+  color: #334155;
+}
+
+.mobile-web-table-row {
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  align-items: center;
+}
+
+.mobile-web-table-empty {
+  padding: 16px;
+  text-align: center;
+  color: #64748b;
+}
+
+.mobile-web-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mobile-web-location-pill {
+  align-self: flex-start;
+}
+
+.mobile-web-info-pill {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #1e3a8a;
+  font-size: 0.9rem;
+}
+
+.mobile-web-meeting-list {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-meeting-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #ffffff;
+}
+
+.mobile-web-meeting-card h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mobile-web-tag {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #1f2937;
+}
+
+.mobile-web-tag.scheduled {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.mobile-web-tag.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.mobile-web-tag.completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.mobile-web-muted {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.mobile-web-pollday-top {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-pollday-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mobile-web-pollday-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mobile-web-pollday-left,
+.mobile-web-pollday-right {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.mobile-web-tab-pill {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #fff;
+  color: #1f2937;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.mobile-web-tab-pill.active {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0c4a6e;
+}
+
+.mobile-web-small-select {
+  max-width: 160px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.mobile-web-pollday-list {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-pollday-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #ffffff;
+}
+
+.mobile-web-avatar-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.mobile-web-pollday-info h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mobile-web-chip-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.mobile-web-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #1f2937;
+}
+
+.mobile-web-chip.favour {
+  background: #bbf7d0;
+  color: #166534;
+}
+
+.mobile-web-chip.neutral {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.mobile-web-chip.nonfavour {
+  background: #fecaca;
+  color: #b91c1c;
+}
+
+.mobile-web-pill {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #fff;
+  color: #1f2937;
+}
+
+.mobile-web-pill.success {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.mobile-web-pill.danger {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.mobile-web-quick-card {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #fff;
+  display: grid;
+  gap: 10px;
+}
+
+.mobile-web-print-shell {
+  background: radial-gradient(circle at top left, rgba(196, 181, 253, 0.45), transparent 40%);
+}
+
+.mobile-web-printer-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: linear-gradient(120deg, rgba(243, 232, 255, 0.9), rgba(224, 231, 255, 0.9));
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.mobile-web-status-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #3b0764;
+}
+
+.mobile-web-gradient-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #fff;
+  border: none;
+  background: linear-gradient(120deg, #7c3aed, #f97316);
+  box-shadow: 0 10px 18px rgba(124, 58, 237, 0.25);
+  cursor: pointer;
+}
+
+.mobile-web-gradient-btn.full {
+  width: 100%;
+  justify-content: center;
+}
+
+.mobile-web-gradient-btn.subtle {
+  background: linear-gradient(120deg, #6d28d9, #ec4899);
+  max-width: 220px;
+}
+
+.mobile-web-printer-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #ffffff;
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-web-printer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.mobile-web-printer-row:first-of-type {
+  border-top: none;
+}
+
+.mobile-web-signal {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+@media (min-width: 980px) {
+  .mobile-web-pollday-grid {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+}
+
 .mobile-web-volunteer-toolbar {
   display: grid;
   gap: 18px;
