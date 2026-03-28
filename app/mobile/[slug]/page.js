@@ -269,7 +269,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     requestLocation({ allowCached: false })
       .then((pos) => {
         setLocation({ latitude: pos.latitude, longitude: pos.longitude });
-        setBanner({ type: 'success', text: 'Location fetched successfully.' });
+        setBanner({ type: 'success', text: 'Location captured successfully.' });
       })
       .catch((err) => setBanner({ type: 'error', text: err?.message || 'Unable to fetch current location.' }));
   };
@@ -424,7 +424,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
         </div>
         <button className="mobile-web-location-btn" onClick={getLocation} type="button">
           <LocationOnOutlined />
-          <span>{location ? 'Location Fetched' : 'Get Location'}</span>
+          <span>{location ? 'Location Captured' : 'Get Location'}</span>
         </button>
         <div className="mobile-web-contact-actions">
           <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled>
@@ -1779,8 +1779,50 @@ function VolunteerAnalysisScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sortMode, setSortMode] = useState('name-asc');
+  const [detailRows, setDetailRows] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [showDetails, setShowDetails] = useState(false);
   const userInfo = useMemo(() => getUserInfoSafe(), []);
-  const role = (userInfo?.role || '').toUpperCase();
+  const [role, setRole] = useState('');
+  const [hydrated, setHydrated] = useState(false);
+  const [wardItems, setWardItems] = useState([]);
+  const [selectedWard, setSelectedWard] = useState('');
+
+  useEffect(() => {
+    setRole((userInfo?.role || '').toUpperCase());
+    setHydrated(true);
+  }, [userInfo]);
+
+  useEffect(() => {
+    let active = true;
+    mobileApi.fetchWards().then((res) => {
+      if (!active) return;
+      const wards = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.data?.result)
+          ? res.data.result
+          : Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.result)
+              ? res.result
+              : Array.isArray(res?.wards)
+                ? res.wards
+                : Array.isArray(res?.data?.data)
+                  ? res.data.data
+                  : [];
+      const list = (wards || [])
+        .map((ward) => ({
+          value: String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ''),
+          label: ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name_en ?? ward?.name ?? '',
+        }))
+        .filter((item) => item.value && item.label);
+      setWardItems(list);
+    }).catch(() => setWardItems([]));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const sortOptions = [
     { label: 'Name A-Z', value: 'name-asc' },
@@ -1839,11 +1881,74 @@ function VolunteerAnalysisScreen() {
     URL.revokeObjectURL(link.href);
   };
 
+  const loadDetails = async (wardId) => {
+    setDetailLoading(true);
+    setDetailError('');
+    try {
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId);
+      const payload = res?.data?.result || res?.result || [];
+      setDetailRows(Array.isArray(payload) ? payload : []);
+    } catch (err) {
+      setDetailError(err?.message || 'Unable to load enrichment details.');
+      setDetailRows([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const toggleDetails = async () => {
+    const next = !showDetails;
+    setShowDetails(next);
+    if (next && detailRows.length === 0) {
+      await loadDetails(selectedWard || undefined);
+    }
+  };
+
+  useEffect(() => {
+    if (showDetails) {
+      loadDetails(selectedWard || undefined);
+    }
+  }, [selectedWard]);
+
+  const buildDetailExport = () => {
+    if (!detailRows.length) return { headers: [], dataRows: [] };
+    const headers = Object.keys(detailRows[0] || {});
+    const dataRows = detailRows.map((row) => headers.map((key) => row?.[key] ?? ''));
+    return { headers, dataRows };
+  };
+
+  const downloadDetailCsv = () => {
+    const { headers, dataRows } = buildDetailExport();
+    if (!headers.length) return;
+    const csv = [headers.join(','), ...dataRows.map((r) => r.map((v) => String(v)).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'volunteer-enrichment-details.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const downloadDetailXls = () => {
+    const { headers, dataRows } = buildDetailExport();
+    if (!headers.length) return;
+    const tableRows = [headers, ...dataRows]
+      .map((r) => `<tr>${r.map((v) => `<td>${String(v)}</td>`).join('')}</tr>`)
+      .join('');
+    const html = `<table>${tableRows}</table>`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'volunteer-enrichment-details.xls';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
   const loadAnalysis = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await mobileApi.fetchVolunteerAnalysis();
+      const res = await mobileApi.fetchVolunteerAnalysis(selectedWard || undefined);
       const payload = res?.data?.result || res?.result || {};
       setRows(payload?.rows || []);
       setFields(payload?.fields || []);
@@ -1856,7 +1961,7 @@ function VolunteerAnalysisScreen() {
 
   useEffect(() => {
     if (role !== 'BOOTH') loadAnalysis();
-  }, [role]);
+  }, [role, selectedWard]);
 
   if (role === 'BOOTH') {
     return (
@@ -1873,7 +1978,7 @@ function VolunteerAnalysisScreen() {
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-volunteer-shell">
         <MobileHeader title="Volunteer Analysis" subtitle="Data collection coverage by volunteer." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
-        {role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access.</div> : null}
+        {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access.</div> : null}
         <div className="mobile-web-action-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
           <button type="button" className="mobile-web-primary-btn" onClick={loadAnalysis} disabled={loading}>
             {loading ? 'Refreshing...' : 'Get Latest Data'}
@@ -1887,6 +1992,24 @@ function VolunteerAnalysisScreen() {
         </div>
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
           <div className="mobile-web-field">
+            <label>Ward</label>
+            <SingleOptionSelect
+              label="Ward"
+              options={['All Wards', ...wardItems.map((item) => item.label)]}
+              value={selectedWard ? (wardItems.find((item) => item.value === selectedWard)?.label || '') : 'All Wards'}
+              customValue=""
+              onSelect={(option) => {
+                if (option === 'All Wards') {
+                  setSelectedWard('');
+                  return;
+                }
+                const match = wardItems.find((item) => item.label === option);
+                setSelectedWard(match?.value || '');
+              }}
+              onCustomValueChange={() => { }}
+            />
+          </div>
+          <div className="mobile-web-field">
             <label>Sort By</label>
             <SingleOptionSelect
               label="Sort By"
@@ -1897,6 +2020,7 @@ function VolunteerAnalysisScreen() {
               onCustomValueChange={() => { }}
             />
           </div>
+
         </div>
         {error ? <div className="mobile-web-error">{error}</div> : null}
         {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
@@ -1923,8 +2047,62 @@ function VolunteerAnalysisScreen() {
                     ))}
                   </tr>
                 ))}
+                <tr className="mobile-web-analysis-total">
+                  <td>Total</td>
+                  <td>-</td>
+                  {fields.map((field) => (
+                    <td key={`total-${field.key}`}>
+                      {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
+                    </td>
+                  ))}
+                </tr>
               </tbody>
             </table>
+          </div>
+        ) : null}
+        {hydrated && role === 'SUPER_ADMIN' ? (
+          <div className="mobile-web-field">
+            <label className='mt-5'>Details</label>
+            <button type="button" className="mobile-web-secondary-btn" onClick={toggleDetails} disabled={detailLoading}>
+              {showDetails ? 'Hide Enrichment Details' : 'Show Enrichment Details'}
+            </button>
+          </div>
+        ) : null}
+        {hydrated && role === 'SUPER_ADMIN' && showDetails ? (
+          <div className="mobile-web-stack">
+            <div className="mobile-web-action-row">
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailCsv} disabled={!detailRows.length}>
+                Download Detailed CSV
+              </button>
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailXls} disabled={!detailRows.length}>
+                Download Detailed Excel
+              </button>
+            </div>
+            {detailError ? <div className="mobile-web-error">{detailError}</div> : null}
+            {detailLoading ? <div className="mobile-web-empty">Loading enrichment details...</div> : null}
+            {!detailLoading && detailRows.length === 0 ? <div className="mobile-web-empty">No enrichment details found.</div> : null}
+            {!detailLoading && detailRows.length > 0 ? (
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail">
+                <table className="mobile-web-analysis-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(detailRows[0] || {}).map((key) => (
+                        <th key={key}>{key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailRows.map((row, idx) => (
+                      <tr key={`${row.epicNo || row.epic || 'row'}-${idx}`}>
+                        {Object.keys(detailRows[0] || {}).map((key) => (
+                          <td key={`${idx}-${key}`}>{row?.[key] ?? ''}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>

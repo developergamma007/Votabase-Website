@@ -262,6 +262,15 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchVolunteerEnrichmentDetails: async (wardId) => {
+    try {
+      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
+      return await request(`/votebase/v1/api/volunteers/analysis/enrichment${query}`);
+    } catch (error) {
+      console.log('Error while fetching volunteer enrichment details:', error);
+      throw error;
+    }
+  },
 
   addVolunteer: async (data) => {
     try {
@@ -348,9 +357,10 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchVolunteerAnalysis: async () => {
+  fetchVolunteerAnalysis: async (wardId) => {
     try {
-      return await request('/votebase/v1/api/volunteers/analysis');
+      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
+      return await request(`/votebase/v1/api/volunteers/analysis${query}`);
     } catch (error) {
       console.log('Error while fetching volunteer analysis:', error);
       throw error;
