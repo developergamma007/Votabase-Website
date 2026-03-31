@@ -252,20 +252,24 @@ export const mobileApi = {
     }
   },
 
-  getVolunteerList: async (role, page, size, search, blocked, sortBy, direction, assignmentType) => {
+  getVolunteerList: async (role, page, size, search, blocked, sortBy, direction, assignmentType, deleted) => {
     try {
       return await request(
-        `/votebase/v1/api/volunteers?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&search=${encodeURIComponent(search)}&blocked=${encodeURIComponent(blocked)}&sortBy=${encodeURIComponent(sortBy)}&direction=${encodeURIComponent(direction)}&workingLevel=${encodeURIComponent(assignmentType)}`
+        `/votebase/v1/api/volunteers?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&search=${encodeURIComponent(search)}&blocked=${encodeURIComponent(blocked)}&sortBy=${encodeURIComponent(sortBy)}&direction=${encodeURIComponent(direction)}&workingLevel=${encodeURIComponent(assignmentType)}&deleted=${encodeURIComponent(deleted ?? '')}`
       );
     } catch (error) {
       console.log('Error while fetching volunteer data:', error);
       throw error;
     }
   },
-  fetchVolunteerEnrichmentDetails: async (wardId) => {
+  fetchVolunteerEnrichmentDetails: async (wardId, updatedFrom, updatedTo) => {
     try {
-      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
-      return await request(`/votebase/v1/api/volunteers/analysis/enrichment${query}`);
+      const params = new URLSearchParams();
+      if (wardId) params.set('wardId', String(wardId));
+      if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
+      if (updatedTo) params.set('updatedTo', String(updatedTo));
+      const qs = params.toString();
+      return await request(`/votebase/v1/api/volunteers/analysis/enrichment${qs ? `?${qs}` : ''}`);
     } catch (error) {
       console.log('Error while fetching volunteer enrichment details:', error);
       throw error;
@@ -280,6 +284,17 @@ export const mobileApi = {
       });
     } catch (error) {
       console.log('Error while adding volunteer:', error);
+      return error?.message ? error.message : error;
+    }
+  },
+  updateVolunteer: async (data) => {
+    try {
+      return await request('/votebase/v1/api/volunteers', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    } catch (error) {
+      console.log('Error while updating volunteer:', error);
       return error?.message ? error.message : error;
     }
   },
@@ -363,6 +378,15 @@ export const mobileApi = {
       return await request(`/votebase/v1/api/volunteers/analysis${query}`);
     } catch (error) {
       console.log('Error while fetching volunteer analysis:', error);
+      throw error;
+    }
+  },
+  fetchVolunteerLocationPoints: async (wardId) => {
+    try {
+      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
+      return await request(`/votebase/v1/api/volunteers/analysis/locations${query}`);
+    } catch (error) {
+      console.log('Error while fetching volunteer map locations:', error);
       throw error;
     }
   },

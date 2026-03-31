@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Menu as MenuIcon,
   Home as HomeIcon,
@@ -19,6 +19,7 @@ import {
   EventNote,
   HowToVote as HowToVoteIcon,
   Print as PrintIcon,
+  AccountCircle,
   Logout as LogoutIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
@@ -49,15 +50,23 @@ const menuItems = [
 
 export default function MainLayout({ children, hidePrimaryNav = false }) {
   const [open, setOpen] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
-  const role = useMemo(() => {
-    if (typeof window === 'undefined') return '';
+  const [userInfo, setUserInfo] = useState({});
+  const [role, setRole] = useState('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
-      const info = JSON.parse(localStorage.getItem('userInfo') || '{}');
-      return (info.role || localStorage.getItem('role') || '').replace('ROLE_', '').toUpperCase();
+      const parsed = JSON.parse(localStorage.getItem('userInfo') || '{}');
+      setUserInfo(parsed || {});
+      const rawRole = parsed?.role || localStorage.getItem('role') || '';
+      setRole(rawRole.replace('ROLE_', '').toUpperCase());
     } catch {
-      return (localStorage.getItem('role') || '').replace('ROLE_', '').toUpperCase();
+      setUserInfo({});
+      const rawRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
+      setRole(rawRole.replace('ROLE_', '').toUpperCase());
     }
   }, []);
 
@@ -102,7 +111,11 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     if (isSmallScreen() && open) {
       setOpen(false);
     }
+    if (profileOpen) setProfileOpen(false);
   };
+
+  const displayName = userInfo?.firstName || userInfo?.userName || userInfo?.name || 'User';
+  const displayPhone = userInfo?.phone || userInfo?.mobile || '';
 
   return (
     <div className={`app-shell app-font ${open ? 'nav-open' : 'nav-closed'}`}>
@@ -147,10 +160,23 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
           <div className="top-bar-title">
             <h6 className="top-title">{activeLabel}</h6>
           </div>
-          <button onClick={handleLogout} className="logout-btn">
-            <LogoutIcon fontSize="small" />
-            Logout
-          </button>
+          <div className="profile-menu">
+            <button className="profile-trigger" type="button" onClick={() => setProfileOpen((v) => !v)}>
+              <AccountCircle fontSize="small" />
+            </button>
+            {profileOpen ? (
+              <div className="profile-dropdown">
+                <div className="profile-info">
+                  <div className="profile-name">{displayName}</div>
+                  {displayPhone ? <div className="profile-phone">{displayPhone}</div> : null}
+                </div>
+                <button onClick={handleLogout} className="profile-logout" type="button">
+                  <LogoutIcon fontSize="small" />
+                  Logout
+                </button>
+              </div>
+            ) : null}
+          </div>
         </header>
 
         <main className="content-area" onClick={handleBackdropClick}>{children}</main>

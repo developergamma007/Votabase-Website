@@ -241,6 +241,15 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const boothNumber = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '';
   const boothTitle = `${boothNumber}${booth?.boothLabel || voter?.boothLabel ? ' - ' : ''}${booth?.boothLabel || voter?.boothLabel || ''}`;
   const resolvedPhone = normalizeMobileValue(currentPayload.mobile || voter?.mobile);
+  const mapTarget = useMemo(() => {
+    const lat = location?.latitude ?? voter?.latitude;
+    const lng = location?.longitude ?? voter?.longitude;
+    if (!lat || !lng) return null;
+    return { latitude: lat, longitude: lng };
+  }, [location, voter]);
+  const mapSrc = mapTarget
+    ? `https://maps.google.com/maps?q=${mapTarget.latitude},${mapTarget.longitude}&z=15&output=embed`
+    : '';
 
   const handleFieldChange = (key, value) => {
     const nextValue = key === 'mobile' ? normalizeMobileValue(value) : value;
@@ -333,6 +342,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     window.location.href = `tel:${resolvedPhone}`;
   };
 
+
   const renderSelect = (key, placeholder, multiple = false) => {
     const options = dropdownOptions[key] || [];
     if (multiple) {
@@ -421,6 +431,19 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <strong>Polling Booth</strong>
             <span>{boothTitle || '-'}</span>
           </p>
+        </div>
+        <div className="mobile-web-map-card">
+          {mapTarget ? (
+            <iframe
+              className="mobile-web-map-frame"
+              title="Voter location map"
+              src={mapSrc}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          ) : (
+            <div className="mobile-web-map-placeholder">Capture location to preview map.</div>
+          )}
         </div>
         <button className="mobile-web-location-btn" onClick={getLocation} type="button">
           <LocationOnOutlined />
@@ -1015,8 +1038,31 @@ function AddVolunteerScreen() {
   const [booths, setBooths] = useState([]);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState({ error: '', success: '' });
+  const [isEditing, setIsEditing] = useState(false);
+  const [editPhone, setEditPhone] = useState('');
   const userInfo = useMemo(() => getUserInfoSafe(), []);
   const role = userInfo?.role || 'ADMIN';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const raw = sessionStorage.getItem('volunteerEdit');
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      setForm({
+        firstName: parsed.firstName || '',
+        phone: parsed.phone || '',
+        workingLevel: parsed.workingLevel || 'ASSEMBLY',
+        assemblyId: parsed.assemblyId || '',
+        wardIds: parsed.wardIds || [],
+        boothIds: parsed.boothIds || [],
+      });
+      setIsEditing(true);
+      setEditPhone(parsed.phone || '');
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const handleChange = (key, value) => {
     const nextValue = key === 'phone' ? String(value || '').replace(/\D/g, '').slice(0, 10) : value;
@@ -1025,6 +1071,9 @@ function AddVolunteerScreen() {
   const handleReset = (preserveFeedback = false) => {
     setForm({ firstName: '', phone: '', workingLevel: 'ASSEMBLY', assemblyId: '', wardIds: [], boothIds: [] });
     if (!preserveFeedback) setFeedback({ error: '', success: '' });
+    setIsEditing(false);
+    setEditPhone('');
+    if (typeof window !== 'undefined') sessionStorage.removeItem('volunteerEdit');
   };
 
   const resolveAssignment = () => {
@@ -1101,16 +1150,16 @@ function AddVolunteerScreen() {
       }
       const payload = {
         firstName: form.firstName.trim(),
-        phone: form.phone.trim(),
+        phone: (isEditing ? editPhone : form.phone).trim(),
         workingLevel: form.workingLevel,
         assemblyIds: form.assemblyId ? [Number(form.assemblyId)] : [],
         wardIds: form.wardIds.map((id) => Number(id)),
         boothIds: form.boothIds.map((id) => Number(id)),
       };
-      const res = await mobileApi.addVolunteer(payload);
+      const res = isEditing ? await mobileApi.updateVolunteer(payload) : await mobileApi.addVolunteer(payload);
       if (res?.success) {
         handleReset(true);
-        setFeedback({ error: '', success: res?.message || 'Volunteer added successfully.' });
+        setFeedback({ error: '', success: res?.message || (isEditing ? 'Volunteer updated successfully.' : 'Volunteer added successfully.') });
       } else {
         setFeedback({ error: res?.detail || res?.message || 'Unable to add volunteer.', success: '' });
       }
@@ -1149,7 +1198,7 @@ function AddVolunteerScreen() {
             </div>
             <div className="mobile-web-field">
               <label>Phone * </label>
-              <input className="mobile-web-input" placeholder="Phone" value={form.phone} maxLength={10} inputMode="numeric" onChange={(e) => handleChange('phone', e.target.value)} />
+              <input className="mobile-web-input" placeholder="Phone" value={form.phone} maxLength={10} inputMode="numeric" onChange={(e) => handleChange('phone', e.target.value)} disabled={isEditing} />
             </div>
             <div className="mobile-web-field">
               <label>Working Level *</label>
@@ -1212,7 +1261,7 @@ function AddVolunteerScreen() {
           </div>
           <div className="mobile-web-actions">
             <button className="mobile-web-secondary-btn" type="button" onClick={handleReset}>Reset</button>
-            <button className="mobile-web-primary-btn" type="button" onClick={handleSubmit} disabled={saving}>{saving ? 'Submitting...' : 'Submit'}</button>
+            <button className="mobile-web-primary-btn" type="button" onClick={handleSubmit} disabled={saving}>{saving ? (isEditing ? 'Updating...' : 'Submitting...') : (isEditing ? 'Update' : 'Submit')}</button>
           </div>
           {feedback.error ? <div className="mobile-web-error">{feedback.error}</div> : null}
           {feedback.success ? <div className="mobile-web-success">{feedback.success}</div> : null}
@@ -1226,6 +1275,7 @@ function MyVolunteersScreen() {
   const [search, setSearch] = useState('');
   const [workingLevel, setWorkingLevel] = useState('');
   const [sortMode, setSortMode] = useState('latest');
+  const [showDeleted, setShowDeleted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState([]);
   const [actionLoading, setActionLoading] = useState({});
@@ -1252,7 +1302,17 @@ function MyVolunteersScreen() {
     setFeedback({ error: '', success: '' });
     try {
       const sortConfig = resolveSort();
-      const res = await mobileApi.getVolunteerList(role, 0, 50, search, '', sortConfig.sortBy, sortConfig.direction, workingLevel);
+      const res = await mobileApi.getVolunteerList(
+        role,
+        0,
+        50,
+        search,
+        '',
+        sortConfig.sortBy,
+        sortConfig.direction,
+        workingLevel,
+        showDeleted ? 'true' : 'false'
+      );
       const list = res?.content ?? [];
       setVolunteers(list);
     } catch (error) {
@@ -1264,7 +1324,7 @@ function MyVolunteersScreen() {
 
   useEffect(() => {
     loadVolunteers();
-  }, [search, workingLevel, sortMode]);
+  }, [search, workingLevel, sortMode, showDeleted]);
 
   const toggleSelect = (email) => {
     setSelected((prev) => (prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]));
@@ -1285,13 +1345,32 @@ function MyVolunteersScreen() {
   const handleDelete = async (email, del) => {
     setActionLoading((prev) => ({ ...prev, [`delete-${email}`]: true }));
     try {
+      if (!window.confirm(del ? 'Restore this volunteer?' : 'Delete this volunteer?')) {
+        setActionLoading((prev) => ({ ...prev, [`delete-${email}`]: false }));
+        return;
+      }
       await mobileApi.removeVolunteer({ userEmail: email, delete: del });
       await loadVolunteers();
+      setFeedback({ error: '', success: del ? 'Volunteer deleted.' : 'Volunteer restored.' });
     } catch {
       setFeedback({ error: 'Unable to update volunteer.', success: '' });
     } finally {
       setActionLoading((prev) => ({ ...prev, [`delete-${email}`]: false }));
     }
+  };
+
+  const handleEdit = (v) => {
+    if (typeof window === 'undefined') return;
+    const payload = {
+      firstName: v.firstName || v.userName || '',
+      phone: v.phone || '',
+      workingLevel: (v.workingLevel || v.assignmentType || 'ASSEMBLY').toUpperCase(),
+      assemblyId: (v.assemblyIds && v.assemblyIds[0]) ? String(v.assemblyIds[0]) : '',
+      wardIds: (v.wardIds || []).map((id) => String(id)),
+      boothIds: (v.boothIds || []).map((id) => String(id)),
+    };
+    sessionStorage.setItem('volunteerEdit', JSON.stringify(payload));
+    window.location.href = '/mobile/add-volunteer';
   };
 
   const handleBulkDelete = async () => {
@@ -1369,6 +1448,12 @@ function MyVolunteersScreen() {
                 <label>Sort By</label>
                 <SingleOptionSelect label="Sort By" options={sortOptions.map((item) => item.label)} value={selectedSortLabel} customValue="" onSelect={(option) => setSortMode(sortOptions.find((item) => item.label === option)?.value ?? 'latest')} onCustomValueChange={() => { }} />
               </div>
+              <div className="mobile-web-field">
+                <label>Deleted</label>
+                <button type="button" className="mobile-web-secondary-btn" onClick={() => setShowDeleted((current) => !current)}>
+                  {showDeleted ? 'Hide Deleted' : 'Show Deleted'}
+                </button>
+              </div>
             </div>
             <div className="mobile-web-volunteer-stats">
               <div className="mobile-web-volunteer-pill total">Total <strong>{stats.total}</strong></div>
@@ -1417,8 +1502,23 @@ function MyVolunteersScreen() {
                           <span>User ID : </span>
                           <strong>{v.userName || '-'}</strong>
                         </div>
+                        <div>
+                          <span>Wards : </span>
+                          <strong>{(v.wardNames || []).length ? v.wardNames.join(', ') : '-'}</strong>
+                        </div>
+                        <div>
+                          <span>Booths : </span>
+                          <strong>{(v.boothNames || []).length ? v.boothNames.join(', ') : '-'}</strong>
+                        </div>
                       </div>
                       <div className="mobile-web-volunteer-inline-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(v)}
+                          className="px-4 py-2 text-sm font-medium text-white rounded-lg transition bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+                        >
+                          Edit
+                        </button>
                         {/* <button className="mobile-web-secondary-btn" type="button" onClick={() => handleDelete(v.userName, !deleted)} disabled={actionLoading[`delete-${v.userName}`]}>
                           {actionLoading[`delete-${v.userName}`] ? <span className="mobile-web-spinner" /> : null}
                           {deleted ? 'Undelete' : 'Delete'}
@@ -1630,31 +1730,427 @@ function VotersFamilyScreen() {
 }
 
 function MeetingsScreen() {
-  const meetings = [
-    { id: 1, title: 'Booth Volunteer Sync', time: '10:00 AM', location: 'Ward Office', date: 'Apr 26, 2024', status: 'Scheduled' },
-    { id: 2, title: 'Voter Outreach Check-in', time: '4:30 PM', location: 'Community Hall', date: 'Apr 28, 2024', status: 'Pending' },
-    { id: 3, title: 'Field Report Review', time: '6:00 PM', location: 'Campaign HQ', date: 'Apr 30, 2024', status: 'Completed' },
-  ];
+  const [meetings, setMeetings] = useState([
+    {
+      id: 1,
+      title: 'Ward Coordination Meeting',
+      dateTime: '11/15/2025, 1:48:42 AM',
+      description: 'Discuss booth assignments and outreach',
+      latitude: 12.9716,
+      longitude: 77.5946,
+      radius: 150,
+    },
+    {
+      id: 2,
+      title: 'Booth Volunteer Training',
+      dateTime: '11/16/2025, 12:48:42 AM',
+      description: 'Training for booth volunteers',
+      latitude: 12.9352,
+      longitude: 77.6245,
+      radius: 80,
+    },
+  ]);
+  const [selectedMeeting, setSelectedMeeting] = useState(meetings[0]);
+  const [newMeeting, setNewMeeting] = useState({
+    title: '',
+    start: '',
+    end: '',
+    latitude: '',
+    longitude: '',
+    radius: 100,
+  });
+  const [newMeetingRecipients, setNewMeetingRecipients] = useState({
+    peers: false,
+    parliament: false,
+    assembly: false,
+    ward: false,
+    boothPresident: false,
+    boothCommittee: false,
+    karyakartas: false,
+    supporter: false,
+  });
+  const [newMeetingChannels, setNewMeetingChannels] = useState({ appAlert: true, whatsapp: false });
+  const [showNewMeeting, setShowNewMeeting] = useState(false);
+  const [mapsKey, setMapsKey] = useState('');
+  const [mapsKeyInput, setMapsKeyInput] = useState('');
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+  const newMapRef = useRef(null);
+  const newMapInstanceRef = useRef(null);
+  const newMarkerRef = useRef(null);
+  const newMeetingLocInitRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
+    const storedKey = localStorage.getItem('gmapsKey') || '';
+    const resolved = envKey || storedKey;
+    setMapsKey(resolved);
+    setMapsKeyInput(resolved);
+  }, []);
+
+  const saveMapsKey = () => {
+    if (typeof window === 'undefined') return;
+    const nextKey = String(mapsKeyInput || '').trim();
+    if (!nextKey) {
+      localStorage.removeItem('gmapsKey');
+      setMapsKey('');
+      return;
+    }
+    localStorage.setItem('gmapsKey', nextKey);
+    setMapsKey(nextKey);
+  };
+
+  const loadGoogleMaps = () => new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Maps not available.'));
+      return;
+    }
+    if (window.google?.maps) {
+      resolve(window.google);
+      return;
+    }
+    if (!mapsKey) {
+      reject(new Error('Google Maps key not configured.'));
+      return;
+    }
+    const existing = document.querySelector('script[data-google-maps="true"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.google));
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleMaps = 'true';
+    script.onload = () => resolve(window.google);
+    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
+    document.body.appendChild(script);
+  });
+
+  const syncMap = async (meeting) => {
+    if (!mapRef.current) return;
+    try {
+      const google = await loadGoogleMaps();
+      const center = {
+        lat: meeting?.latitude ?? 12.9716,
+        lng: meeting?.longitude ?? 77.5946,
+      };
+      if (!mapInstanceRef.current) {
+        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+          center,
+          zoom: 14,
+          mapTypeId: 'roadmap',
+        });
+        mapInstanceRef.current.addListener('click', (event) => {
+          if (!event?.latLng) return;
+          const lat = event.latLng.lat();
+          const lng = event.latLng.lng();
+          setSelectedMeeting((prev) => (prev ? { ...prev, latitude: lat, longitude: lng } : prev));
+        });
+      } else {
+        mapInstanceRef.current.setCenter(center);
+      }
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
+      }
+      markerRef.current = new google.maps.Marker({
+        position: center,
+        map: mapInstanceRef.current,
+      });
+    } catch {
+      // ignore map errors here; UI will show key input
+    }
+  };
+
+  useEffect(() => {
+    if (selectedMeeting) syncMap(selectedMeeting);
+  }, [selectedMeeting, mapsKey]);
+
+  const syncNewMeetingMap = async () => {
+    if (!newMapRef.current) return;
+    try {
+      const google = await loadGoogleMaps();
+      const lat = Number(newMeeting.latitude) || 12.9716;
+      const lng = Number(newMeeting.longitude) || 77.5946;
+      const center = { lat, lng };
+      if (!newMapInstanceRef.current) {
+        newMapInstanceRef.current = new google.maps.Map(newMapRef.current, {
+          center,
+          zoom: 14,
+          mapTypeId: 'roadmap',
+        });
+        newMapInstanceRef.current.addListener('click', (event) => {
+          if (!event?.latLng) return;
+          const clickLat = event.latLng.lat();
+          const clickLng = event.latLng.lng();
+          setNewMeeting((prev) => ({ ...prev, latitude: clickLat.toFixed(6), longitude: clickLng.toFixed(6) }));
+        });
+      } else {
+        newMapInstanceRef.current.setCenter(center);
+      }
+      if (newMarkerRef.current) {
+        newMarkerRef.current.setPosition(center);
+      } else {
+        newMarkerRef.current = new google.maps.Marker({
+          position: center,
+          map: newMapInstanceRef.current,
+          draggable: true,
+        });
+        newMarkerRef.current.addListener('dragend', (event) => {
+          if (!event?.latLng) return;
+          const dragLat = event.latLng.lat();
+          const dragLng = event.latLng.lng();
+          setNewMeeting((prev) => ({ ...prev, latitude: dragLat.toFixed(6), longitude: dragLng.toFixed(6) }));
+        });
+      }
+    } catch {
+      // ignore map errors
+    }
+  };
+
+  useEffect(() => {
+    if (!mapsKey) return;
+    syncNewMeetingMap();
+  }, [mapsKey, newMeeting.latitude, newMeeting.longitude]);
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setNewMeeting((prev) => ({ ...prev, latitude: lat.toFixed(6), longitude: lng.toFixed(6) }));
+      },
+      () => {}
+    );
+  };
+
+  useEffect(() => {
+    if (!showNewMeeting) return;
+    if (newMeetingLocInitRef.current) return;
+    newMeetingLocInitRef.current = true;
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setNewMeeting((prev) => ({
+          ...prev,
+          latitude: prev.latitude || lat.toFixed(6),
+          longitude: prev.longitude || lng.toFixed(6),
+        }));
+      },
+      () => {}
+    );
+  }, [showNewMeeting]);
+
+  useEffect(() => {
+    setMeetings((prev) => prev.map((m) => (m.id === selectedMeeting?.id ? selectedMeeting : m)));
+  }, [selectedMeeting]);
 
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-meetings-shell">
-        <MobileHeader title="Meetings" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
-        <div className="mobile-web-action-row">
-          <button className="mobile-web-primary-btn" type="button">Create Meeting</button>
-          <button className="mobile-web-secondary-btn" type="button">Filter</button>
+        <div className="mobile-web-meetings-header">
+          <h2>Meetings</h2>
+          <div className="mobile-web-meeting-actions">
+            <button className="mobile-web-secondary-btn" type="button" onClick={() => setShowNewMeeting((prev) => !prev)}>
+              {showNewMeeting ? 'Close' : 'New Meeting'}
+            </button>
+            <button className="mobile-web-secondary-btn" type="button">Refresh</button>
+          </div>
         </div>
-        <div className="mobile-web-meeting-list">
+        <div className="mobile-web-meeting-grid">
           {meetings.map((meeting) => (
             <div key={meeting.id} className="mobile-web-meeting-card">
               <div>
                 <h3>{meeting.title}</h3>
-                <p>{meeting.date} · {meeting.time}</p>
-                <p className="mobile-web-muted">{meeting.location}</p>
+                <p>{meeting.dateTime}</p>
+                <p className="mobile-web-muted">{meeting.description}</p>
+                <p className="mobile-web-muted">Location: {meeting.latitude.toFixed(4)}, {meeting.longitude.toFixed(4)} · Radius: {meeting.radius} m</p>
               </div>
-              <span className={`mobile-web-tag ${meeting.status.toLowerCase()}`}>{meeting.status}</span>
+              <button
+                className="mobile-web-secondary-btn"
+                type="button"
+                onClick={() => setSelectedMeeting(meeting)}
+              >
+                Open
+              </button>
             </div>
           ))}
+        </div>
+        {showNewMeeting ? (
+          <div className="mobile-web-meeting-detail">
+            <h3>New meeting</h3>
+            <div className="mobile-web-meeting-detail-card">
+              <div className="mobile-web-field">
+                <label>Meeting Name</label>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Meeting Name"
+                  value={newMeeting.title}
+                  onChange={(e) => setNewMeeting((prev) => ({ ...prev, title: e.target.value }))}
+                />
+              </div>
+              <div className="mobile-web-form-grid">
+                <div className="mobile-web-field">
+                  <label>Start (local)</label>
+                  <input
+                    className="mobile-web-input"
+                    type="datetime-local"
+                    value={newMeeting.start}
+                    onChange={(e) => setNewMeeting((prev) => ({ ...prev, start: e.target.value }))}
+                  />
+                </div>
+                <div className="mobile-web-field">
+                  <label>End (optional)</label>
+                  <input
+                    className="mobile-web-input"
+                    type="datetime-local"
+                    value={newMeeting.end}
+                    onChange={(e) => setNewMeeting((prev) => ({ ...prev, end: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="mobile-web-form-grid">
+                <div className="mobile-web-field">
+                  <label>Latitude</label>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Latitude"
+                    value={newMeeting.latitude}
+                    onChange={(e) => setNewMeeting((prev) => ({ ...prev, latitude: e.target.value }))}
+                  />
+                </div>
+                <div className="mobile-web-field">
+                  <label>Longitude</label>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Longitude"
+                    value={newMeeting.longitude}
+                    onChange={(e) => setNewMeeting((prev) => ({ ...prev, longitude: e.target.value }))}
+                  />
+                </div>
+                <div className="mobile-web-field">
+                  <label>Radius (m)</label>
+                  <input
+                    className="mobile-web-input"
+                    type="number"
+                    value={newMeeting.radius}
+                    onChange={(e) => setNewMeeting((prev) => ({ ...prev, radius: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+              </div>
+              <div className="mobile-web-meeting-recipient">
+                <h4>Recipients</h4>
+                <div className="mobile-web-checkbox-grid">
+                  {[
+                    ['peers', 'Peers'],
+                    ['parliament', 'Parliament'],
+                    ['assembly', 'Assembly'],
+                    ['ward', 'Ward'],
+                    ['boothPresident', 'Booth President'],
+                    ['boothCommittee', 'Booth Committee'],
+                    ['karyakartas', 'Karyakartas'],
+                    ['supporter', 'Supporter'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="mobile-web-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={newMeetingRecipients[key]}
+                        onChange={() => setNewMeetingRecipients((prev) => ({ ...prev, [key]: !prev[key] }))}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="mobile-web-meeting-recipient">
+                <div className="mobile-web-checkbox-grid">
+                  {[
+                    ['appAlert', 'App Alert'],
+                    ['whatsapp', 'WhatsApp'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="mobile-web-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={newMeetingChannels[key]}
+                        onChange={() => setNewMeetingChannels((prev) => ({ ...prev, [key]: !prev[key] }))}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {!mapsKey ? (
+                <div className="mobile-web-map-key">
+                  <label>Google Maps API Key</label>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Paste API key"
+                    value={mapsKeyInput}
+                    onChange={(e) => setMapsKeyInput(e.target.value)}
+                  />
+                  <button type="button" className="mobile-web-secondary-btn" onClick={saveMapsKey}>
+                    Save Key
+                  </button>
+                </div>
+              ) : null}
+              <div className="mobile-web-meeting-map" ref={newMapRef} />
+              <div className="mobile-web-meeting-footer">
+                <button type="button" className="mobile-web-secondary-btn" onClick={handleUseMyLocation}>
+                  Use my location
+                </button>
+                <button type="button" className="mobile-web-primary-btn">
+                  Save Meeting
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div className="mobile-web-meeting-detail">
+          <h3>Open meeting detail (demo)</h3>
+          {selectedMeeting ? (
+            <div className="mobile-web-meeting-detail-card">
+              <h4>{selectedMeeting.title}</h4>
+              <p>{selectedMeeting.dateTime}</p>
+              <p className="mobile-web-muted">{selectedMeeting.description}</p>
+              <p className="mobile-web-muted">
+                Location: {selectedMeeting.latitude.toFixed(4)}, {selectedMeeting.longitude.toFixed(4)} · Radius: {selectedMeeting.radius} m
+              </p>
+              {!mapsKey ? (
+                <div className="mobile-web-map-key">
+                  <label>Google Maps API Key</label>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Paste API key"
+                    value={mapsKeyInput}
+                    onChange={(e) => setMapsKeyInput(e.target.value)}
+                  />
+                  <button type="button" className="mobile-web-secondary-btn" onClick={saveMapsKey}>
+                    Save Key
+                  </button>
+                </div>
+              ) : null}
+              <div className="mobile-web-meeting-map" ref={mapRef} />
+              <div className="mobile-web-form-grid">
+                <div className="mobile-web-field">
+                  <label>Radius (m)</label>
+                  <input
+                    className="mobile-web-input"
+                    type="number"
+                    value={selectedMeeting.radius}
+                    onChange={(e) => setSelectedMeeting((prev) => ({ ...prev, radius: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+              </div>
+              <button className="mobile-web-primary-btn" type="button">Attended</button>
+            </div>
+          ) : null}
         </div>
       </section>
     </ScreenFrame>
@@ -1779,15 +2275,26 @@ function VolunteerAnalysisScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sortMode, setSortMode] = useState('name-asc');
+  const [activeTab, setActiveTab] = useState('table');
   const [detailRows, setDetailRows] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
+  const [detailFrom, setDetailFrom] = useState('');
+  const [detailTo, setDetailTo] = useState('');
+  const [mapPoints, setMapPoints] = useState([]);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapError, setMapError] = useState('');
+  const [mapsKey, setMapsKey] = useState('');
+  const [mapsKeyInput, setMapsKeyInput] = useState('');
   const userInfo = useMemo(() => getUserInfoSafe(), []);
   const [role, setRole] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [wardItems, setWardItems] = useState([]);
   const [selectedWard, setSelectedWard] = useState('');
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const mapMarkersRef = useRef([]);
 
   useEffect(() => {
     setRole((userInfo?.role || '').toUpperCase());
@@ -1846,11 +2353,19 @@ function VolunteerAnalysisScreen() {
     return items.sort((a, b) => String(a.agentName || '').localeCompare(String(b.agentName || ''), 'en'));
   }, [rows, sortMode]);
 
+  const formatDateTime = (value) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString();
+  };
+
   const buildExportRows = () => {
-    const headers = ['Agent Name', 'Mobile No', ...fields.map((f) => f.label)];
+    const headers = ['Agent Name', 'Mobile No', 'Last Updated At', ...fields.map((f) => f.label)];
     const dataRows = sortedRows.map((row) => [
       row.agentName || '',
       row.phone || '',
+      row.lastUpdatedAt || '',
       ...fields.map((f) => row.counts?.[f.key] ?? 0),
     ]);
     return { headers, dataRows };
@@ -1885,7 +2400,7 @@ function VolunteerAnalysisScreen() {
     setDetailLoading(true);
     setDetailError('');
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, detailFrom || undefined, detailTo || undefined);
       const payload = res?.data?.result || res?.result || [];
       setDetailRows(Array.isArray(payload) ? payload : []);
     } catch (err) {
@@ -1908,14 +2423,7 @@ function VolunteerAnalysisScreen() {
     if (showDetails) {
       loadDetails(selectedWard || undefined);
     }
-  }, [selectedWard]);
-
-  const buildDetailExport = () => {
-    if (!detailRows.length) return { headers: [], dataRows: [] };
-    const headers = Object.keys(detailRows[0] || {});
-    const dataRows = detailRows.map((row) => headers.map((key) => row?.[key] ?? ''));
-    return { headers, dataRows };
-  };
+  }, [selectedWard, detailFrom, detailTo]);
 
   const downloadDetailCsv = () => {
     const { headers, dataRows } = buildDetailExport();
@@ -1963,6 +2471,184 @@ function VolunteerAnalysisScreen() {
     if (role !== 'BOOTH') loadAnalysis();
   }, [role, selectedWard]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
+    const storedKey = localStorage.getItem('gmapsKey') || '';
+    const resolved = envKey || storedKey;
+    setMapsKey(resolved);
+    setMapsKeyInput(resolved);
+  }, []);
+
+  const saveMapsKey = () => {
+    if (typeof window === 'undefined') return;
+    const nextKey = String(mapsKeyInput || '').trim();
+    if (!nextKey) {
+      localStorage.removeItem('gmapsKey');
+      setMapsKey('');
+      setMapError('Google Maps key not configured.');
+      return;
+    }
+    localStorage.setItem('gmapsKey', nextKey);
+    setMapsKey(nextKey);
+    setMapError('');
+  };
+
+  const loadGoogleMaps = () => new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Maps are not available on the server.'));
+      return;
+    }
+    if (window.google?.maps) {
+      resolve(window.google);
+      return;
+    }
+    if (!mapsKey) {
+      reject(new Error('Google Maps key not configured.'));
+      return;
+    }
+    const existing = document.querySelector('script[data-google-maps="true"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.google));
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleMaps = 'true';
+    script.onload = () => resolve(window.google);
+    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
+    document.body.appendChild(script);
+  });
+
+  const buildMap = async (points) => {
+    if (!mapRef.current) return;
+    try {
+      const google = await loadGoogleMaps();
+      const validPoints = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+      const center = validPoints.length
+        ? { lat: validPoints[0].latitude, lng: validPoints[0].longitude }
+        : { lat: 12.9716, lng: 77.5946 };
+      if (!mapInstanceRef.current) {
+        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+          center,
+          zoom: validPoints.length ? 13 : 11,
+          mapTypeId: 'roadmap',
+        });
+      } else {
+        mapInstanceRef.current.setCenter(center);
+      }
+      mapMarkersRef.current.forEach((marker) => marker.setMap(null));
+      mapMarkersRef.current = [];
+      validPoints.forEach((point) => {
+        const gender = String(point.gender || '').toUpperCase();
+        const color = gender.startsWith('M') ? '#2563eb' : gender.startsWith('F') ? '#db2777' : '#64748b';
+        const marker = new google.maps.Marker({
+          position: { lat: point.latitude, lng: point.longitude },
+          map: mapInstanceRef.current,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 5,
+            fillColor: color,
+            fillOpacity: 0.85,
+            strokeColor: '#ffffff',
+            strokeWeight: 1,
+          },
+        });
+        mapMarkersRef.current.push(marker);
+      });
+    } catch (err) {
+      setMapError(err?.message || 'Unable to load map.');
+    }
+  };
+
+  const loadMapPoints = async () => {
+    setMapLoading(true);
+    setMapError('');
+    try {
+      if (!mapsKey) {
+        setMapError('Google Maps key not configured.');
+        setMapPoints([]);
+        return;
+      }
+      const res = await mobileApi.fetchVolunteerLocationPoints(selectedWard || undefined);
+      const payload = res?.data?.result || res?.result || [];
+      const points = Array.isArray(payload) ? payload : [];
+      const normalized = points
+        .map((item) => ({
+          latitude: Number(item.latitude),
+          longitude: Number(item.longitude),
+          gender: item.gender || item.sex || '',
+        }))
+        .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
+      setMapPoints(normalized);
+      await buildMap(normalized);
+    } catch (err) {
+      setMapError(err?.message || 'Unable to load map points.');
+      setMapPoints([]);
+    } finally {
+      setMapLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'map') return;
+    loadMapPoints();
+  }, [activeTab, selectedWard]);
+
+  const detailColumns = useMemo(() => {
+    if (!detailRows.length) return [];
+    const excluded = new Set([
+      'firstMiddleNameEn',
+      'lastNameEn',
+      'firstMiddleNameLocal',
+      'lastNameLocal',
+      'relationType',
+      'relationFirstMiddleNameEn',
+      'relationLastNameEn',
+      'relationFirstMiddleNameLocal',
+      'relationLastNameLocal',
+      'houseNoEn',
+      'houseNoLocal',
+      'addressEn',
+      'addressLocal',
+      'team',
+      'updatedFields',
+    ]);
+    const keys = Object.keys(detailRows[0] || {}).filter((key) => !excluded.has(key));
+    const preferredOrder = ['serialNumber', 'wardName', 'name', 'epicNo', 'boothNo', 'voterSerialNo', 'lastUpdatedAt'];
+    const ordered = preferredOrder.filter((key) => keys.includes(key));
+    keys.forEach((key) => {
+      if (!ordered.includes(key)) ordered.push(key);
+    });
+    return ordered;
+  }, [detailRows]);
+
+  const renderDetailValue = (row, key) => {
+    if (key === 'lastUpdatedAt') return formatDateTime(row?.[key]);
+    if (key === 'name' && !row?.[key]) {
+      const fallback = [row?.firstMiddleNameEn, row?.lastNameEn].filter(Boolean).join(' ').trim();
+      return fallback || '-';
+    }
+    return row?.[key] ?? '-';
+  };
+
+  const buildDetailExport = () => {
+    if (!detailRows.length) return { headers: [], dataRows: [] };
+    const headers = detailColumns;
+    const dataRows = detailRows.map((row) => headers.map((key) => {
+      if (key === 'lastUpdatedAt') return formatDateTime(row?.[key]);
+      if (key === 'name' && !row?.[key]) {
+        const fallback = [row?.firstMiddleNameEn, row?.lastNameEn].filter(Boolean).join(' ').trim();
+        return fallback || '';
+      }
+      return row?.[key] ?? '';
+    }));
+    return { headers, dataRows };
+  };
+
   if (role === 'BOOTH') {
     return (
       <ScreenFrame accent="light">
@@ -1979,17 +2665,6 @@ function VolunteerAnalysisScreen() {
       <section className="mobile-web-card mobile-web-volunteer-shell">
         <MobileHeader title="Volunteer Analysis" subtitle="Data collection coverage by volunteer." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access.</div> : null}
-        <div className="mobile-web-action-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button type="button" className="mobile-web-primary-btn" onClick={loadAnalysis} disabled={loading}>
-            {loading ? 'Refreshing...' : 'Get Latest Data'}
-          </button>
-          <button type="button" className="mobile-web-secondary-btn" onClick={downloadCsv} disabled={!rows.length}>
-            Download CSV
-          </button>
-          <button type="button" className="mobile-web-secondary-btn" onClick={downloadXls} disabled={!rows.length}>
-            Download Excel
-          </button>
-        </div>
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
           <div className="mobile-web-field">
             <label>Ward</label>
@@ -2022,16 +2697,50 @@ function VolunteerAnalysisScreen() {
           </div>
 
         </div>
-        {error ? <div className="mobile-web-error">{error}</div> : null}
-        {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
-        {!loading && sortedRows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
-        {!loading && sortedRows.length > 0 ? (
+        <div className="mobile-web-tab-strip mobile-web-analysis-tabs">
+          {['TABLE', 'MAP'].map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={`mobile-web-tab-btn ${activeTab === tab.toLowerCase() ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.toLowerCase())}
+            >
+              {tab === 'TABLE' ? 'Table' : 'Map'}
+            </button>
+          ))}
+        </div>
+        <div className="mobile-web-action-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+          {activeTab === 'table' ? (
+            <>
+              <button type="button" className="mobile-web-primary-btn" onClick={loadAnalysis} disabled={loading}>
+                {loading ? 'Refreshing...' : 'Get Latest Data'}
+              </button>
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadCsv} disabled={!rows.length}>
+                Download CSV
+              </button>
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadXls} disabled={!rows.length}>
+                Download Excel
+              </button>
+            </>
+          ) : (
+            <button type="button" className="mobile-web-primary-btn" onClick={loadMapPoints} disabled={mapLoading}>
+              {mapLoading ? 'Loading Map...' : 'Refresh Map'}
+            </button>
+          )}
+        </div>
+        {activeTab === 'table' ? (
+          <>
+            {error ? <div className="mobile-web-error">{error}</div> : null}
+            {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
+            {!loading && sortedRows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
+            {!loading && sortedRows.length > 0 ? (
           <div className="mobile-web-analysis-table-wrap">
             <table className="mobile-web-analysis-table">
               <thead>
                 <tr>
                   <th>Agent Name</th>
                   <th>Mobile No</th>
+                  <th>Last Updated At</th>
                   {fields.map((field) => (
                     <th key={field.key}>{field.label}</th>
                   ))}
@@ -2042,6 +2751,7 @@ function VolunteerAnalysisScreen() {
                   <tr key={row.userId}>
                     <td>{row.agentName || '-'}</td>
                     <td>{row.phone || '-'}</td>
+                    <td>{formatDateTime(row.lastUpdatedAt)}</td>
                     {fields.map((field) => (
                       <td key={`${row.userId}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
                     ))}
@@ -2049,6 +2759,7 @@ function VolunteerAnalysisScreen() {
                 ))}
                 <tr className="mobile-web-analysis-total">
                   <td>Total</td>
+                  <td>-</td>
                   <td>-</td>
                   {fields.map((field) => (
                     <td key={`total-${field.key}`}>
@@ -2059,17 +2770,55 @@ function VolunteerAnalysisScreen() {
               </tbody>
             </table>
           </div>
-        ) : null}
-        {hydrated && role === 'SUPER_ADMIN' ? (
+            ) : null}
+          </>
+        ) : (
+          <div className="mobile-web-map-shell">
+            {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
+            {!mapsKey ? (
+              <div className="mobile-web-map-key">
+                <label>Google Maps API Key</label>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Paste API key"
+                  value={mapsKeyInput}
+                  onChange={(e) => setMapsKeyInput(e.target.value)}
+                />
+                <button type="button" className="mobile-web-secondary-btn" onClick={saveMapsKey}>
+                  Save Key
+                </button>
+              </div>
+            ) : null}
+            {mapLoading ? <div className="mobile-web-empty">Loading map points...</div> : null}
+            {!mapLoading && mapPoints.length === 0 ? <div className="mobile-web-empty">No captured locations found.</div> : null}
+            <div className="mobile-web-map-legend">
+              <span><i className="legend-dot male" /> Male</span>
+              <span><i className="legend-dot female" /> Female</span>
+              <span><i className="legend-dot unknown" /> Other</span>
+            </div>
+            <div className="mobile-web-map-container" ref={mapRef} />
+          </div>
+        )}
+        {activeTab === 'table' && hydrated && role === 'SUPER_ADMIN' ? (
           <div className="mobile-web-field">
-            <label className='mt-5'>Details</label>
-            <button type="button" className="mobile-web-secondary-btn" onClick={toggleDetails} disabled={detailLoading}>
+            <label className="mt-5">Details</label>
+            <button type="button" className="mobile-web-secondary-btn mobile-web-detail-toggle" onClick={toggleDetails} disabled={detailLoading}>
               {showDetails ? 'Hide Enrichment Details' : 'Show Enrichment Details'}
             </button>
           </div>
         ) : null}
-        {hydrated && role === 'SUPER_ADMIN' && showDetails ? (
+        {activeTab === 'table' && hydrated && role === 'SUPER_ADMIN' && showDetails ? (
           <div className="mobile-web-stack">
+            <div className="mobile-web-form-grid" style={{ marginBottom: '8px' }}>
+              <div className="mobile-web-field">
+                <label>Updated From</label>
+                <input className="mobile-web-input" type="date" value={detailFrom} onChange={(e) => setDetailFrom(e.target.value)} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Updated To</label>
+                <input className="mobile-web-input" type="date" value={detailTo} onChange={(e) => setDetailTo(e.target.value)} />
+              </div>
+            </div>
             <div className="mobile-web-action-row">
               <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailCsv} disabled={!detailRows.length}>
                 Download Detailed CSV
@@ -2086,7 +2835,7 @@ function VolunteerAnalysisScreen() {
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
-                      {Object.keys(detailRows[0] || {}).map((key) => (
+                      {detailColumns.map((key) => (
                         <th key={key}>{key}</th>
                       ))}
                     </tr>
@@ -2094,8 +2843,8 @@ function VolunteerAnalysisScreen() {
                   <tbody>
                     {detailRows.map((row, idx) => (
                       <tr key={`${row.epicNo || row.epic || 'row'}-${idx}`}>
-                        {Object.keys(detailRows[0] || {}).map((key) => (
-                          <td key={`${idx}-${key}`}>{row?.[key] ?? ''}</td>
+                        {detailColumns.map((key) => (
+                          <td key={`${idx}-${key}`}>{renderDetailValue(row, key)}</td>
                         ))}
                       </tr>
                     ))}
