@@ -1467,6 +1467,52 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.mobile-web-family-grid .mobile-web-field {
+  min-width: 0;
+}
+
+.mobile-web-family-grid .mobile-web-input,
+.mobile-web-family-grid select.mobile-web-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  font-size: 0.95rem;
+  color: #0f172a;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mobile-web-family-grid .mobile-web-input:focus,
+.mobile-web-family-grid select.mobile-web-input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  background: #ffffff;
+}
+
+.mobile-web-family-grid select.mobile-web-input {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #64748b 50%),
+    linear-gradient(135deg, #64748b 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 36px;
+}
+
+.mobile-web-family-grid label {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.mobile-web-family-grid span {
+  color: #475569;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  display: inline-block;
+}
+
 .mobile-web-family-members {
   display: grid;
   gap: 12px;
@@ -1484,6 +1530,79 @@ textarea {
   gap: 12px;
   align-items: center;
   margin-top: 10px;
+}
+
+.mobile-web-member-search {
+  position: relative;
+}
+
+.mobile-web-suggestion-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+  padding: 10px;
+}
+
+.mobile-web-suggestion-search {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 8px;
+}
+
+.mobile-web-suggestion-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.mobile-web-suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: #f8fafc;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-web-suggestion-item:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: #eef2ff;
+}
+
+.mobile-web-suggestion-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.mobile-web-suggestion-meta {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.mobile-web-suggestion-action {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #2563eb;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mobile-web-suggestion-empty {
+  padding: 12px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.85rem;
 }
 
 .mobile-web-table {
@@ -1553,6 +1672,32 @@ textarea {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.mobile-web-subtabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: #eef2ff;
+  align-self: flex-start;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.mobile-web-subtab {
+  border: none;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+}
+
+.mobile-web-subtab.active {
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.25);
 }
 
 .mobile-web-meeting-grid {
@@ -1638,6 +1783,10 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.mobile-web-checkbox-grid-tight {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
 .mobile-web-checkbox {
   display: inline-flex;
   align-items: center;
@@ -1652,6 +1801,43 @@ textarea {
   gap: 12px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.mobile-web-extract-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.mobile-web-extract-note {
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.mobile-web-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.mobile-web-progress-label {
+  font-size: 0.9rem;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.mobile-web-progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.mobile-web-progress-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  width: 0%;
+  transition: width 0.2s ease;
 }
 
 .mobile-web-tag {
@@ -1698,7 +1884,7 @@ textarea {
 .mobile-web-pollday-grid {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1fr);
+  /* grid-template-columns: minmax(0, 1fr); */
 }
 
 .mobile-web-pollday-left,
@@ -1712,6 +1898,26 @@ textarea {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.mobile-web-tabs .mobile-web-small-select {
+  min-width: 150px;
+  margin-left: auto;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: #ffffff;
+  padding: 8px 36px 8px 12px;
+  font-weight: 600;
+  color: #0f172a;
+  box-shadow: none;
+  appearance: none;
+  line-height: 1.2;
+}
+
+.mobile-web-tabs .mobile-web-small-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  outline: none;
 }
 
 .mobile-web-tab-pill {
@@ -1737,21 +1943,71 @@ textarea {
   border-radius: 999px;
   font-size: 0.85rem;
 }
-
+.mobile-web-input.mobile-web-small-select {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+}
 .mobile-web-pollday-list {
   display: grid;
   gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-items: stretch;
 }
 
 .mobile-web-pollday-card {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 12px;
+  gap: 12px 18px;
   align-items: center;
-  padding: 14px;
+  padding: 16px 18px;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: #ffffff;
+  min-height: 130px;
+  width: 100%;
+}
+
+.mobile-web-pollday-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mobile-web-pollday-status {
+  display: grid;
+  gap: 6px;
+}
+
+.mobile-web-pollday-phone {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.mobile-web-call-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  background: #eff6ff;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mobile-web-call-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(37, 99, 235, 0.2);
+}
+
+.mobile-web-call-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .mobile-web-avatar-circle {
@@ -1773,10 +2029,16 @@ textarea {
   color: #0f172a;
 }
 
+.mobile-web-pollday-info p {
+  margin: 0;
+  color: #475569;
+}
+
 .mobile-web-chip-row {
   display: flex;
   gap: 8px;
   margin-top: 6px;
+  flex-wrap: wrap;
 }
 
 .mobile-web-chip {
@@ -1869,6 +2131,12 @@ textarea {
   cursor: pointer;
 }
 
+.mobile-web-gradient-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .mobile-web-gradient-btn.full {
   width: 100%;
   justify-content: center;
@@ -1896,6 +2164,11 @@ textarea {
   border-top: 1px solid rgba(148, 163, 184, 0.2);
 }
 
+.mobile-web-printer-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
 .mobile-web-printer-row:first-of-type {
   border-top: none;
 }
@@ -1907,7 +2180,38 @@ textarea {
 
 @media (min-width: 980px) {
   .mobile-web-pollday-grid {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    /* grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); */
+  }
+}
+
+@media (max-width: 900px) {
+  .mobile-web-pollday-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-web-pollday-card {
+    grid-template-columns: auto 1fr;
+  }
+
+  .mobile-web-pollday-card-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+.mobile-web-nature-select {
+  margin-left: auto;
+  min-width: 190px;
+}
+
+.mobile-web-nature-select .mobile-web-select-icon {
+  right: 14px;
+  color: #64748b;
+  pointer-events: none;
+}
+@media (max-width: 900px) {
+  .mobile-web-pollday-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1973,7 +2277,6 @@ textarea {
   display: grid;
   gap: 16px;
   position: relative;
-  overflow: hidden;
 }
 
 .mobile-web-volunteer-card::before {
@@ -1981,6 +2284,7 @@ textarea {
   position: absolute;
   inset: 0;
   border-left: 6px solid rgba(37, 99, 235, 0.6);
+  border-radius: inherit;
   pointer-events: none;
 }
 

@@ -21,6 +21,7 @@ import {
   Print as PrintIcon,
   AccountCircle,
   Logout as LogoutIcon,
+  UploadFile,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -28,7 +29,6 @@ import { usePathname, useRouter } from 'next/navigation';
 const menuItems = [
   // Core dashboard
   { label: 'Home', path: '/home', icon: <HomeIcon fontSize="small" /> },
-  { label: 'Live Updates', path: '/liveUpdates', icon: <LiveTv fontSize="small" /> },
   // { label: 'Voters Data', path: '/votersData', icon: <HowToVote fontSize="small" /> },
   // { label: 'Voters Reach', path: '/votersReach', icon: <TrackChanges fontSize="small" /> },
   // { label: 'Result Analysis', path: '/resultAnalysis', icon: <Assessment fontSize="small" /> },
@@ -43,6 +43,7 @@ const menuItems = [
   { label: 'Meetings', path: '/mobile/meetings', icon: <EventNote fontSize="small" /> },
   { label: 'Poll Day', path: '/mobile/poll-day', icon: <TrackChanges fontSize="small" /> },
   { label: 'Print', path: '/mobile/print', icon: <PrintIcon fontSize="small" /> },
+  // { label: 'Extract', path: '/mobile/extract', icon: <UploadFile fontSize="small" /> },
   { label: 'Add Volunteer', path: '/mobile/add-volunteer', icon: <PersonAddAlt fontSize="small" /> },
   { label: 'Manage Volunteers', path: '/mobile/my-volunteers', icon: <Groups fontSize="small" /> },
   { label: 'Volunteer Analysis', path: '/mobile/volunteer-analysis', icon: <BarChart fontSize="small" /> },
@@ -76,7 +77,6 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
         (item) =>
           ![
             '/home',
-            '/liveUpdates',
             '/volunteers',
             '/mobile/add-volunteer',
             '/mobile/my-volunteers',

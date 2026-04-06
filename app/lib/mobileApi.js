@@ -372,10 +372,13 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchVolunteerAnalysis: async (wardId) => {
+  fetchVolunteerAnalysis: async (wardId, mode) => {
     try {
-      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
-      return await request(`/votebase/v1/api/volunteers/analysis${query}`);
+      const params = new URLSearchParams();
+      if (wardId) params.set('wardId', String(wardId));
+      if (mode) params.set('mode', String(mode));
+      const query = params.toString();
+      return await request(`/votebase/v1/api/volunteers/analysis${query ? `?${query}` : ''}`);
     } catch (error) {
       console.log('Error while fetching volunteer analysis:', error);
       throw error;
@@ -408,6 +411,15 @@ export const mobileApi = {
       return await request(`/votebase/v1/api/booths${qs ? `?${qs}` : ''}`);
     } catch (error) {
       console.log('Error while fetching booths:', error);
+      throw error;
+    }
+  },
+  fetchPublicBooths: async (wardId) => {
+    try {
+      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
+      return await request(`/votebase/v1/api/booths/public${query}`);
+    } catch (error) {
+      console.log('Error while fetching public booths:', error);
       throw error;
     }
   },

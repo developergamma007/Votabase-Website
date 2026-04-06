@@ -54,6 +54,10 @@ const labels = {
     title: 'Volunteer Analysis',
     description: 'Track volunteer data collection coverage.',
   },
+  extract: {
+    title: 'Extract',
+    description: 'Upload voter list PDFs and export structured Excel sheets.',
+  },
 };
 
 const dropdownOptions = {
@@ -1040,23 +1044,30 @@ function AddVolunteerScreen() {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [editPhone, setEditPhone] = useState('');
+  // pendingEditRef holds ward/booth IDs to apply after dropdowns are loaded
+  const pendingEditRef = useRef(null);
+  const prevWorkingLevelRef = useRef(null);
+  const prevAssemblyRef = useRef(null);
   const userInfo = useMemo(() => getUserInfoSafe(), []);
   const role = userInfo?.role || 'ADMIN';
 
+  // Load volunteerEdit from sessionStorage on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const raw = sessionStorage.getItem('volunteerEdit');
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw);
-      setForm({
+      pendingEditRef.current = parsed;
+      setForm((prev) => ({
+        ...prev,
         firstName: parsed.firstName || '',
         phone: parsed.phone || '',
         workingLevel: parsed.workingLevel || 'ASSEMBLY',
         assemblyId: parsed.assemblyId || '',
-        wardIds: parsed.wardIds || [],
-        boothIds: parsed.boothIds || [],
-      });
+        wardIds: [],
+        boothIds: [],
+      }));
       setIsEditing(true);
       setEditPhone(parsed.phone || '');
     } catch {
@@ -1105,30 +1116,60 @@ function AddVolunteerScreen() {
     return () => { active = false; };
   }, []);
 
+  // When workingLevel changes by user (not from edit), reset selections
   useEffect(() => {
-    setForm((prev) => ({ ...prev, assemblyId: '', wardIds: [], boothIds: [] }));
-    setWards([]);
-    setBooths([]);
+    if (pendingEditRef.current) return; // skip reset during edit prefill
+    if (prevWorkingLevelRef.current !== null && prevWorkingLevelRef.current !== form.workingLevel) {
+      setForm((prev) => ({ ...prev, assemblyId: '', wardIds: [], boothIds: [] }));
+      setWards([]);
+      setBooths([]);
+      prevAssemblyRef.current = null;
+    }
+    prevWorkingLevelRef.current = form.workingLevel;
   }, [form.workingLevel]);
 
+  // Load wards when assemblyId changes
   useEffect(() => {
     if (!['ASSEMBLY', 'WARD', 'BOOTH'].includes(form.workingLevel)) return;
-    setForm((prev) => ({ ...prev, wardIds: [], boothIds: [] }));
     if (!form.assemblyId) {
       setWards([]);
+      if (!pendingEditRef.current) setForm((prev) => ({ ...prev, wardIds: [], boothIds: [] }));
       return;
     }
+    if (prevAssemblyRef.current === form.assemblyId && wards.length > 0) return;
+    prevAssemblyRef.current = form.assemblyId;
     mobileApi.fetchWards(form.assemblyId).then((res) => {
       const formatted = (res || []).map((item) => ({ value: item.wardId, label: item.wardNameEn || `Ward ${item.wardId}` }));
       setWards(formatted);
+      // Apply pending edit ward/booth selection after wards are loaded
+      if (pendingEditRef.current) {
+        const pending = pendingEditRef.current;
+        const pendingWardIds = pending.wardIds || [];
+        setForm((prev) => ({ ...prev, wardIds: pendingWardIds, boothIds: [] }));
+        if (pendingWardIds.length) {
+          Promise.all(pendingWardIds.map((wardId) => mobileApi.fetchBooths(null, wardId).catch(() => []))).then((responses) => {
+            const merged = responses.flat().map((item) => ({ value: item.boothId, label: item.pollingStationAdrEn || `Booth ${item.boothId}` }));
+            const unique = Array.from(new Map(merged.map((item) => [String(item.value), item])).values());
+            setBooths(unique);
+            setForm((prev) => ({ ...prev, boothIds: pending.boothIds || [] }));
+            pendingEditRef.current = null; // done prefilling
+          }).catch(() => { pendingEditRef.current = null; });
+        } else {
+          pendingEditRef.current = null;
+        }
+      } else {
+        setForm((prev) => ({ ...prev, wardIds: [], boothIds: [] }));
+      }
     }).catch(() => setWards([]));
   }, [form.workingLevel, form.assemblyId]);
 
+  // Load booths when wardIds change (non-edit path only)
   useEffect(() => {
+    if (pendingEditRef.current) return; // handled in assembly effect above
     if (!['ASSEMBLY', 'WARD', 'BOOTH'].includes(form.workingLevel)) return;
-    setForm((prev) => ({ ...prev, boothIds: [] }));
     if (!form.wardIds.length) {
       setBooths([]);
+      setForm((prev) => ({ ...prev, boothIds: [] }));
       return;
     }
     Promise.all(form.wardIds.map((wardId) => mobileApi.fetchBooths(null, wardId))).then((responses) => {
@@ -1280,8 +1321,78 @@ function MyVolunteersScreen() {
   const [selected, setSelected] = useState([]);
   const [actionLoading, setActionLoading] = useState({});
   const [feedback, setFeedback] = useState({ error: '', success: '' });
+  const [wardLookup, setWardLookup] = useState({});
+  const [boothLookup, setBoothLookup] = useState({});
   const userInfo = useMemo(() => getUserInfoSafe(), []);
   const role = userInfo?.role || 'ADMIN';
+
+  useEffect(() => {
+    let active = true;
+    const buildLookupsFromWards = (wards = []) => {
+      const wardMap = {};
+      const boothMap = {};
+      wards.forEach((ward) => {
+        const wardId = String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ward?.ward_no ?? '');
+        const wardLabel = ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name ?? wardId;
+        if (wardId) wardMap[wardId] = wardLabel;
+      });
+      if (!active) return;
+      setWardLookup(wardMap);
+      setBoothLookup(boothMap);
+    };
+
+    const loadLookups = async () => {
+      if (typeof window === 'undefined') return;
+      try {
+        const wardsRes = await mobileApi.fetchWards();
+        const wards = Array.isArray(wardsRes)
+          ? wardsRes
+          : Array.isArray(wardsRes?.data?.result)
+            ? wardsRes.data.result
+            : Array.isArray(wardsRes?.data)
+              ? wardsRes.data
+              : Array.isArray(wardsRes?.result)
+                ? wardsRes.result
+                : [];
+        buildLookupsFromWards(wards);
+
+        const wardIds = wards
+          .map((ward) => ward?.wardId ?? ward?.ward_id ?? ward?.id)
+          .filter((id) => id !== undefined && id !== null);
+        if (!wardIds.length) return;
+        const boothResponses = await Promise.all(
+          wardIds.map((wardId) => mobileApi.fetchBooths(null, wardId).catch(() => []))
+        );
+        const publicBoothResponses = await Promise.all(
+          wardIds.map((wardId) => mobileApi.fetchPublicBooths(wardId).catch(() => []))
+        );
+        const boothMap = {};
+        boothResponses.flat().forEach((booth) => {
+          const boothId = String(booth?.boothId ?? booth?.booth_id ?? booth?.id ?? '');
+          const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.boothNumber;
+          const boothLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en
+            ?? (boothNo ? `Booth ${boothNo}` : boothId);
+          if (boothId) boothMap[boothId] = boothLabel;
+          if (boothNo !== undefined && boothNo !== null) boothMap[String(boothNo)] = boothLabel;
+        });
+        publicBoothResponses.flat().forEach((booth) => {
+          const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.id;
+          const boothLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en
+            ?? (boothNo ? `Booth ${boothNo}` : '');
+          if (boothNo !== undefined && boothNo !== null && boothLabel) {
+            boothMap[String(boothNo)] = boothLabel;
+          }
+        });
+        if (!active) return;
+        setBoothLookup(boothMap);
+      } catch { }
+    };
+
+    loadLookups();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const resolveSort = () => {
     switch (sortMode) {
@@ -1361,16 +1472,22 @@ function MyVolunteersScreen() {
 
   const handleEdit = (v) => {
     if (typeof window === 'undefined') return;
+    const assignmentType = (v.workingLevel || v.assignmentType || 'ASSEMBLY').toUpperCase();
+    const assignmentIds = String(v.assignmentId || '').split(',').map((val) => val.trim()).filter(Boolean);
     const payload = {
       firstName: v.firstName || v.userName || '',
       phone: v.phone || '',
-      workingLevel: (v.workingLevel || v.assignmentType || 'ASSEMBLY').toUpperCase(),
-      assemblyId: (v.assemblyIds && v.assemblyIds[0]) ? String(v.assemblyIds[0]) : '',
-      wardIds: (v.wardIds || []).map((id) => String(id)),
-      boothIds: (v.boothIds || []).map((id) => String(id)),
+      workingLevel: assignmentType,
+      assemblyId: (v.assemblyIds && v.assemblyIds[0]) ? String(v.assemblyIds[0]) : (v.assemblyId ? String(v.assemblyId) : (v.assembly_id ? String(v.assembly_id) : '')),
+      wardIds: (v.wardIds && v.wardIds.length)
+        ? v.wardIds.map((id) => String(id))
+        : (assignmentType === 'WARD' ? assignmentIds : []),
+      boothIds: (v.boothIds && v.boothIds.length)
+        ? v.boothIds.map((id) => String(id))
+        : (assignmentType === 'BOOTH' ? assignmentIds : []),
     };
     sessionStorage.setItem('volunteerEdit', JSON.stringify(payload));
-    window.location.href = '/mobile/add-volunteer';
+    window.location.href = '/ui/mobile/add-volunteer';
   };
 
   const handleBulkDelete = async () => {
@@ -1420,14 +1537,40 @@ function MyVolunteersScreen() {
     (acc, v) => {
       const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
       const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
-      if (deleted) acc.deleted += 1;
-      else if (blocked) acc.blocked += 1;
-      else acc.active += 1;
-      acc.total += 1;
+      if (deleted) {
+        acc.deleted += 1;
+      } else {
+        if (blocked) acc.blocked += 1;
+        else acc.active += 1;
+        acc.total += 1; // Total only counts non-deleted
+      }
       return acc;
     },
     { total: 0, active: 0, blocked: 0, deleted: 0 }
   );
+  const visibleVolunteers = showDeleted
+    ? volunteers.filter((v) => v.deleted === true || v.deleted === 'true' || v.deleted === 1)
+    : volunteers.filter((v) => !(v.deleted === true || v.deleted === 'true' || v.deleted === 1));
+
+  const renderDropdownList = (items, placeholder) => {
+    if (!items || items.length === 0) return <strong>{placeholder || '-'}</strong>;
+    const formatName = (name) => name.length > 25 ? name.substring(0, 25) + '...' : name;
+    if (items.length === 1) return <strong title={items[0]} className="cursor-help">{formatName(items[0])}</strong>;
+    return (
+      <div className="relative group inline-block">
+        <strong className="cursor-help text-blue-700 decoration-dotted underline underline-offset-2 break-all sm:break-normal">
+          {formatName(items[0])} <span className="text-gray-500 font-medium text-xs ml-1 whitespace-nowrap">(+ {items.length - 1} more)</span>
+        </strong>
+        <div className="hidden group-hover:block absolute z-50 left-0 top-full mt-1 p-3 bg-white rounded-lg shadow-xl border border-gray-200 text-sm max-h-48 overflow-y-auto w-max min-w-[200px] max-w-xs md:max-w-md">
+          <ul className="list-disc pl-4 whitespace-normal text-gray-700 m-0">
+            {items.map((item, idx) => (
+              <li key={idx} className="py-1 border-b border-gray-50 last:border-0">{item}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <ScreenFrame accent="light">
@@ -1448,31 +1591,50 @@ function MyVolunteersScreen() {
                 <label>Sort By</label>
                 <SingleOptionSelect label="Sort By" options={sortOptions.map((item) => item.label)} value={selectedSortLabel} customValue="" onSelect={(option) => setSortMode(sortOptions.find((item) => item.label === option)?.value ?? 'latest')} onCustomValueChange={() => { }} />
               </div>
-              <div className="mobile-web-field">
-                <label>Deleted</label>
-                <button type="button" className="mobile-web-secondary-btn" onClick={() => setShowDeleted((current) => !current)}>
-                  {showDeleted ? 'Hide Deleted' : 'Show Deleted'}
-                </button>
-              </div>
             </div>
             <div className="mobile-web-volunteer-stats">
               <div className="mobile-web-volunteer-pill total">Total <strong>{stats.total}</strong></div>
               <div className="mobile-web-volunteer-pill active">Active <strong>{stats.active}</strong></div>
               <div className="mobile-web-volunteer-pill blocked">Blocked <strong>{stats.blocked}</strong></div>
-              <div className="mobile-web-volunteer-pill deleted">Deleted <strong>{stats.deleted}</strong></div>
+              <button
+                type="button"
+                className={`mobile-web-volunteer-pill deleted${showDeleted ? ' active-pill' : ''}`}
+                onClick={() => setShowDeleted((current) => !current)}
+                title={showDeleted ? 'Click to hide deleted volunteers' : 'Click to show deleted volunteers'}
+                style={{ cursor: 'pointer', border: 'none', background: 'none', padding: 0 }}
+              >
+                Deleted <strong>{stats.deleted}</strong>
+              </button>
             </div>
           </div>
 
           {loading ? <div className="mobile-web-empty">Loading volunteers...</div> : null}
-          {!loading && volunteers.length === 0 ? <div className="mobile-web-empty">No volunteers found.</div> : null}
-          {!loading && volunteers.length > 0 ? (
+          {!loading && visibleVolunteers.length === 0 ? <div className="mobile-web-empty">No volunteers found.</div> : null}
+          {!loading && visibleVolunteers.length > 0 ? (
             <div className="mobile-web-stack">
-              {volunteers.map((v) => {
+              {visibleVolunteers.map((v) => {
                 const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
                 const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
                 const name = `${v.firstName || ''} ${v.lastName || ''}`.trim() || v.userName || 'Volunteer';
                 const levelLabel = (v.assignmentType || '-').toUpperCase();
                 const statusLabel = deleted ? 'Deleted' : blocked ? 'Blocked' : 'Active';
+                const assignmentType = String(v.assignmentType || v.workingLevel || '').toUpperCase();
+                const assignmentIds = String(v.assignmentId || '')
+                  .split(',')
+                  .map((val) => val.trim())
+                  .filter(Boolean);
+                const wardIds = (v.wardIds && v.wardIds.length)
+                  ? v.wardIds.map((id) => String(id))
+                  : (assignmentType === 'WARD' ? assignmentIds : []);
+                const boothIds = (v.boothIds && v.boothIds.length)
+                  ? v.boothIds.map((id) => String(id))
+                  : (assignmentType === 'BOOTH' ? assignmentIds : []);
+                const wardLabels = (Array.isArray(v.wardNames) && v.wardNames.length)
+                  ? v.wardNames
+                  : wardIds.map((id) => wardLookup[String(id)] || `Ward ${id}`).filter(Boolean);
+                const boothLabels = (Array.isArray(v.boothNames) && v.boothNames.length)
+                  ? v.boothNames
+                  : boothIds.map((id) => boothLookup[String(id)] || `Booth ${id}`).filter(Boolean);
                 return (
                   <div key={v.userName || v.phone || name} className="mobile-web-volunteer-card" style={{ opacity: blocked || deleted ? 0.5 : 1 }}>
                     <div className="mobile-web-volunteer-head">
@@ -1504,11 +1666,11 @@ function MyVolunteersScreen() {
                         </div>
                         <div>
                           <span>Wards : </span>
-                          <strong>{(v.wardNames || []).length ? v.wardNames.join(', ') : '-'}</strong>
+                          {renderDropdownList(wardLabels, '-')}
                         </div>
                         <div>
                           <span>Booths : </span>
-                          <strong>{(v.boothNames || []).length ? v.boothNames.join(', ') : '-'}</strong>
+                          {renderDropdownList(boothLabels, '-')}
                         </div>
                       </div>
                       <div className="mobile-web-volunteer-inline-actions">
@@ -1536,7 +1698,7 @@ function MyVolunteersScreen() {
                           {actionLoading[`delete-${v.userName}`] && (
                             <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
                           )}
-                          {deleted ? "Undelete" : "Delete"}
+                          {deleted ? (showDeleted ? "Restore" : "Delete") : "Delete"}
                         </button>
                         <button
                           type="button"
@@ -1601,26 +1763,81 @@ function VotersFamilyScreen() {
   const [familyName, setFamilyName] = useState('');
   const [familyAddress, setFamilyAddress] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
+  const [relationQuery, setRelationQuery] = useState('');
   const [members, setMembers] = useState([]);
+  const [memberSuggestions, setMemberSuggestions] = useState([]);
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [economicStatus, setEconomicStatus] = useState('NA');
   const [headOfFamily, setHeadOfFamily] = useState('');
   const [headPhone, setHeadPhone] = useState('');
   const [familyNature, setFamilyNature] = useState('NA');
   const [familyPoints, setFamilyPoints] = useState('5');
   const [locationStatus, setLocationStatus] = useState('');
+  const searchTimerRef = useRef(null);
 
   const addMember = () => {
-    if (!memberQuery.trim()) return;
-    const newMember = {
-      id: `${memberQuery}-${Date.now()}`,
-      name: memberQuery.trim(),
-      epic: 'EPIC0001',
-      phone: '9876543210',
-      houseNo: '12A',
-    };
-    setMembers((current) => current.concat(newMember));
-    setMemberQuery('');
+    if (memberSuggestions.length === 1) {
+      handleAddSuggestion(memberSuggestions[0]);
+    }
   };
+
+  const handleAddSuggestion = (suggestion) => {
+    if (!suggestion) return;
+    const name = [suggestion.firstMiddleNameEn, suggestion.lastNameEn].filter(Boolean).join(' ').trim();
+    const newMember = {
+      id: suggestion.epicNo || `${name}-${Date.now()}`,
+      name: name || suggestion.epicNo || 'Unknown',
+      epic: suggestion.epicNo || '',
+      phone: suggestion.mobile || '',
+      houseNo: suggestion.houseNoEn || suggestion.houseNoLocal || '',
+    };
+    setMembers((current) => {
+      if (current.some((m) => m.epic && m.epic === newMember.epic)) {
+        return current;
+      }
+      return current.concat(newMember);
+    });
+    setMemberQuery('');
+    setRelationQuery('');
+    setMemberSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  useEffect(() => {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+    const query = memberQuery.trim();
+    if (!query) {
+      setMemberSuggestions([]);
+      setShowSuggestions(false);
+      setMemberLoading(false);
+      return undefined;
+    }
+    setShowSuggestions(true);
+    setMemberLoading(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await mobileApi.searchVoters({
+          searchQuery: query,
+          relationName: relationQuery.trim() || undefined,
+          size: 20,
+        });
+        const payload = res?.data?.result || res?.result || res?.data || [];
+        setMemberSuggestions(Array.isArray(payload) ? payload : []);
+      } catch (error) {
+        setMemberSuggestions([]);
+      } finally {
+        setMemberLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [memberQuery, relationQuery]);
 
   const handleGetLocation = async () => {
     setLocationStatus('');
@@ -1649,7 +1866,56 @@ function VotersFamilyScreen() {
         <div className="mobile-web-family-members">
           <div className="mobile-web-section-title">Family Members</div>
           <div className="mobile-web-member-row">
-            <input className="mobile-web-input" placeholder="Search voter to add" value={memberQuery} onChange={(e) => setMemberQuery(e.target.value)} />
+            <div className="mobile-web-member-search">
+              <input
+                className="mobile-web-input"
+                placeholder="Search voter by EPIC or name"
+                value={memberQuery}
+                onChange={(e) => setMemberQuery(e.target.value)}
+                onFocus={() => {
+                  if (memberQuery.trim()) setShowSuggestions(true);
+                }}
+              />
+              {showSuggestions ? (
+                <div className="mobile-web-suggestion-panel">
+                  <div className="mobile-web-suggestion-search">
+                    <input
+                      className="mobile-web-input"
+                      placeholder="Search by relation"
+                      value={relationQuery}
+                      onChange={(e) => setRelationQuery(e.target.value)}
+                    />
+                  </div>
+                  {memberLoading ? <div className="mobile-web-suggestion-empty">Searching...</div> : null}
+                  {!memberLoading && memberSuggestions.length === 0 ? (
+                    <div className="mobile-web-suggestion-empty">No voters found.</div>
+                  ) : null}
+                  {!memberLoading && memberSuggestions.length > 0 ? (
+                    <div className="mobile-web-suggestion-list">
+                      {memberSuggestions.map((item) => {
+                        const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
+                        return (
+                          <button
+                            key={`${item.epicNo}-${item.voterId}`}
+                            type="button"
+                            className="mobile-web-suggestion-item"
+                            onClick={() => handleAddSuggestion(item)}
+                          >
+                            <div>
+                              <div className="mobile-web-suggestion-name">{name || item.epicNo || 'Unknown'}</div>
+                              <div className="mobile-web-suggestion-meta">
+                                {item.epicNo || '-'} · {item.houseNoEn || item.houseNoLocal || 'House -'} · {item.mobile || 'No phone'}
+                              </div>
+                            </div>
+                            <span className="mobile-web-suggestion-action">Add</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <button className="mobile-web-primary-btn" type="button" onClick={addMember}>Add</button>
           </div>
           <div className="mobile-web-table">
@@ -1770,7 +2036,7 @@ function MeetingsScreen() {
     supporter: false,
   });
   const [newMeetingChannels, setNewMeetingChannels] = useState({ appAlert: true, whatsapp: false });
-  const [showNewMeeting, setShowNewMeeting] = useState(false);
+  const [activeMeetingTab, setActiveMeetingTab] = useState('list');
   const [mapsKey, setMapsKey] = useState('');
   const [mapsKeyInput, setMapsKeyInput] = useState('');
   const mapRef = useRef(null);
@@ -1925,28 +2191,24 @@ function MeetingsScreen() {
         const lng = pos.coords.longitude;
         setNewMeeting((prev) => ({ ...prev, latitude: lat.toFixed(6), longitude: lng.toFixed(6) }));
       },
-      () => {}
+      () => { }
     );
   };
 
   useEffect(() => {
-    if (!showNewMeeting) return;
+    if (activeMeetingTab !== 'new') return;
     if (newMeetingLocInitRef.current) return;
     newMeetingLocInitRef.current = true;
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
+    requestLocation({ allowCached: true })
+      .then((pos) => {
         setNewMeeting((prev) => ({
           ...prev,
-          latitude: prev.latitude || lat.toFixed(6),
-          longitude: prev.longitude || lng.toFixed(6),
+          latitude: prev.latitude || Number(pos.latitude).toFixed(6),
+          longitude: prev.longitude || Number(pos.longitude).toFixed(6),
         }));
-      },
-      () => {}
-    );
-  }, [showNewMeeting]);
+      })
+      .catch(() => { });
+  }, [activeMeetingTab]);
 
   useEffect(() => {
     setMeetings((prev) => prev.map((m) => (m.id === selectedMeeting?.id ? selectedMeeting : m)));
@@ -1957,33 +2219,49 @@ function MeetingsScreen() {
       <section className="mobile-web-card mobile-web-meetings-shell">
         <div className="mobile-web-meetings-header">
           <h2>Meetings</h2>
-          <div className="mobile-web-meeting-actions">
-            <button className="mobile-web-secondary-btn" type="button" onClick={() => setShowNewMeeting((prev) => !prev)}>
-              {showNewMeeting ? 'Close' : 'New Meeting'}
-            </button>
-            <button className="mobile-web-secondary-btn" type="button">Refresh</button>
-          </div>
         </div>
-        <div className="mobile-web-meeting-grid">
-          {meetings.map((meeting) => (
-            <div key={meeting.id} className="mobile-web-meeting-card">
-              <div>
-                <h3>{meeting.title}</h3>
-                <p>{meeting.dateTime}</p>
-                <p className="mobile-web-muted">{meeting.description}</p>
-                <p className="mobile-web-muted">Location: {meeting.latitude.toFixed(4)}, {meeting.longitude.toFixed(4)} · Radius: {meeting.radius} m</p>
-              </div>
-              <button
-                className="mobile-web-secondary-btn"
-                type="button"
-                onClick={() => setSelectedMeeting(meeting)}
-              >
-                Open
-              </button>
-            </div>
+        <div className="mobile-web-subtabs">
+          {[
+            { key: 'list', label: 'Meetings' },
+            { key: 'new', label: 'New Meeting' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`mobile-web-subtab ${activeMeetingTab === tab.key ? 'active' : ''}`}
+              onClick={() => {
+                setActiveMeetingTab(tab.key);
+                if (tab.key === 'new') {
+                  handleUseMyLocation();
+                }
+              }}
+            >
+              {tab.label}
+            </button>
           ))}
         </div>
-        {showNewMeeting ? (
+        {activeMeetingTab === 'list' ? (
+          <div className="mobile-web-meeting-grid">
+            {meetings.map((meeting) => (
+              <div key={meeting.id} className="mobile-web-meeting-card">
+                <div>
+                  <h3>{meeting.title}</h3>
+                  <p>{meeting.dateTime}</p>
+                  <p className="mobile-web-muted">{meeting.description}</p>
+                  <p className="mobile-web-muted">Location: {meeting.latitude.toFixed(4)}, {meeting.longitude.toFixed(4)} · Radius: {meeting.radius} m</p>
+                </div>
+                <button
+                  className="mobile-web-secondary-btn"
+                  type="button"
+                  onClick={() => setSelectedMeeting(meeting)}
+                >
+                  Open
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {activeMeetingTab === 'new' ? (
           <div className="mobile-web-meeting-detail">
             <h3>New meeting</h3>
             <div className="mobile-web-meeting-detail-card">
@@ -2070,7 +2348,8 @@ function MeetingsScreen() {
                 </div>
               </div>
               <div className="mobile-web-meeting-recipient">
-                <div className="mobile-web-checkbox-grid">
+                <h4>Channels</h4>
+                <div className="mobile-web-checkbox-grid mobile-web-checkbox-grid-tight">
                   {[
                     ['appAlert', 'App Alert'],
                     ['whatsapp', 'WhatsApp'],
@@ -2159,25 +2438,184 @@ function MeetingsScreen() {
 
 function PollDayScreen() {
   const [tab, setTab] = useState('ALL');
-  const voters = [
-    { id: 1, name: 'Ravi Kumar', epic: 'EPIC001', phone: '9876543210', nature: 'Favour', booth: '12A', status: 'VOTED' },
-    { id: 2, name: 'Suma R', epic: 'EPIC002', phone: '8765432109', nature: 'Neutral', booth: '12A', status: 'NOT VOTED' },
-    { id: 3, name: 'Anil', epic: 'EPIC003', phone: '7654321098', nature: 'NonFavour', booth: '15', status: 'NOT VOTED' },
-  ];
-  const filtered = tab === 'ALL' ? voters : voters.filter((v) => v.status === tab);
+  const [natureFilter, setNatureFilter] = useState('');
+  const [pollQuery, setPollQuery] = useState('');
+  const [pollRelationQuery, setPollRelationQuery] = useState('');
+  const [pollSuggestions, setPollSuggestions] = useState([]);
+  const [pollLoading, setPollLoading] = useState(false);
+  const [showPollSuggestions, setShowPollSuggestions] = useState(false);
+  const [pollVoters, setPollVoters] = useState([]);
+  const [pollError, setPollError] = useState('');
+  const pollSearchTimerRef = useRef(null);
+
+  const buildPollDisplay = (item) => {
+    const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
+    const rawStatus = item.votingStatus || item.voteStatus || item.status || item.votedStatus || '';
+    const normalizedStatus = String(rawStatus).toUpperCase();
+    return {
+      id: item.epicNo || item.voterId || `${name}-${Date.now()}`,
+      name: name || item.name || item.voterName || item.epicNo || 'Unknown',
+      epic: item.epicNo || item.epic || '',
+      phone: item.mobile || item.phone || '',
+      houseNo: item.houseNoEn || item.houseNoLocal || '',
+      natureOfVoter: item.natureOfVoter || item.nature || '',
+      boothNo: item.boothNo || item.boothNumber || item.booth || '',
+      votedStatus: normalizedStatus || '',
+    };
+  };
+
+  const fetchPollVoters = async (queryValue = '') => {
+    setPollLoading(true);
+    setPollError('');
+    try {
+      const res = await mobileApi.searchVoters({
+        searchQuery: queryValue.trim() || undefined,
+        relationName: pollRelationQuery.trim() || undefined,
+        size: 200,
+      });
+      const payload = res?.data?.result || res?.result || res?.data || [];
+      const list = Array.isArray(payload) ? payload : [];
+      setPollVoters(list.map(buildPollDisplay));
+      return list;
+    } catch (error) {
+      setPollError('Unable to load voters. Please try again.');
+      setPollVoters([]);
+      return [];
+    } finally {
+      setPollLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPollVoters('');
+  }, []);
+
+  useEffect(() => {
+    if (pollSearchTimerRef.current) {
+      clearTimeout(pollSearchTimerRef.current);
+    }
+    const query = pollQuery.trim();
+    if (!query) {
+      setPollSuggestions([]);
+      setShowPollSuggestions(false);
+      fetchPollVoters('');
+      return undefined;
+    }
+    setShowPollSuggestions(true);
+    setPollLoading(true);
+    pollSearchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await mobileApi.searchVoters({
+          searchQuery: query,
+          relationName: pollRelationQuery.trim() || undefined,
+          size: 20,
+        });
+        const payload = res?.data?.result || res?.result || res?.data || [];
+        const list = Array.isArray(payload) ? payload : [];
+        setPollSuggestions(list);
+        setPollVoters(list.map(buildPollDisplay));
+      } catch (error) {
+        setPollSuggestions([]);
+      } finally {
+        setPollLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (pollSearchTimerRef.current) {
+        clearTimeout(pollSearchTimerRef.current);
+      }
+    };
+  }, [pollQuery, pollRelationQuery]);
+
+  const handlePollSuggestion = (item) => {
+    const display = buildPollDisplay(item);
+    setPollQuery(display.name);
+    setShowPollSuggestions(false);
+    setPollSuggestions([]);
+    setPollVoters([display]);
+  };
+
+  const filteredPollVoters = useMemo(() => {
+    let list = [...pollVoters];
+    if (natureFilter) {
+      list = list.filter((v) => String(v.natureOfVoter || '').toUpperCase() === natureFilter);
+    }
+    if (tab === 'VOTED') {
+      list = list.filter((v) => String(v.votedStatus).includes('VOTED'));
+    } else if (tab === 'NOT VOTED') {
+      list = list.filter((v) => String(v.votedStatus).includes('NOT'));
+    }
+    return list;
+  }, [pollVoters, natureFilter, tab]);
+
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-pollday-shell">
         <MobileHeader title="Poll Day — Voters" subtitle="Ward: All · Booth: All" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-pollday-top">
-          <div className="mobile-web-search-input-wrap">
+          <div className="mobile-web-search-input-wrap mobile-web-member-search">
             <SearchRounded className="mobile-web-search-icon" />
-            <input className="mobile-web-input" placeholder="Search name / EPIC / phone" />
-          </div>
-          <div className="mobile-web-pollday-actions">
-            <button className="mobile-web-primary-btn" type="button">Search</button>
-            <button className="mobile-web-secondary-btn" type="button">Reset</button>
+            <input
+              className="mobile-web-input"
+              placeholder="Search voter by EPIC or name"
+              value={pollQuery}
+              onChange={(e) => setPollQuery(e.target.value)}
+              onFocus={() => {
+                if (pollQuery.trim()) setShowPollSuggestions(true);
+              }}
+            />
+            {showPollSuggestions ? (
+              <div className="mobile-web-suggestion-panel">
+                <div className="mobile-web-suggestion-search">
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Search by relation"
+                    value={pollRelationQuery}
+                    onChange={(e) => setPollRelationQuery(e.target.value)}
+                  />
+                </div>
+                {pollLoading ? <div className="mobile-web-suggestion-empty">Searching...</div> : null}
+                {!pollLoading && pollSuggestions.length === 0 ? (
+                  <div className="mobile-web-suggestion-empty">No voters found.</div>
+                ) : null}
+                {!pollLoading && pollSuggestions.length > 0 ? (
+                  <div className="mobile-web-suggestion-list">
+                    {pollSuggestions.map((item) => {
+                      const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
+                      return (
+                        <button
+                          key={`${item.epicNo}-${item.voterId}`}
+                          type="button"
+                          className="mobile-web-suggestion-item"
+                          onClick={() => handlePollSuggestion(item)}
+                        >
+                          <div>
+                            <div className="mobile-web-suggestion-name">{name || item.epicNo || 'Unknown'}</div>
+                            <div className="mobile-web-suggestion-meta">
+                              {item.epicNo || '-'} · {item.houseNoEn || item.houseNoLocal || 'House -'} · {item.mobile || 'No phone'}
+                            </div>
+                          </div>
+                          <span className="mobile-web-suggestion-action">Open</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="mobile-web-pollday-grid">
@@ -2193,44 +2631,117 @@ function PollDayScreen() {
                   {item}
                 </button>
               ))}
-              <select className="mobile-web-input mobile-web-small-select">
-                <option>Nature</option>
-                <option>Favour</option>
-                <option>Neutral</option>
-                <option>NonFavour</option>
-              </select>
+              <div
+                className="mobile-web-select-wrap mobile-web-nature-select"
+                ref={dropdownRef}
+                style={{ position: 'relative' }}
+              >
+                {/* Trigger */}
+                <div
+                  className="mobile-web-input mobile-web-small-select"
+                  onClick={() => setIsOpen((prev) => !prev)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',        // vertically centers both children
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    minHeight: '44px',           // ensure consistent height
+                  }}
+                >
+                  <span style={{ lineHeight: 1 }}>{natureFilter || 'Nature'}</span>
+                  <ExpandMoreRounded
+                    className="mobile-web-select-icon"
+                    style={{
+                      display: 'flex',
+                      alignSelf: 'center',       // force icon to center regardless of parent
+                      transform: isOpen ? 'rotate(180deg)' : '',
+                      transition: 'transform 0.2s',
+                      flexShrink: 0,
+                    }}
+                  />
+                </div>
+
+                {/* Dropdown list — rendered inside the wrapper */}
+                {isOpen && (
+                  <ul style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    zIndex: 999,
+                    background: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '8px',
+                    marginTop: '4px',
+                    padding: '4px 0',
+                    listStyle: 'none',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  }}>
+                    <li
+                      onClick={() => { setNatureFilter(''); setIsOpen(false); }}
+                      style={{ padding: '8px 16px', cursor: 'pointer' }}
+                    >
+                      Nature
+                    </li>
+                    {['A', 'B', 'C', 'NA'].map((item) => (
+                      <li
+                        key={item}
+                        onClick={() => { setNatureFilter(item); setIsOpen(false); }}
+                        style={{ padding: '8px 16px', cursor: 'pointer' }}
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
+            {pollError ? <div className="mobile-web-error">{pollError}</div> : null}
             <div className="mobile-web-pollday-list">
-              {filtered.map((voter) => (
-                <div key={voter.id} className="mobile-web-pollday-card">
-                  <div className="mobile-web-avatar-circle">{voter.name[0]}</div>
-                  <div className="mobile-web-pollday-info">
-                    <h4>{voter.name}</h4>
-                    <p>{voter.epic} · {voter.phone}</p>
-                    <div className="mobile-web-chip-row">
-                      <span className={`mobile-web-chip ${voter.nature.toLowerCase()}`}>{voter.nature}</span>
-                      <span className="mobile-web-chip neutral">{voter.booth}</span>
+              {pollLoading && pollVoters.length === 0 ? (
+                <div className="mobile-web-table-empty">Loading voters...</div>
+              ) : null}
+              {!pollLoading && filteredPollVoters.length === 0 ? (
+                <div className="mobile-web-table-empty">No voters found.</div>
+              ) : null}
+              {filteredPollVoters.map((voter) => {
+                const phoneValue = normalizeMobileValue(voter.phone);
+                const statusRaw = String(voter.votedStatus || '');
+                const isVoted = statusRaw.includes('VOTED') && !statusRaw.includes('NOT');
+                const isNotVoted = statusRaw.includes('NOT');
+                return (
+                  <div key={voter.id} className="mobile-web-pollday-card">
+                    <div className="mobile-web-avatar-circle">{(voter.name || 'V')[0]}</div>
+                    <div className="mobile-web-pollday-info">
+                      <h4>{voter.name}</h4>
+                      <p>{voter.epic || '-'}</p>
+                      <p className="mobile-web-pollday-phone">{voter.phone || '-'}</p>
+                      <div className="mobile-web-chip-row">
+                        <span className="mobile-web-chip neutral">{voter.natureOfVoter || 'NA'}</span>
+                        {voter.boothNo ? (
+                          <span className="mobile-web-chip neutral">{voter.boothNo}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mobile-web-pollday-card-actions">
+                      <div className="mobile-web-pollday-status">
+                        <button className={`mobile-web-pill ${isVoted ? 'success' : ''}`} type="button">VOTED</button>
+                        <button className={`mobile-web-pill ${isNotVoted ? 'danger' : ''}`} type="button">NOT VOTED</button>
+                      </div>
+                      <a
+                        className={`mobile-web-call-btn ${phoneValue ? '' : 'disabled'}`}
+                        href={phoneValue ? `tel:${phoneValue}` : undefined}
+                        onClick={(e) => {
+                          if (!phoneValue) e.preventDefault();
+                        }}
+                        title={phoneValue ? `Call ${phoneValue}` : 'No phone number'}
+                      >
+                        <PhoneOutlined fontSize="small" />
+                      </a>
                     </div>
                   </div>
-                  <div className="mobile-web-pollday-actions">
-                    <button className={`mobile-web-pill ${voter.status === 'VOTED' ? 'success' : ''}`} type="button">VOTED</button>
-                    <button className={`mobile-web-pill ${voter.status === 'NOT VOTED' ? 'danger' : ''}`} type="button">NOT VOTED</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="mobile-web-pollday-right">
-            <div className="mobile-web-quick-card">
-              <h4>Quick Actions</h4>
-              <button className="mobile-web-secondary-btn" type="button">Show Not Voted</button>
-              <button className="mobile-web-secondary-btn" type="button">Show Voted</button>
-              <button className="mobile-web-secondary-btn" type="button">Filter: Favour</button>
-            </div>
-            <div className="mobile-web-quick-card">
-              <h4>Offline queue</h4>
-              <p className="mobile-web-muted">Queued ops: 0</p>
-              <button className="mobile-web-secondary-btn" type="button">Sync Now</button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -2239,8 +2750,219 @@ function PollDayScreen() {
   );
 }
 
+function getApiToken() {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem('X_INIT_TOKEN') || localStorage.getItem('token') || '';
+}
+
+function ExtractScreen() {
+  const [file, setFile] = useState(null);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState({ phase: '', percent: 0 });
+  const [includeDebug, setIncludeDebug] = useState(false);
+  const processingTimerRef = useRef(null);
+
+  const handleUpload = async () => {
+    if (!file) {
+      setError('Please choose a PDF file.');
+      return;
+    }
+    setStatus('Uploading and extracting...');
+    setProgress({ phase: 'upload', percent: 0 });
+    setError('');
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+    const contextPath = process.env.NEXT_PUBLIC_CONTEXT_PATH || '/votebase/v1';
+    const url = `${apiBase}${contextPath}/api/extract/pdf-to-excel${includeDebug ? '?debug=true' : ''}`;
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.responseType = 'blob';
+        const token = getApiToken();
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        }
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          const pct = Math.round((event.loaded / event.total) * 40);
+          setProgress({ phase: 'upload', percent: pct });
+        };
+        xhr.upload.onload = () => {
+          if (processingTimerRef.current) {
+            clearInterval(processingTimerRef.current);
+          }
+          setStatus('Processing PDF (Textract / OCR if needed)...');
+          setProgress({ phase: 'processing', percent: 40 });
+          processingTimerRef.current = setInterval(() => {
+            setProgress((prev) => {
+              if (prev.phase !== 'processing') return prev;
+              const next = Math.min(prev.percent + 2, 90);
+              return { phase: 'processing', percent: next };
+            });
+          }, 1200);
+        };
+        xhr.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          if (processingTimerRef.current) {
+            clearInterval(processingTimerRef.current);
+          }
+          const pct = 90 + Math.round((event.loaded / event.total) * 10);
+          setProgress({ phase: 'download', percent: Math.min(pct, 100) });
+        };
+        xhr.onload = () => {
+          const parseErrorBlob = async (blob) => {
+            try {
+              const text = await blob.text();
+              try {
+                const j = JSON.parse(text);
+                return j.message || j.detail || j.error || text;
+              } catch {
+                return text || 'Extraction failed.';
+              }
+            } catch {
+              return 'Extraction failed.';
+            }
+          };
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const blob = xhr.response;
+            const ctype = xhr.getResponseHeader('content-type') || '';
+            if (ctype.includes('application/json')) {
+              parseErrorBlob(blob).then((msg) => reject(new Error(msg)));
+              return;
+            }
+            const urlObj = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = urlObj;
+            link.download = 'extract.xlsx';
+            link.click();
+            window.URL.revokeObjectURL(urlObj);
+            resolve();
+          } else {
+            parseErrorBlob(xhr.response).then((msg) => reject(new Error(msg)));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error — check API base URL and CORS.'));
+        xhr.send(form);
+      });
+      setStatus('Download finished — check your extract.xlsx file.');
+    } catch (err) {
+      setError(err?.message || 'Extraction failed.');
+      setStatus('');
+    } finally {
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+      setProgress({ phase: '', percent: 0 });
+    }
+  };
+
+  return (
+    <ScreenFrame accent="light">
+      <section className="mobile-web-card mobile-web-extract-shell">
+        <MobileHeader title="Extract" subtitle="Upload voter list PDFs and export structured Excel sheets." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+        <div className="mobile-web-stack">
+          <div className="mobile-web-field">
+            <label>PDF File</label>
+            <input
+              className="mobile-web-input"
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </div>
+          <label className="mobile-web-field mobile-web-checkbox-row">
+            <input
+              type="checkbox"
+              checked={includeDebug}
+              onChange={(e) => setIncludeDebug(e.target.checked)}
+            />
+            <span>Include DEBUG sheet (larger file)</span>
+          </label>
+          <button type="button" className="mobile-web-primary-btn" onClick={handleUpload}>
+            Extract to Excel
+          </button>
+          {progress.phase ? (
+            <div className="mobile-web-progress">
+              <div className="mobile-web-progress-label">
+                {progress.phase === 'upload'
+                  ? `Uploading: ${progress.percent}%`
+                  : progress.phase === 'processing'
+                    ? `Processing with Textract: ${progress.percent}%`
+                    : `Downloading: ${progress.percent}%`}
+              </div>
+              <div className="mobile-web-progress-bar">
+                <span style={{ width: `${progress.percent}%` }} />
+              </div>
+            </div>
+          ) : null}
+          {status ? <div className="mobile-web-info-pill">{status}</div> : null}
+          {error ? <div className="mobile-web-error">{error}</div> : null}
+          <div className="mobile-web-extract-note">
+            Upload your PDF (e.g. <code>4_9_14_EPUB.pdf</code>). Set <code>NEXT_PUBLIC_API_BASE_URL</code> to your API
+            origin; optional <code>NEXT_PUBLIC_CONTEXT_PATH</code> defaults to <code>/votebase/v1</code>. Scanned PDFs need
+            AWS Textract (<code>EXTRACT_S3_BUCKET</code> + credentials) or local <code>tesseract</code> + <code>pdftoppm</code>.
+          </div>
+        </div>
+      </section>
+    </ScreenFrame>
+  );
+}
+
 function PrintScreen() {
-  const printers = ['Wireless Printer A', 'Wireless Printer B', 'Wireless Printer C'];
+  const [printers, setPrinters] = useState([]);
+  const [connectedPrinter, setConnectedPrinter] = useState(null);
+  const [scanStatus, setScanStatus] = useState('');
+  const [scanError, setScanError] = useState('');
+
+  const addPrinter = (device) => {
+    if (!device) return;
+    setPrinters((prev) => {
+      if (prev.some((p) => p.id === device.id)) return prev;
+      return prev.concat([{ id: device.id, name: device.name || 'Thermal Printer', device }]);
+    });
+  };
+
+  const handleScanPrinters = async () => {
+    setScanError('');
+    setScanStatus('Searching for thermal printers...');
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+      setScanError('Bluetooth is not supported in this browser.');
+      setScanStatus('');
+      return;
+    }
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [
+          { namePrefix: 'Thermal' },
+          { namePrefix: 'Printer' },
+          { namePrefix: 'BT' },
+        ],
+        optionalServices: [],
+      });
+      addPrinter(device);
+      setScanStatus('Printer found. Select it to connect.');
+    } catch (error) {
+      if (error?.name === 'NotFoundError') {
+        setScanStatus('No printers selected.');
+      } else {
+        setScanError(error?.message || 'Unable to scan for printers.');
+        setScanStatus('');
+      }
+    }
+  };
+
+  const handleConnect = (printer) => {
+    if (!printer) return;
+    setConnectedPrinter(printer);
+  };
+
+  const handleDisconnect = () => {
+    setConnectedPrinter(null);
+  };
 
   return (
     <ScreenFrame accent="light">
@@ -2248,22 +2970,45 @@ function PrintScreen() {
         <MobileHeader title="Printer" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-printer-status">
           <div>
-            <div className="mobile-web-status-title">Connected</div>
-            <div className="mobile-web-muted">Battery: 85%</div>
-          </div>
-          <button className="mobile-web-gradient-btn" type="button">Connect</button>
-        </div>
-        <div className="mobile-web-printer-card">
-          <h4>Available Devices</h4>
-          {printers.map((printer) => (
-            <div key={printer} className="mobile-web-printer-row">
-              <span>{printer}</span>
-              <span className="mobile-web-signal">︿︿︿</span>
+            <div className="mobile-web-status-title">{connectedPrinter ? 'Connected' : 'Not Connected'}</div>
+            <div className="mobile-web-muted">
+              {connectedPrinter ? connectedPrinter.name : 'Search for nearby thermal printers.'}
             </div>
-          ))}
+          </div>
+          <button className="mobile-web-gradient-btn" type="button" onClick={handleScanPrinters}>
+            Search Printers
+          </button>
         </div>
-        <button className="mobile-web-gradient-btn full" type="button">Disconnect</button>
-        <button className="mobile-web-gradient-btn subtle" type="button">Print Sample</button>
+        {scanStatus ? <div className="mobile-web-info-pill">{scanStatus}</div> : null}
+        {scanError ? <div className="mobile-web-error">{scanError}</div> : null}
+        <div className="mobile-web-printer-card">
+          <h4>Available Thermal Printers</h4>
+          {printers.length === 0 ? (
+            <div className="mobile-web-table-empty">No printers found yet.</div>
+          ) : (
+            printers.map((printer) => (
+              <div key={printer.id} className="mobile-web-printer-row">
+                <div>
+                  <div className="mobile-web-printer-name">{printer.name}</div>
+                  <div className="mobile-web-muted">ID: {printer.id}</div>
+                </div>
+                <button
+                  type="button"
+                  className="mobile-web-secondary-btn"
+                  onClick={() => handleConnect(printer)}
+                >
+                  {connectedPrinter?.id === printer.id ? 'Connected' : 'Connect'}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <button className="mobile-web-gradient-btn full" type="button" onClick={handleDisconnect}>
+          Disconnect
+        </button>
+        <button className="mobile-web-gradient-btn subtle" type="button" disabled={!connectedPrinter}>
+          Print Sample
+        </button>
       </section>
     </ScreenFrame>
   );
@@ -2275,6 +3020,7 @@ function VolunteerAnalysisScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sortMode, setSortMode] = useState('name-asc');
+  const [viewMode, setViewMode] = useState('agent');
   const [activeTab, setActiveTab] = useState('table');
   const [detailRows, setDetailRows] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -2301,6 +3047,29 @@ function VolunteerAnalysisScreen() {
     setHydrated(true);
   }, [userInfo]);
 
+  const accessWardIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+    if (userInfo?.wardId) ids.push(userInfo.wardId);
+    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
+
+  const effectiveWard = useMemo(() => {
+    if (role === 'WARD' && accessWardIds.length === 1) {
+      return accessWardIds[0];
+    }
+    return selectedWard;
+  }, [role, accessWardIds, selectedWard]);
+
   useEffect(() => {
     let active = true;
     mobileApi.fetchWards().then((res) => {
@@ -2324,12 +3093,18 @@ function VolunteerAnalysisScreen() {
           label: ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name_en ?? ward?.name ?? '',
         }))
         .filter((item) => item.value && item.label);
-      setWardItems(list);
+      const filtered = accessWardIds.length
+        ? list.filter((item) => accessWardIds.includes(item.value))
+        : list;
+      setWardItems(filtered);
+      if (accessWardIds.length && filtered.length && !filtered.some((item) => item.value === selectedWard)) {
+        setSelectedWard(filtered[0].value);
+      }
     }).catch(() => setWardItems([]));
     return () => {
       active = false;
     };
-  }, []);
+  }, [accessWardIds, selectedWard]);
 
   const sortOptions = [
     { label: 'Name A-Z', value: 'name-asc' },
@@ -2338,9 +3113,19 @@ function VolunteerAnalysisScreen() {
     { label: 'Oldest Created', value: 'oldest' },
   ];
   const selectedSortLabel = sortOptions.find((item) => item.value === sortMode)?.label || '';
+  const viewOptions = [
+    { label: 'Agent wise', value: 'agent' },
+    { label: 'Date wise', value: 'date' },
+    { label: 'Ward wise', value: 'ward' },
+    { label: 'Booth wise', value: 'booth' },
+  ];
+  const selectedViewLabel = viewOptions.find((item) => item.value === viewMode)?.label || '';
 
   const sortedRows = useMemo(() => {
     const items = [...rows];
+    if (viewMode !== 'agent') {
+      return items;
+    }
     if (sortMode === 'name-desc') {
       return items.sort((a, b) => String(b.agentName || '').localeCompare(String(a.agentName || ''), 'en'));
     }
@@ -2350,8 +3135,8 @@ function VolunteerAnalysisScreen() {
     if (sortMode === 'oldest') {
       return items.sort((a, b) => Number(a.userId || 0) - Number(b.userId || 0));
     }
-    return items.sort((a, b) => String(a.agentName || '').localeCompare(String(b.agentName || ''), 'en'));
-  }, [rows, sortMode]);
+    return items.sort((a, b) => String(a.agentName || '').localeCompare(String(a.agentName || ''), 'en'));
+  }, [rows, sortMode, viewMode]);
 
   const formatDateTime = (value) => {
     if (!value) return '-';
@@ -2361,12 +3146,48 @@ function VolunteerAnalysisScreen() {
   };
 
   const buildExportRows = () => {
-    const headers = ['Agent Name', 'Mobile No', 'Last Updated At', ...fields.map((f) => f.label)];
+    const baseHeaders = fields.map((f) => f.label);
+    if (viewMode === 'agent') {
+      const headers = ['Agent Name', 'Mobile No', ...baseHeaders, 'Last Updated At'];
+      const dataRows = sortedRows.map((row) => [
+        row.agentName || '',
+        row.phone || '',
+        ...fields.map((f) => row.counts?.[f.key] ?? 0),
+        row.lastUpdatedAt || '',
+      ]);
+      return { headers, dataRows };
+    }
+    if (viewMode === 'date') {
+      const headers = ['Date', 'Agents Worked', 'Booths Covered', 'Voters Met', ...baseHeaders, 'Last Updated At'];
+      const dataRows = sortedRows.map((row) => [
+        row.label || row.groupKey || '',
+        row.agentsWorked ?? 0,
+        row.boothsCovered ?? 0,
+        row.total ?? 0,
+        ...fields.map((f) => row.counts?.[f.key] ?? 0),
+        row.lastUpdatedAt || '',
+      ]);
+      return { headers, dataRows };
+    }
+    if (viewMode === 'ward') {
+      const headers = ['Ward', 'Agents', 'Booths', 'Voters Met', ...baseHeaders, 'Last Updated At'];
+      const dataRows = sortedRows.map((row) => [
+        row.label || row.groupKey || '',
+        row.agentsWorked ?? 0,
+        row.boothsCovered ?? 0,
+        row.total ?? 0,
+        ...fields.map((f) => row.counts?.[f.key] ?? 0),
+        row.lastUpdatedAt || '',
+      ]);
+      return { headers, dataRows };
+    }
+    const headers = ['Booth No.', 'Agents', 'Voters Met', ...baseHeaders, 'Last Updated At'];
     const dataRows = sortedRows.map((row) => [
-      row.agentName || '',
-      row.phone || '',
-      row.lastUpdatedAt || '',
+      row.label || row.groupKey || '',
+      row.agentsWorked ?? 0,
+      row.total ?? 0,
       ...fields.map((f) => row.counts?.[f.key] ?? 0),
+      row.lastUpdatedAt || '',
     ]);
     return { headers, dataRows };
   };
@@ -2400,7 +3221,7 @@ function VolunteerAnalysisScreen() {
     setDetailLoading(true);
     setDetailError('');
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, detailFrom || undefined, detailTo || undefined);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, undefined, undefined);
       const payload = res?.data?.result || res?.result || [];
       setDetailRows(Array.isArray(payload) ? payload : []);
     } catch (err) {
@@ -2415,15 +3236,15 @@ function VolunteerAnalysisScreen() {
     const next = !showDetails;
     setShowDetails(next);
     if (next && detailRows.length === 0) {
-      await loadDetails(selectedWard || undefined);
+      await loadDetails(effectiveWard || undefined);
     }
   };
 
   useEffect(() => {
     if (showDetails) {
-      loadDetails(selectedWard || undefined);
+      loadDetails(effectiveWard || undefined);
     }
-  }, [selectedWard, detailFrom, detailTo]);
+  }, [effectiveWard, showDetails]);
 
   const downloadDetailCsv = () => {
     const { headers, dataRows } = buildDetailExport();
@@ -2456,7 +3277,7 @@ function VolunteerAnalysisScreen() {
     setLoading(true);
     setError('');
     try {
-      const res = await mobileApi.fetchVolunteerAnalysis(selectedWard || undefined);
+      const res = await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode);
       const payload = res?.data?.result || res?.result || {};
       setRows(payload?.rows || []);
       setFields(payload?.fields || []);
@@ -2469,7 +3290,7 @@ function VolunteerAnalysisScreen() {
 
   useEffect(() => {
     if (role !== 'BOOTH') loadAnalysis();
-  }, [role, selectedWard]);
+  }, [role, effectiveWard, viewMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2542,6 +3363,7 @@ function VolunteerAnalysisScreen() {
       }
       mapMarkersRef.current.forEach((marker) => marker.setMap(null));
       mapMarkersRef.current = [];
+      const bounds = new google.maps.LatLngBounds();
       validPoints.forEach((point) => {
         const gender = String(point.gender || '').toUpperCase();
         const color = gender.startsWith('M') ? '#2563eb' : gender.startsWith('F') ? '#db2777' : '#64748b';
@@ -2558,7 +3380,13 @@ function VolunteerAnalysisScreen() {
           },
         });
         mapMarkersRef.current.push(marker);
+        bounds.extend(marker.getPosition());
       });
+      if (validPoints.length >= 2) {
+        mapInstanceRef.current.fitBounds(bounds, 36);
+      } else if (validPoints.length === 1) {
+        mapInstanceRef.current.setZoom(15);
+      }
     } catch (err) {
       setMapError(err?.message || 'Unable to load map.');
     }
@@ -2573,7 +3401,7 @@ function VolunteerAnalysisScreen() {
         setMapPoints([]);
         return;
       }
-      const res = await mobileApi.fetchVolunteerLocationPoints(selectedWard || undefined);
+      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
       const payload = res?.data?.result || res?.result || [];
       const points = Array.isArray(payload) ? payload : [];
       const normalized = points
@@ -2596,7 +3424,7 @@ function VolunteerAnalysisScreen() {
   useEffect(() => {
     if (activeTab !== 'map') return;
     loadMapPoints();
-  }, [activeTab, selectedWard]);
+  }, [activeTab, effectiveWard]);
 
   const detailColumns = useMemo(() => {
     if (!detailRows.length) return [];
@@ -2623,6 +3451,11 @@ function VolunteerAnalysisScreen() {
     keys.forEach((key) => {
       if (!ordered.includes(key)) ordered.push(key);
     });
+    if (ordered.includes('lastUpdatedAt')) {
+      const idx = ordered.indexOf('lastUpdatedAt');
+      ordered.splice(idx, 1);
+      ordered.push('lastUpdatedAt');
+    }
     return ordered;
   }, [detailRows]);
 
@@ -2670,8 +3503,8 @@ function VolunteerAnalysisScreen() {
             <label>Ward</label>
             <SingleOptionSelect
               label="Ward"
-              options={['All Wards', ...wardItems.map((item) => item.label)]}
-              value={selectedWard ? (wardItems.find((item) => item.value === selectedWard)?.label || '') : 'All Wards'}
+              options={accessWardIds.length ? wardItems.map((item) => item.label) : ['All Wards', ...wardItems.map((item) => item.label)]}
+              value={effectiveWard ? (wardItems.find((item) => item.value === effectiveWard)?.label || '') : (accessWardIds.length ? (wardItems[0]?.label || '') : 'All Wards')}
               customValue=""
               onSelect={(option) => {
                 if (option === 'All Wards') {
@@ -2685,16 +3518,29 @@ function VolunteerAnalysisScreen() {
             />
           </div>
           <div className="mobile-web-field">
-            <label>Sort By</label>
+            <label>View</label>
             <SingleOptionSelect
-              label="Sort By"
-              options={sortOptions.map((item) => item.label)}
-              value={selectedSortLabel}
+              label="View"
+              options={viewOptions.map((item) => item.label)}
+              value={selectedViewLabel}
               customValue=""
-              onSelect={(option) => setSortMode(sortOptions.find((item) => item.label === option)?.value ?? 'name-asc')}
+              onSelect={(option) => setViewMode(viewOptions.find((item) => item.label === option)?.value ?? 'agent')}
               onCustomValueChange={() => { }}
             />
           </div>
+          {viewMode === 'agent' ? (
+            <div className="mobile-web-field">
+              <label>Sort By</label>
+              <SingleOptionSelect
+                label="Sort By"
+                options={sortOptions.map((item) => item.label)}
+                value={selectedSortLabel}
+                customValue=""
+                onSelect={(option) => setSortMode(sortOptions.find((item) => item.label === option)?.value ?? 'name-asc')}
+                onCustomValueChange={() => { }}
+              />
+            </div>
+          ) : null}
 
         </div>
         <div className="mobile-web-tab-strip mobile-web-analysis-tabs">
@@ -2734,42 +3580,124 @@ function VolunteerAnalysisScreen() {
             {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
             {!loading && sortedRows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
             {!loading && sortedRows.length > 0 ? (
-          <div className="mobile-web-analysis-table-wrap">
-            <table className="mobile-web-analysis-table">
-              <thead>
-                <tr>
-                  <th>Agent Name</th>
-                  <th>Mobile No</th>
-                  <th>Last Updated At</th>
-                  {fields.map((field) => (
-                    <th key={field.key}>{field.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((row) => (
-                  <tr key={row.userId}>
-                    <td>{row.agentName || '-'}</td>
-                    <td>{row.phone || '-'}</td>
-                    <td>{formatDateTime(row.lastUpdatedAt)}</td>
-                    {fields.map((field) => (
-                      <td key={`${row.userId}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
+              <div className="mobile-web-analysis-table-wrap">
+                <table className="mobile-web-analysis-table">
+                  <thead>
+                    <tr>
+                      {viewMode === 'agent' ? (
+                        <>
+                          <th>Agent Name</th>
+                          <th>Mobile No</th>
+                        </>
+                      ) : null}
+                      {viewMode === 'date' ? (
+                        <>
+                          <th>Date</th>
+                          <th>Agents Worked</th>
+                          <th>Booths Covered</th>
+                          <th>Voters Met</th>
+                        </>
+                      ) : null}
+                      {viewMode === 'ward' ? (
+                        <>
+                          <th>Ward</th>
+                          <th>Agents</th>
+                          <th>Booths</th>
+                          <th>Voters Met</th>
+                        </>
+                      ) : null}
+                      {viewMode === 'booth' ? (
+                        <>
+                          <th>Booth No.</th>
+                          <th>Agents</th>
+                          <th>Voters Met</th>
+                        </>
+                      ) : null}
+                      {fields.map((field) => (
+                        <th key={field.key}>{field.label}</th>
+                      ))}
+                      <th>Updated At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedRows.map((row) => (
+                      <tr key={row.userId || row.groupKey || row.label}>
+                        {viewMode === 'agent' ? (
+                          <>
+                            <td>{row.agentName || '-'}</td>
+                            <td>{row.phone || '-'}</td>
+                          </>
+                        ) : null}
+                        {viewMode === 'date' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                            <td>{row.boothsCovered ?? 0}</td>
+                            <td>{row.total ?? 0}</td>
+                          </>
+                        ) : null}
+                        {viewMode === 'ward' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                            <td>{row.boothsCovered ?? 0}</td>
+                            <td>{row.total ?? 0}</td>
+                          </>
+                        ) : null}
+                        {viewMode === 'booth' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                            <td>{row.total ?? 0}</td>
+                          </>
+                        ) : null}
+                        {fields.map((field) => (
+                          <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
+                        ))}
+                        <td>{formatDateTime(row.lastUpdatedAt)}</td>
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-                <tr className="mobile-web-analysis-total">
-                  <td>Total</td>
-                  <td>-</td>
-                  <td>-</td>
-                  {fields.map((field) => (
-                    <td key={`total-${field.key}`}>
-                      {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                    <tr className="mobile-web-analysis-total">
+                      {viewMode === 'agent' ? (
+                        <>
+                          <td>Total</td>
+                          <td>-</td>
+                          <td>-</td>
+                        </>
+                      ) : null}
+                      {viewMode === 'date' ? (
+                        <>
+                          <td>Total</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0)}</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
+                        </>
+                      ) : null}
+                      {viewMode === 'ward' ? (
+                        <>
+                          <td>Total</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0)}</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
+                        </>
+                      ) : null}
+                      {viewMode === 'booth' ? (
+                        <>
+                          <td>Total</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
+                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
+                        </>
+                      ) : null}
+                      {fields.map((field) => (
+                        <td key={`total-${field.key}`}>
+                          {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
+                        </td>
+                      ))}
+                      <td>-</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             ) : null}
           </>
         ) : (
@@ -2799,7 +3727,7 @@ function VolunteerAnalysisScreen() {
             <div className="mobile-web-map-container" ref={mapRef} />
           </div>
         )}
-        {activeTab === 'table' && hydrated && role === 'SUPER_ADMIN' ? (
+        {activeTab === 'table' && hydrated && ['SUPER_ADMIN', 'ADMIN', 'WARD'].includes(role) ? (
           <div className="mobile-web-field">
             <label className="mt-5">Details</label>
             <button type="button" className="mobile-web-secondary-btn mobile-web-detail-toggle" onClick={toggleDetails} disabled={detailLoading}>
@@ -2807,18 +3735,8 @@ function VolunteerAnalysisScreen() {
             </button>
           </div>
         ) : null}
-        {activeTab === 'table' && hydrated && role === 'SUPER_ADMIN' && showDetails ? (
+        {activeTab === 'table' && hydrated && ['SUPER_ADMIN', 'ADMIN', 'WARD'].includes(role) && showDetails ? (
           <div className="mobile-web-stack">
-            <div className="mobile-web-form-grid" style={{ marginBottom: '8px' }}>
-              <div className="mobile-web-field">
-                <label>Updated From</label>
-                <input className="mobile-web-input" type="date" value={detailFrom} onChange={(e) => setDetailFrom(e.target.value)} />
-              </div>
-              <div className="mobile-web-field">
-                <label>Updated To</label>
-                <input className="mobile-web-input" type="date" value={detailTo} onChange={(e) => setDetailTo(e.target.value)} />
-              </div>
-            </div>
             <div className="mobile-web-action-row">
               <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailCsv} disabled={!detailRows.length}>
                 Download Detailed CSV
@@ -2835,9 +3753,21 @@ function VolunteerAnalysisScreen() {
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
-                      {detailColumns.map((key) => (
-                        <th key={key}>{key}</th>
-                      ))}
+                      {detailColumns.map((key) => {
+                        const friendlyLabel = {
+                          serialNumber: 'Sr No',
+                          wardName: 'Ward Name',
+                          name: 'Name',
+                          epicNo: 'Epic No',
+                          boothNo: 'Booth No',
+                          voterSerialNo: 'Voter Serial No',
+                          lastUpdatedAt: 'Last Updated At',
+                          updatedByName: 'Updated By',
+                          updatedByPhone: 'Agent Phone',
+                          wardCode: 'Ward Code',
+                        }[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+                        return <th key={key}>{friendlyLabel}</th>;
+                      })}
                     </tr>
                   </thead>
                   <tbody>
@@ -2867,6 +3797,7 @@ export default function MobileDetailPage({ params }) {
   if (slug === 'meetings') return <MeetingsScreen />;
   if (slug === 'poll-day') return <PollDayScreen />;
   if (slug === 'print') return <PrintScreen />;
+  if (slug === 'extract') return <ExtractScreen />;
   if (slug === 'add-volunteer') return <AddVolunteerScreen />;
   if (slug === 'my-volunteers') return <MyVolunteersScreen />;
   if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen />;
