@@ -262,12 +262,24 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchVolunteerEnrichmentDetails: async (wardId, updatedFrom, updatedTo) => {
+  downloadDbDump: async () => {
+    const response = await fetch(`${API_BASE_URL}/votebase/v1/api/admin/db-dump`, {
+      headers: buildHeaders(),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text);
+    }
+    return response;
+  },
+  fetchVolunteerEnrichmentDetails: async (wardId, updatedFrom, updatedTo, page, size) => {
     try {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
+      if (page !== undefined) params.set('page', String(page));
+      if (size !== undefined) params.set('size', String(size));
       const qs = params.toString();
       return await request(`/votebase/v1/api/volunteers/analysis/enrichment${qs ? `?${qs}` : ''}`);
     } catch (error) {

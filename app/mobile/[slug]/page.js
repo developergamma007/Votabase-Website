@@ -3026,6 +3026,10 @@ function VolunteerAnalysisScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
+  const [dbDumpProgress, setDbDumpProgress] = useState(-1);
+  const [dbDumpLoading, setDbDumpLoading] = useState(false);
+  const [detailPage, setDetailPage] = useState(0);
+  const [hasMoreDetails, setHasMoreDetails] = useState(true);
   const [detailFrom, setDetailFrom] = useState('');
   const [detailTo, setDetailTo] = useState('');
   const [mapPoints, setMapPoints] = useState([]);
@@ -3124,13 +3128,27 @@ function VolunteerAnalysisScreen() {
   const sortedRows = useMemo(() => {
     const items = [...rows];
     if (viewMode !== 'agent') {
-      return items;
+      return items.sort((a, b) => {
+        const aTime = new Date(a.lastUpdatedAt || 0).getTime();
+        const bTime = new Date(b.lastUpdatedAt || 0).getTime();
+        if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+          return bTime - aTime;
+        }
+        return String(a.label || a.groupKey || '').localeCompare(String(b.label || b.groupKey || ''), 'en');
+      });
     }
     if (sortMode === 'name-desc') {
       return items.sort((a, b) => String(b.agentName || '').localeCompare(String(a.agentName || ''), 'en'));
     }
     if (sortMode === 'latest') {
-      return items.sort((a, b) => Number(b.userId || 0) - Number(a.userId || 0));
+      return items.sort((a, b) => {
+        const aTime = new Date(a.lastUpdatedAt || 0).getTime();
+        const bTime = new Date(b.lastUpdatedAt || 0).getTime();
+        if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+          return bTime - aTime;
+        }
+        return Number(b.userId || 0) - Number(a.userId || 0);
+      });
     }
     if (sortMode === 'oldest') {
       return items.sort((a, b) => Number(a.userId || 0) - Number(b.userId || 0));
@@ -3138,15 +3156,29 @@ function VolunteerAnalysisScreen() {
     return items.sort((a, b) => String(a.agentName || '').localeCompare(String(a.agentName || ''), 'en'));
   }, [rows, sortMode, viewMode]);
 
+  const summaryTotals = useMemo(() => {
+    if (viewMode === 'agent') return null;
+    return {
+      agentsWorked: sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0),
+      boothsCovered: sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0),
+      votersMet: sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0),
+    };
+  }, [sortedRows, viewMode]);
+
   const formatDateTime = (value) => {
     if (!value) return '-';
-    const parsed = new Date(value);
+    const raw = typeof value === 'string' ? value.trim() : value;
+    const needsTz = typeof raw === 'string' && raw !== '' && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw);
+    const normalized = needsTz ? `${raw}Z` : raw;
+    const parsed = new Date(normalized);
     if (Number.isNaN(parsed.getTime())) return String(value);
-    return parsed.toLocaleString();
+    return parsed.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   };
 
   const buildExportRows = () => {
     const baseHeaders = fields.map((f) => f.label);
+    const getRowTotalUpdates = (row) => fields.reduce((sum, f) => sum + (Number(row.counts?.[f.key]) || 0), 0);
+
     if (viewMode === 'agent') {
       const headers = ['Agent Name', 'Mobile No', ...baseHeaders, 'Last Updated At'];
       const dataRows = sortedRows.map((row) => [
@@ -3158,35 +3190,38 @@ function VolunteerAnalysisScreen() {
       return { headers, dataRows };
     }
     if (viewMode === 'date') {
-      const headers = ['Date', 'Agents Worked', 'Booths Covered', 'Voters Met', ...baseHeaders, 'Last Updated At'];
+      const headers = ['Date', 'Agents Worked', 'Booths Covered', 'Voters Met', ...baseHeaders, 'Total Updates', 'Last Updated At'];
       const dataRows = sortedRows.map((row) => [
         row.label || row.groupKey || '',
         row.agentsWorked ?? 0,
         row.boothsCovered ?? 0,
         row.total ?? 0,
         ...fields.map((f) => row.counts?.[f.key] ?? 0),
+        getRowTotalUpdates(row),
         row.lastUpdatedAt || '',
       ]);
       return { headers, dataRows };
     }
     if (viewMode === 'ward') {
-      const headers = ['Ward', 'Agents', 'Booths', 'Voters Met', ...baseHeaders, 'Last Updated At'];
+      const headers = ['Ward', 'Agents', 'Booths', 'Voters Met', ...baseHeaders, 'Total Updates', 'Last Updated At'];
       const dataRows = sortedRows.map((row) => [
         row.label || row.groupKey || '',
         row.agentsWorked ?? 0,
         row.boothsCovered ?? 0,
         row.total ?? 0,
         ...fields.map((f) => row.counts?.[f.key] ?? 0),
+        getRowTotalUpdates(row),
         row.lastUpdatedAt || '',
       ]);
       return { headers, dataRows };
     }
-    const headers = ['Booth No.', 'Agents', 'Voters Met', ...baseHeaders, 'Last Updated At'];
+    const headers = ['Booth No.', 'Agents', 'Voters Met', ...baseHeaders, 'Total Updates', 'Last Updated At'];
     const dataRows = sortedRows.map((row) => [
       row.label || row.groupKey || '',
       row.agentsWorked ?? 0,
       row.total ?? 0,
       ...fields.map((f) => row.counts?.[f.key] ?? 0),
+      getRowTotalUpdates(row),
       row.lastUpdatedAt || '',
     ]);
     return { headers, dataRows };
@@ -3217,18 +3252,97 @@ function VolunteerAnalysisScreen() {
     URL.revokeObjectURL(link.href);
   };
 
+  const fetchAllDetailsForExport = async () => {
+    try {
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined);
+      return Array.isArray(res?.data?.result || res?.result) ? (res?.data?.result || res?.result) : [];
+    } catch (err) {
+      console.warn('Failed to fetch full data for export.', err);
+      return detailRows; // Fallback
+    }
+  };
+
+  const downloadDbDump = async () => {
+    if (dbDumpLoading) return;
+    setDbDumpLoading(true);
+    setDbDumpProgress(0);
+    try {
+      const response = await mobileApi.downloadDbDump();
+      const contentLength = response.headers.get('content-length');
+      const total = contentLength ? parseInt(contentLength, 10) : 0;
+      let loaded = 0;
+      const reader = response.body.getReader();
+      const chunks = [];
+      while(true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (total) {
+          setDbDumpProgress(Math.round((loaded / total) * 100));
+        } else {
+          setDbDumpProgress(loaded);
+        }
+      }
+      const blob = new Blob(chunks, { type: 'application/sql' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `votabase_dump_${new Date().toISOString().replace(/[:.]/g, '-')}.sql`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download DB dump', err);
+      alert('Failed to download Complete DB Dump.');
+    } finally {
+      setDbDumpLoading(false);
+      setDbDumpProgress(-1);
+    }
+  };
+
   const loadDetails = async (wardId) => {
     setDetailLoading(true);
     setDetailError('');
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, undefined, undefined);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, undefined, undefined, 0, 50);
       const payload = res?.data?.result || res?.result || [];
-      setDetailRows(Array.isArray(payload) ? payload : []);
+      const newRows = Array.isArray(payload) ? payload : [];
+      setDetailRows(newRows);
+      setDetailPage(1);
+      setHasMoreDetails(newRows.length === 50);
     } catch (err) {
       setDetailError(err?.message || 'Unable to load enrichment details.');
       setDetailRows([]);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const loadMoreDetails = async () => {
+    if (detailLoading || !hasMoreDetails) return;
+    setDetailLoading(true);
+    try {
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined, detailPage, 50);
+      const payload = res?.data?.result || res?.result || [];
+      const newRows = Array.isArray(payload) ? payload : [];
+      setDetailRows((prev) => {
+        const existing = new Set(prev.map(r => r.serialNumber || r.epicNo || r.epic));
+        const filtered = newRows.filter(r => !existing.has(r.serialNumber || r.epicNo || r.epic));
+        return [...prev, ...filtered];
+      });
+      setDetailPage((prev) => prev + 1);
+      setHasMoreDetails(newRows.length === 50);
+    } catch (err) {
+      setDetailError(err?.message || 'Unable to load more enrichment details.');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleDetailScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    if (scrollHeight - scrollTop <= clientHeight + 50) {
+      loadMoreDetails();
     }
   };
 
@@ -3246,8 +3360,9 @@ function VolunteerAnalysisScreen() {
     }
   }, [effectiveWard, showDetails]);
 
-  const downloadDetailCsv = () => {
-    const { headers, dataRows } = buildDetailExport();
+  const downloadDetailCsv = async () => {
+    const fullData = await fetchAllDetailsForExport();
+    const { headers, dataRows } = buildDetailExport(fullData);
     if (!headers.length) return;
     const csv = [headers.join(','), ...dataRows.map((r) => r.map((v) => String(v)).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -3258,8 +3373,9 @@ function VolunteerAnalysisScreen() {
     URL.revokeObjectURL(link.href);
   };
 
-  const downloadDetailXls = () => {
-    const { headers, dataRows } = buildDetailExport();
+  const downloadDetailXls = async () => {
+    const fullData = await fetchAllDetailsForExport();
+    const { headers, dataRows } = buildDetailExport(fullData);
     if (!headers.length) return;
     const tableRows = [headers, ...dataRows]
       .map((r) => `<tr>${r.map((v) => `<td>${String(v)}</td>`).join('')}</tr>`)
@@ -3459,6 +3575,24 @@ function VolunteerAnalysisScreen() {
     return ordered;
   }, [detailRows]);
 
+  const getSortedRows = (rowsData) => {
+    return [...rowsData].sort((a, b) => {
+      const aTime = new Date(a?.lastUpdatedAt || 0).getTime();
+      const bTime = new Date(b?.lastUpdatedAt || 0).getTime();
+      if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+        return bTime - aTime;
+      }
+      return 0;
+    });
+  };
+
+  const sortedDetailRows = useMemo(() => {
+    return getSortedRows(detailRows).map((row, index) => ({
+      ...row,
+      serialNumber: index + 1
+    }));
+  }, [detailRows]);
+
   const renderDetailValue = (row, key) => {
     if (key === 'lastUpdatedAt') return formatDateTime(row?.[key]);
     if (key === 'name' && !row?.[key]) {
@@ -3468,10 +3602,14 @@ function VolunteerAnalysisScreen() {
     return row?.[key] ?? '-';
   };
 
-  const buildDetailExport = () => {
-    if (!detailRows.length) return { headers: [], dataRows: [] };
+  const buildDetailExport = (exportRows) => {
+    if (!exportRows.length) return { headers: [], dataRows: [] };
     const headers = detailColumns;
-    const dataRows = detailRows.map((row) => headers.map((key) => {
+    const sortedExportRows = getSortedRows(exportRows).map((row, index) => ({
+      ...row,
+      serialNumber: index + 1
+    }));
+    const dataRows = sortedExportRows.map((row) => headers.map((key) => {
       if (key === 'lastUpdatedAt') return formatDateTime(row?.[key]);
       if (key === 'name' && !row?.[key]) {
         const fallback = [row?.firstMiddleNameEn, row?.lastNameEn].filter(Boolean).join(' ').trim();
@@ -3581,6 +3719,19 @@ function VolunteerAnalysisScreen() {
             {!loading && sortedRows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
             {!loading && sortedRows.length > 0 ? (
               <div className="mobile-web-analysis-table-wrap">
+                {summaryTotals ? (
+                  <div className="mobile-web-analysis-summary">
+                    {viewMode !== 'booth' ? (
+                      <>
+                        <span>Total Agents: <strong>{summaryTotals.agentsWorked}</strong></span>
+                        <span>Total Booths: <strong>{summaryTotals.boothsCovered}</strong></span>
+                      </>
+                    ) : (
+                      <span>Total Agents: <strong>{summaryTotals.agentsWorked}</strong></span>
+                    )}
+                    <span>Total Voters Met: <strong>{summaryTotals.votersMet}</strong></span>
+                  </div>
+                ) : null}
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
@@ -3616,6 +3767,7 @@ function VolunteerAnalysisScreen() {
                       {fields.map((field) => (
                         <th key={field.key}>{field.label}</th>
                       ))}
+                      {['date', 'booth', 'ward'].includes(viewMode) ? <th>Total Updates</th> : null}
                       <th>Updated At</th>
                     </tr>
                   </thead>
@@ -3654,47 +3806,27 @@ function VolunteerAnalysisScreen() {
                         {fields.map((field) => (
                           <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
                         ))}
+                        {['date', 'booth', 'ward'].includes(viewMode) ? (
+                          <td>
+                            <strong>{fields.reduce((sum, field) => sum + (Number(row.counts?.[field.key]) || 0), 0)}</strong>
+                          </td>
+                        ) : null}
                         <td>{formatDateTime(row.lastUpdatedAt)}</td>
                       </tr>
                     ))}
-                    <tr className="mobile-web-analysis-total">
-                      {viewMode === 'agent' ? (
-                        <>
-                          <td>Total</td>
-                          <td>-</td>
-                          <td>-</td>
-                        </>
-                      ) : null}
-                      {viewMode === 'date' ? (
-                        <>
-                          <td>Total</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0)}</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
-                        </>
-                      ) : null}
-                      {viewMode === 'ward' ? (
-                        <>
-                          <td>Total</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0)}</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
-                        </>
-                      ) : null}
-                      {viewMode === 'booth' ? (
-                        <>
-                          <td>Total</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0)}</td>
-                          <td>{sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0)}</td>
-                        </>
-                      ) : null}
-                      {fields.map((field) => (
-                        <td key={`total-${field.key}`}>
-                          {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
-                        </td>
-                      ))}
-                      <td>-</td>
-                    </tr>
+                    {viewMode === 'agent' ? (
+                      <tr className="mobile-web-analysis-total">
+                        <td>Total</td>
+                        <td>-</td>
+                        <td>-</td>
+                        {fields.map((field) => (
+                          <td key={`total-${field.key}`}>
+                            {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
+                          </td>
+                        ))}
+                        <td>-</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
@@ -3737,19 +3869,24 @@ function VolunteerAnalysisScreen() {
         ) : null}
         {activeTab === 'table' && hydrated && ['SUPER_ADMIN', 'ADMIN', 'WARD'].includes(role) && showDetails ? (
           <div className="mobile-web-stack">
-            <div className="mobile-web-action-row">
-              <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailCsv} disabled={!detailRows.length}>
-                Download Detailed CSV
-              </button>
-              <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailXls} disabled={!detailRows.length}>
-                Download Detailed Excel
-              </button>
-            </div>
+            {role === 'SUPER_ADMIN' && (
+              <div className="mobile-web-action-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
+                <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailCsv} disabled={!detailRows.length}>
+                  Download Detailed CSV
+                </button>
+                <button type="button" className="mobile-web-secondary-btn" onClick={downloadDetailXls} disabled={!detailRows.length}>
+                  Download Detailed Excel
+                </button>
+                <button type="button" className="mobile-web-gradient-btn subtle" onClick={downloadDbDump} disabled={dbDumpLoading}>
+                  {dbDumpLoading ? `Downloading Dump... ${dbDumpProgress >= 0 ? (dbDumpProgress > 100 ? `${Math.round(dbDumpProgress/1024/1024)} MB` : `${dbDumpProgress}%`) : ''}` : 'DOWNLOAD COMPLETE DB DUMP'}
+                </button>
+              </div>
+            )}
             {detailError ? <div className="mobile-web-error">{detailError}</div> : null}
             {detailLoading ? <div className="mobile-web-empty">Loading enrichment details...</div> : null}
             {!detailLoading && detailRows.length === 0 ? <div className="mobile-web-empty">No enrichment details found.</div> : null}
             {!detailLoading && detailRows.length > 0 ? (
-              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail">
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail" style={{ maxHeight: '60vh', overflowY: 'auto' }} onScroll={handleDetailScroll}>
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
@@ -3771,7 +3908,7 @@ function VolunteerAnalysisScreen() {
                     </tr>
                   </thead>
                   <tbody>
-                    {detailRows.map((row, idx) => (
+                    {sortedDetailRows.map((row, idx) => (
                       <tr key={`${row.epicNo || row.epic || 'row'}-${idx}`}>
                         {detailColumns.map((key) => (
                           <td key={`${idx}-${key}`}>{renderDetailValue(row, key)}</td>

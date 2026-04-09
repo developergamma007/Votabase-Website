@@ -2407,6 +2407,19 @@ textarea {
   box-shadow: 0 24px 50px rgba(15, 23, 42, 0.08);
 }
 
+.mobile-web-analysis-summary {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 10px 14px 0;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+
+.mobile-web-analysis-summary strong {
+  color: #0f172a;
+}
+
 .mobile-web-analysis-table-wrap.mobile-web-analysis-detail {
   border-color: rgba(148, 163, 184, 0.5);
   background: #f0f5ff;
