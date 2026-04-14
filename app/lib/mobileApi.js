@@ -446,6 +446,54 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchFamilySuggestions: async (type) => {
+    try {
+      return await request(`/votebase/v1/api/family/suggestions?type=${encodeURIComponent(type)}`);
+    } catch (error) {
+      console.log('Error while fetching family suggestions:', error);
+      throw error;
+    }
+  },
+  fetchMessageTemplate: async (wardId, channel) => {
+    try {
+      const params = new URLSearchParams();
+      if (wardId !== undefined && wardId !== null && wardId !== '') params.set('wardId', wardId);
+      if (channel) params.set('channel', channel);
+      const query = params.toString();
+      return await request(`/votebase/v1/api/message-template${query ? `?${query}` : ''}`);
+    } catch (error) {
+      console.log('Error while fetching message template:', error);
+      throw error;
+    }
+  },
+  saveMessageTemplate: async (payload) => {
+    try {
+      return await request('/votebase/v1/api/message-template', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.log('Error while saving message template:', error);
+      throw error;
+    }
+  },
+  uploadMessageTemplateBanner: async ({ wardId, channel, file }) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const params = new URLSearchParams();
+      if (wardId !== undefined && wardId !== null && wardId !== '') params.set('wardId', wardId);
+      if (channel) params.set('channel', channel);
+      const query = params.toString();
+      return await request(`/votebase/v1/api/message-template/banner${query ? `?${query}` : ''}`, {
+        method: 'POST',
+        body: formData,
+      });
+    } catch (error) {
+      console.log('Error while uploading message template banner:', error);
+      throw error;
+    }
+  },
 
   fetchAssociations: async (boothId) => {
     try {

@@ -196,8 +196,111 @@ function buildVoterPayload(form, customValues) {
   return payload;
 }
 function voterFieldChanged(left, right) { if (Array.isArray(left) || Array.isArray(right)) { const a = (Array.isArray(left) ? left : left ? [left] : []).map(String).sort().join('|'); const b = (Array.isArray(right) ? right : right ? [right] : []).map(String).sort().join('|'); return a !== b; } return String(left ?? '').trim() !== String(right ?? '').trim(); }
-function buildWhatsAppMessage(voter, booth) { return `🗳️ *LOK SABHA ELECTION – 2024*\n\n*Assembly:* 160 – Sarvagnanagara\n\n*Voter Name:* ${voter?.firstMiddleNameEn || voter?.name || '-'}\n*EPIC ID:* ${voter?.epicNo || '-'}\n*Booth No:* ${booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '-'}\n*Serial No:* ${voter?.serialNo || '-'}\n\n*Polling Booth:*\n${booth?.boothNameEn || booth?.boothLabel || voter?.boothLabel || '-'}\n${booth?.address || ''}\n\n📅 *Date:* 26-Apr-2024\n⏰ *Time:* 7:00 AM – 6:00 PM\n\n🙏 Kindly cast your valuable vote.\n\n— Thank you`.trim(); }
-function buildSMSMessage(voter, booth) { return `LOK SABHA ELECTION - 2024\n\nAssembly: 160 - SARVAGNANAGARA\n\nVoter Name: ${voter?.firstMiddleNameEn || voter?.name || '-'}\nMother: ${voter?.motherName || ''}\nEPIC ID: ${voter?.epicNo || '-'}\nBooth No: ${booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '-'} | Serial No: ${voter?.serialNo || '-'}\n\nPolling Booth:\n${booth?.boothNameEn || booth?.boothLabel || voter?.boothLabel || '-'}\n${booth?.address || ''}\nRoom No: ${booth?.roomNo || '1'}\n\nDate: 26-APR-2024\nTime: 7:00 AM - 6:00 PM\n\nKindly cast your valuable vote.\n\nP C Mohan - Sl. No 2\nBJP Candidate\nBengaluru Central Parliamentary Constituency`.trim(); }
+function normalizeBoothLocationLink(booth, templateLink) {
+  if (templateLink) return templateLink;
+  const lat = booth?.latitude ?? booth?.lat ?? booth?.boothLat ?? booth?.booth_lat;
+  const lng = booth?.longitude ?? booth?.lng ?? booth?.boothLng ?? booth?.booth_long;
+  if (!lat || !lng) return '';
+  return `https://maps.google.com/?q=${lat},${lng}`;
+}
+function buildWhatsAppMessage(voter, booth, template) {
+  const authority = template?.authorityName || 'Greater Bengaluru Authority';
+  const election = template?.electionName || 'Election-2026';
+  const assembly = template?.assemblyLabel || 'Assembly';
+  const ward = template?.wardLabel || 'Ward';
+  const candidateName = template?.candidateName || '';
+  const candidateParty = template?.candidateParty || '';
+  const candidateWard = template?.candidateWardLabel || '';
+  const voteDate = template?.voteDate || '';
+  const voteTime = template?.voteTime || '';
+  const socialLink = template?.socialLink || '';
+  const locationLink = normalizeBoothLocationLink(booth, template?.boothLocationLink);
+  const voterName = voter?.firstMiddleNameEn || voter?.name || '-';
+  const relationLabel = voter?.relationLabel || voter?.relationType || 'Father';
+  const relationName = voter?.relationName || voter?.relationFirstMiddleNameEn || voter?.fatherName || voter?.motherName || '';
+  const epic = voter?.epicNo || '-';
+  const boothNo = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '-';
+  const serial = voter?.serialNo || voter?.sl || voter?.srNo || '-';
+  const boothName = booth?.boothNameEn || booth?.boothLabel || voter?.boothLabel || '-';
+  const boothAddress = booth?.address || booth?.boothAddress || '';
+
+  const lines = [
+    authority,
+    election,
+    `${assembly}`,
+    `${ward}`,
+    '***************************',
+    'Voter details:',
+    `Name: ${voterName}`,
+    `${relationLabel} : ${relationName || '-'}`,
+    `EPIC ID: ${epic}`,
+    `BOOTH #: ${boothNo}`,
+    `SERIAL #: ${serial}`,
+    '***************************',
+    'Booth Address:',
+    boothName,
+    boothAddress,
+    voteDate ? `Vote On: ${voteDate}` : '',
+    voteTime ? `Voting Time: ${voteTime}` : '',
+    locationLink ? `Polling booth Location: ${locationLink}` : 'Polling booth Location:',
+    '***************************',
+    'Kindly do Cast Your Valuable Vote for INC',
+    candidateName,
+    candidateParty,
+    candidateWard,
+    socialLink,
+  ];
+  return lines.filter((item) => item !== '').join('\n').trim();
+}
+function buildSMSMessage(voter, booth, template) {
+  const authority = template?.authorityName || 'Greater Bengaluru Authority';
+  const election = template?.electionName || 'Election-2026';
+  const assembly = template?.assemblyLabel || 'Assembly';
+  const ward = template?.wardLabel || 'Ward';
+  const candidateName = template?.candidateName || '';
+  const candidateParty = template?.candidateParty || '';
+  const candidateWard = template?.candidateWardLabel || '';
+  const voteDate = template?.voteDate || '';
+  const voteTime = template?.voteTime || '';
+  const socialLink = template?.socialLink || '';
+  const locationLink = normalizeBoothLocationLink(booth, template?.boothLocationLink);
+  const voterName = voter?.firstMiddleNameEn || voter?.name || '-';
+  const relationLabel = voter?.relationLabel || voter?.relationType || 'Father';
+  const relationName = voter?.relationName || voter?.relationFirstMiddleNameEn || voter?.fatherName || voter?.motherName || '';
+  const epic = voter?.epicNo || '-';
+  const boothNo = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '-';
+  const serial = voter?.serialNo || voter?.sl || voter?.srNo || '-';
+  const boothName = booth?.boothNameEn || booth?.boothLabel || voter?.boothLabel || '-';
+  const boothAddress = booth?.address || booth?.boothAddress || '';
+
+  const lines = [
+    authority,
+    election,
+    `${assembly}`,
+    `${ward}`,
+    '***************************',
+    'Voter details:',
+    `Name: ${voterName}`,
+    `${relationLabel} : ${relationName || '-'}`,
+    `EPIC ID: ${epic}`,
+    `BOOTH #: ${boothNo}`,
+    `SERIAL #: ${serial}`,
+    '***************************',
+    'Booth Address:',
+    boothName,
+    boothAddress,
+    voteDate ? `Vote On: ${voteDate}` : '',
+    voteTime ? `Voting Time: ${voteTime}` : '',
+    locationLink ? `Polling booth Location: ${locationLink}` : '',
+    '***************************',
+    'Kindly do Cast Your Valuable Vote for INC',
+    candidateName,
+    candidateParty,
+    candidateWard,
+    socialLink,
+  ];
+  return lines.filter((item) => item !== '').join('\n').trim();
+}
 function getWardOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const labels = wards.map((ward) => ward.wardNameEn || `Ward ${ward.wardId}`); const unique = Array.from(new Set(labels.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function getBoothOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const booths = wards.flatMap((ward) => (ward.booths || []).map((booth) => booth.boothNameEn || booth.nameEn || booth.booth_add_en || `Booth ${booth.boothId ?? booth.id ?? booth.booth_no ?? ''}`)); const unique = Array.from(new Set(booths.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function MobileHeader({ title, subtitle, onBack, hideAvatar = false }) { return <div className={`mobile-web-list-topbar ${hideAvatar ? 'no-avatar' : ''}`}><button className="mobile-web-back-btn" onClick={onBack} type="button"><ArrowBackIosNewRounded fontSize="small" /></button><div className="mobile-web-header-copy"><h2>{title}</h2>{subtitle ? <div className="mobile-web-header-subtitle">{subtitle}</div> : null}</div>{hideAvatar ? <div /> : <div className="mobile-web-avatar"><PersonOutlineRounded /></div>}</div>; }
@@ -214,6 +317,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState({ type: '', text: '' });
   const [mobileFocused, setMobileFocused] = useState(false);
+  const [messageTemplate, setMessageTemplate] = useState(null);
+  const [templateDraft, setTemplateDraft] = useState({});
+  const [templateStatus, setTemplateStatus] = useState({ loading: false, error: '', success: '' });
+  const [bannerUpload, setBannerUpload] = useState({ loading: false, error: '' });
   const lastEpicRef = useRef(null);
   const skipScrollRef = useRef(false);
 
@@ -244,6 +351,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
 
   const boothNumber = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '';
   const boothTitle = `${boothNumber}${booth?.boothLabel || voter?.boothLabel ? ' - ' : ''}${booth?.boothLabel || voter?.boothLabel || ''}`;
+  const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
+  const userInfo = typeof window !== 'undefined' ? (() => {
+    try { return JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { return {}; }
+  })() : {};
+  const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
+  const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || '';
+  const wardLabel = booth?.wardNameEn || voter?.wardNameEn || voter?.wardLabel || '';
   const resolvedPhone = normalizeMobileValue(currentPayload.mobile || voter?.mobile);
   const mapTarget = useMemo(() => {
     const lat = location?.latitude ?? voter?.latitude;
@@ -324,7 +438,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       setBanner({ type: 'error', text: 'Invalid mobile number.' });
       return;
     }
-    const encodedMessage = encodeURIComponent(buildSMSMessage({ ...voter, ...currentPayload }, booth));
+    if (!messageTemplate?.enabled) {
+      setBanner({ type: 'error', text: 'SMS is disabled until the latest data file is uploaded.' });
+      return;
+    }
+    const encodedMessage = encodeURIComponent(buildSMSMessage({ ...voter, ...currentPayload }, booth, messageTemplate));
     const separator = /iPad|iPhone|iPod/.test(navigator.userAgent) ? '&' : '?';
     window.location.href = `sms:${resolvedPhone}${separator}body=${encodedMessage}`;
   };
@@ -334,7 +452,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       setBanner({ type: 'error', text: 'Invalid mobile number.' });
       return;
     }
-    const encodedMessage = encodeURIComponent(buildWhatsAppMessage({ ...voter, ...currentPayload }, booth));
+    if (!messageTemplate?.enabled) {
+      setBanner({ type: 'error', text: 'WhatsApp is disabled until the latest data file is uploaded.' });
+      return;
+    }
+    const encodedMessage = encodeURIComponent(buildWhatsAppMessage({ ...voter, ...currentPayload }, booth, messageTemplate));
     window.open(`https://wa.me/91${resolvedPhone}?text=${encodedMessage}`, '_blank', 'noopener,noreferrer');
   };
 
@@ -417,6 +539,88 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setActiveTab(tab);
   };
 
+  useEffect(() => {
+    let active = true;
+    const loadTemplate = async () => {
+      setTemplateStatus({ loading: true, error: '', success: '' });
+      try {
+        const res = await mobileApi.fetchMessageTemplate(wardId, 'WHATSAPP');
+        if (!active) return;
+        const tpl = res?.data?.result || null;
+        setMessageTemplate(tpl);
+        setTemplateDraft({
+          authorityName: tpl?.authorityName || 'Greater Bengaluru Authority',
+          electionName: tpl?.electionName || 'Election-2026',
+          assemblyLabel: tpl?.assemblyLabel || '',
+          wardLabel: tpl?.wardLabel || wardLabel || '',
+          candidateName: tpl?.candidateName || '',
+          candidateParty: tpl?.candidateParty || '',
+          candidateWardLabel: tpl?.candidateWardLabel || '',
+          voteDate: tpl?.voteDate || '',
+          voteTime: tpl?.voteTime || '',
+          socialLink: tpl?.socialLink || '',
+          boothLocationLink: tpl?.boothLocationLink || '',
+          enabled: tpl?.enabled || false,
+          bannerUrl: tpl?.bannerUrl || '',
+        });
+      } catch (error) {
+        if (!active) return;
+        setTemplateStatus({ loading: false, error: error?.message || 'Unable to load message template.', success: '' });
+      } finally {
+        if (active) setTemplateStatus((prev) => ({ ...prev, loading: false }));
+      }
+    };
+    if (wardId) loadTemplate();
+    return () => { active = false; };
+  }, [wardId, wardLabel]);
+
+  const handleTemplateChange = (key, value) => {
+    setTemplateDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleTemplateSave = async () => {
+    setTemplateStatus({ loading: true, error: '', success: '' });
+    try {
+      const payload = {
+        wardId: wardId || null,
+        channel: 'WHATSAPP',
+        authorityName: templateDraft.authorityName,
+        electionName: templateDraft.electionName,
+        assemblyLabel: templateDraft.assemblyLabel,
+        wardLabel: templateDraft.wardLabel,
+        candidateName: templateDraft.candidateName,
+        candidateParty: templateDraft.candidateParty,
+        candidateWardLabel: templateDraft.candidateWardLabel,
+        voteDate: templateDraft.voteDate,
+        voteTime: templateDraft.voteTime,
+        socialLink: templateDraft.socialLink,
+        boothLocationLink: templateDraft.boothLocationLink,
+        bannerUrl: templateDraft.bannerUrl,
+        enabled: templateDraft.enabled,
+      };
+      const res = await mobileApi.saveMessageTemplate(payload);
+      const tpl = res?.data?.result || null;
+      setMessageTemplate(tpl);
+      setTemplateStatus({ loading: false, error: '', success: 'Template saved.' });
+    } catch (error) {
+      setTemplateStatus({ loading: false, error: error?.message || 'Unable to save template.', success: '' });
+    }
+  };
+
+  const handleBannerUpload = async (file) => {
+    if (!file) return;
+    setBannerUpload({ loading: true, error: '' });
+    try {
+      const res = await mobileApi.uploadMessageTemplateBanner({ wardId, channel: 'WHATSAPP', file });
+      const tpl = res?.data?.result || null;
+      setMessageTemplate(tpl);
+      setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
+      setBannerUpload({ loading: false, error: '' });
+    } catch (error) {
+      setBannerUpload({ loading: false, error: error?.message || 'Unable to upload banner.' });
+    }
+  };
+
   return (
     <div className="mobile-web-stack">
       <MobileHeader title="Voter Info" onBack={onBack} />
@@ -454,11 +658,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <span>{location ? 'Location Captured' : 'Get Location'}</span>
         </button>
         <div className="mobile-web-contact-actions">
-          <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled>
+          <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled={!messageTemplate?.enabled}>
             <SmsOutlined />
             <span>SMS</span>
           </button>
-          <button className="mobile-web-contact-btn" onClick={openWhatsApp} type="button" disabled>
+          <button className="mobile-web-contact-btn" onClick={openWhatsApp} type="button" disabled={!messageTemplate?.enabled}>
             <WhatsApp />
             <span>WhatsApp</span>
           </button>
@@ -467,7 +671,88 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <span>Call</span>
           </button>
         </div>
+        {!messageTemplate?.enabled ? (
+          <div className="mobile-web-warning">WhatsApp & SMS are disabled until the next data file upload.</div>
+        ) : null}
       </section>
+      {isAdminUser ? (
+        <section className="mobile-web-detail-card mobile-web-template-card">
+          <div className="mobile-web-section-title">WhatsApp / SMS Template (Admin)</div>
+          {templateStatus.error ? <div className="mobile-web-error">{templateStatus.error}</div> : null}
+          {templateStatus.success ? <div className="mobile-web-success">{templateStatus.success}</div> : null}
+          <div className="mobile-web-form-grid two-cols">
+            <div className="mobile-web-field">
+              <label>Authority Name</label>
+              <input className="mobile-web-input" value={templateDraft.authorityName || ''} onChange={(e) => handleTemplateChange('authorityName', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Election Name</label>
+              <input className="mobile-web-input" value={templateDraft.electionName || ''} onChange={(e) => handleTemplateChange('electionName', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Assembly</label>
+              <input className="mobile-web-input" value={templateDraft.assemblyLabel || ''} onChange={(e) => handleTemplateChange('assemblyLabel', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Ward</label>
+              <input className="mobile-web-input" value={templateDraft.wardLabel || ''} onChange={(e) => handleTemplateChange('wardLabel', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Candidate Name</label>
+              <input className="mobile-web-input" value={templateDraft.candidateName || ''} onChange={(e) => handleTemplateChange('candidateName', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Candidate Party</label>
+              <input className="mobile-web-input" value={templateDraft.candidateParty || ''} onChange={(e) => handleTemplateChange('candidateParty', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Candidate Ward Label</label>
+              <input className="mobile-web-input" value={templateDraft.candidateWardLabel || ''} onChange={(e) => handleTemplateChange('candidateWardLabel', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Vote Date</label>
+              <input className="mobile-web-input" placeholder="13-MAY-2024" value={templateDraft.voteDate || ''} onChange={(e) => handleTemplateChange('voteDate', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Vote Time</label>
+              <input className="mobile-web-input" placeholder="7.00AM-6.00PM" value={templateDraft.voteTime || ''} onChange={(e) => handleTemplateChange('voteTime', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Social Media Link</label>
+              <input className="mobile-web-input" placeholder="https://www.facebook.com/..." value={templateDraft.socialLink || ''} onChange={(e) => handleTemplateChange('socialLink', e.target.value)} />
+            </div>
+            <div className="mobile-web-field">
+              <label>Booth Location Link</label>
+              <input className="mobile-web-input" placeholder="https://maps.google.com/?q=lat,lng" value={templateDraft.boothLocationLink || ''} onChange={(e) => handleTemplateChange('boothLocationLink', e.target.value)} />
+            </div>
+          </div>
+          <div className="mobile-web-inline-toggle">
+            <input
+              id="messageEnabled"
+              type="checkbox"
+              checked={!!templateDraft.enabled}
+              onChange={(e) => handleTemplateChange('enabled', e.target.checked)}
+            />
+            <label htmlFor="messageEnabled">Enable WhatsApp/SMS for this ward (after latest data upload)</label>
+          </div>
+          <div className="mobile-web-upload-row">
+            <div>
+              <label className="mobile-web-upload-label">Upload Banner / Candidate Photo</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleBannerUpload(e.target.files?.[0])}
+                disabled={bannerUpload.loading}
+              />
+              {bannerUpload.error ? <div className="mobile-web-error">{bannerUpload.error}</div> : null}
+              {templateDraft.bannerUrl ? <div className="mobile-web-upload-preview">Uploaded: {templateDraft.bannerUrl}</div> : null}
+            </div>
+            <button className="mobile-web-primary-btn" onClick={handleTemplateSave} type="button" disabled={templateStatus.loading}>
+              {templateStatus.loading ? 'Saving...' : 'Save Template'}
+            </button>
+          </div>
+        </section>
+      ) : null}
       <section className="mobile-web-tab-shell">
         <div className="mobile-web-tab-strip">
           {['PRIMARY', 'ADDITIONAL', 'NOTES'].map((tab) => (
@@ -1773,8 +2058,38 @@ function VotersFamilyScreen() {
   const [headPhone, setHeadPhone] = useState('');
   const [familyNature, setFamilyNature] = useState('NA');
   const [familyPoints, setFamilyPoints] = useState('5');
-  const [locationStatus, setLocationStatus] = useState('');
+  const [showBuildingTag, setShowBuildingTag] = useState(false);
+  const [buildingName, setBuildingName] = useState('');
+  const [buildingAddress, setBuildingAddress] = useState('');
+  const [hasAssociation, setHasAssociation] = useState(false);
+  const [associationName, setAssociationName] = useState('');
+  const [associationHeadName, setAssociationHeadName] = useState('');
+  const [associationHeadPhone, setAssociationHeadPhone] = useState('');
+  const [buildingSuggestions, setBuildingSuggestions] = useState([]);
+  const [associationSuggestions, setAssociationSuggestions] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [location, setLocation] = useState(null);
   const searchTimerRef = useRef(null);
+
+  const loadSuggestions = async () => {
+    try {
+      const [bRes, aRes] = await Promise.all([
+        mobileApi.fetchFamilySuggestions('building').catch(() => ({ data: { result: [] } })),
+        mobileApi.fetchFamilySuggestions('association').catch(() => ({ data: { result: [] } })),
+      ]);
+      setBuildingSuggestions(bRes?.data?.result || []);
+      setAssociationSuggestions(aRes?.data?.result || []);
+    } catch {
+      setBuildingSuggestions([]);
+      setAssociationSuggestions([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuggestions();
+  }, []);
 
   const addMember = () => {
     if (memberSuggestions.length === 1) {
@@ -1791,6 +2106,7 @@ function VotersFamilyScreen() {
       epic: suggestion.epicNo || '',
       phone: suggestion.mobile || '',
       houseNo: suggestion.houseNoEn || suggestion.houseNoLocal || '',
+      boothId: suggestion.boothInfo?.boothId || suggestion.boothId || suggestion.booth_id || '',
     };
     setMembers((current) => {
       if (current.some((m) => m.epic && m.epic === newMember.epic)) {
@@ -1840,12 +2156,77 @@ function VotersFamilyScreen() {
   }, [memberQuery, relationQuery]);
 
   const handleGetLocation = async () => {
-    setLocationStatus('');
+    setError('');
     try {
       const loc = await requestLocation();
-      setLocationStatus(`Location captured: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`);
-    } catch (error) {
-      setLocationStatus(error?.message || 'Unable to fetch location.');
+      setLocation(loc);
+      setSuccess(`Location captured: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`);
+    } catch (err) {
+      setError(err?.message || 'Unable to fetch location.');
+    }
+  };
+
+  const handleUpdate = async () => {
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      if (!familyName.trim()) throw new Error('Family name is required');
+      if (members.length === 0) throw new Error('At least one family member is required');
+      if (!headOfFamily) throw new Error('Please pick a head of family');
+
+      const headMember = members.find((m) => m.id === headOfFamily);
+      if (!headMember || !headMember.epic) throw new Error('Invalid head of family selected');
+
+      const boothIdMember = members.find((m) => m.boothId);
+      if (!boothIdMember) throw new Error('Member booth information missing. Please add members again.');
+
+      const payload = {
+        familyName,
+        familyAddress,
+        buildingName: showBuildingTag ? buildingName : null,
+        buildingAddress: showBuildingTag ? buildingAddress : null,
+        hasAssociation: showBuildingTag ? hasAssociation : false,
+        associationName: (showBuildingTag && hasAssociation) ? associationName : null,
+        associationHeadName: (showBuildingTag && hasAssociation) ? associationHeadName : null,
+        associationHeadPhone: (showBuildingTag && hasAssociation) ? associationHeadPhone : null,
+        phone: headPhone || headMember.phone,
+        points: parseInt(familyPoints) || 0,
+        pointsProvided: 0,
+        latitude: location?.latitude || 0,
+        longitude: location?.longitude || 0,
+        boothId: parseInt(boothIdMember.boothId),
+        headEpicNo: headMember.epic,
+        memberEpicNos: members.map((m) => m.epic).filter(Boolean),
+        economicStatus,
+        familyNature,
+      };
+
+      await mobileApi.createFamily(payload);
+      setSuccess('Family saved successfully!');
+      
+      // Refresh suggestions for the next entry
+      loadSuggestions();
+
+      // Reset form if success
+      setTimeout(() => {
+        setFamilyName('');
+        setFamilyAddress('');
+        setMembers([]);
+        setHeadOfFamily('');
+        setHeadPhone('');
+        setBuildingName('');
+        setBuildingAddress('');
+        setAssociationName('');
+        setAssociationHeadName('');
+        setAssociationHeadPhone('');
+        setShowBuildingTag(false);
+        setSuccess('');
+      }, 2000);
+    } catch (err) {
+      setError(err?.message || 'Failed to save family');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1936,7 +2317,7 @@ function VotersFamilyScreen() {
                   <span>{member.phone}</span>
                   <span>{member.houseNo}</span>
                   <span className="mobile-web-row-actions">
-                    <button type="button" className="mobile-web-secondary-btn">Remove</button>
+                    <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
                   </span>
                 </div>
               ))
@@ -1957,13 +2338,19 @@ function VotersFamilyScreen() {
             <select className="mobile-web-input" value={headOfFamily} onChange={(e) => setHeadOfFamily(e.target.value)}>
               <option value="">Pick head of family</option>
               {members.map((member) => (
-                <option key={member.id} value={member.name}>{member.name}</option>
+                <option key={member.id} value={member.id}>{member.name}</option>
               ))}
             </select>
           </label>
           <label className="mobile-web-field">
-            <span>Family Head Phone Number</span>
-            <input className="mobile-web-input" placeholder="Family Head Phone Number" value={headPhone} onChange={(e) => setHeadPhone(e.target.value)} />
+            <span>Family Head Phone Number (10 digits)</span>
+            <input
+              className="mobile-web-input"
+              placeholder="Phone number"
+              value={headPhone}
+              onChange={(e) => setHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              inputMode="numeric"
+            />
           </label>
           <label className="mobile-web-field">
             <span>Family Nature</span>
@@ -1982,13 +2369,98 @@ function VotersFamilyScreen() {
             </select>
           </label>
         </div>
-        <button type="button" className="mobile-web-secondary-btn mobile-web-location-pill" onClick={handleGetLocation}>
-          Get location of the Family
+        <button
+          type="button"
+          className="mobile-web-primary-btn mobile-web-tag-btn"
+          onClick={() => setShowBuildingTag((prev) => !prev)}
+        >
+          Tag Building/ Apartment
         </button>
-        {locationStatus ? <div className="mobile-web-info-pill">{locationStatus}</div> : null}
+        {showBuildingTag ? (
+          <div className="mobile-web-family-grid mobile-web-tag-grid">
+            <label className="mobile-web-field">
+              <span>Building/ Apartment Name</span>
+              <input
+                className="mobile-web-input"
+                placeholder="Name"
+                value={buildingName}
+                onChange={(e) => setBuildingName(e.target.value)}
+                list="building-suggestions"
+              />
+              <datalist id="building-suggestions">
+                {buildingSuggestions.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+            </label>
+            <label className="mobile-web-field">
+              <span>Address</span>
+              <input
+                className="mobile-web-input"
+                placeholder="Building Address"
+                value={buildingAddress}
+                onChange={(e) => setBuildingAddress(e.target.value)}
+              />
+            </label>
+            
+            <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
+              <input
+                type="checkbox"
+                id="has-association-check"
+                className="mobile-web-checkbox-large"
+                checked={hasAssociation}
+                onChange={(e) => setHasAssociation(e.target.checked)}
+              />
+              <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
+            </div>
+
+            {hasAssociation && (
+              <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
+                <label className="mobile-web-field">
+                  <span>Association Name</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Association Name"
+                    value={associationName}
+                    onChange={(e) => setAssociationName(e.target.value)}
+                    list="association-suggestions"
+                  />
+                  <datalist id="association-suggestions">
+                    {associationSuggestions.map((item) => (
+                      <option key={item} value={item} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="mobile-web-field">
+                  <span>Association Head Name</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Association Head Name"
+                    value={associationHeadName}
+                    onChange={(e) => setAssociationHeadName(e.target.value)}
+                  />
+                </label>
+                <label className="mobile-web-field">
+                  <span>Association Head Phone number (10 digits)</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Phone number"
+                    value={associationHeadPhone}
+                    onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    inputMode="numeric"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        ) : null}
+        {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
+        {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
         <div className="mobile-web-actions">
           <button className="mobile-web-secondary-btn" type="button">Preview Screen</button>
-          <button className="mobile-web-primary-btn" type="button">Update</button>
+          <button className="mobile-web-primary-btn" type="button" onClick={handleUpdate} disabled={saving}>
+            {saving ? 'Updating...' : 'Update'}
+          </button>
         </div>
       </section>
     </ScreenFrame>
