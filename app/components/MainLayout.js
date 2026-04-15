@@ -25,6 +25,7 @@ import {
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { mobileApi } from '../lib/mobileApi';
 
 const menuItems = [
   // Core dashboard
@@ -47,15 +48,17 @@ const menuItems = [
   { label: 'Add Volunteer', path: '/mobile/add-volunteer', icon: <PersonAddAlt fontSize="small" /> },
   { label: 'Manage Volunteers', path: '/mobile/my-volunteers', icon: <Groups fontSize="small" /> },
   { label: 'Volunteer Analysis', path: '/mobile/volunteer-analysis', icon: <BarChart fontSize="small" /> },
+  { label: 'Promotions', path: '/mobile/promotions', icon: <Campaign fontSize="small" /> },
 ];
 
 export default function MainLayout({ children, hidePrimaryNav = false }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const [userInfo, setUserInfo] = useState({});
   const [role, setRole] = useState('');
+  const [printEnabled, setPrintEnabled] = useState(true);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -71,21 +74,35 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     }
   }, []);
 
-  const filteredMenuItems = useMemo(() => {
-    if (role === 'BOOTH') {
-      return menuItems.filter(
-        (item) =>
-          ![
-            '/home',
-            '/volunteers',
-            '/mobile/add-volunteer',
-            '/mobile/my-volunteers',
-            '/mobile/volunteer-analysis',
-          ].includes(item.path)
-      );
+  useEffect(() => {
+    if (role && role !== 'BOOTH') {
+      mobileApi.fetchMessageTemplate(null, 'PRINT')
+        .then(res => {
+          const enabled = res?.data?.result?.enabled;
+          if (enabled !== undefined) setPrintEnabled(enabled);
+        })
+        .catch(() => setPrintEnabled(true)); // default to true if failed
     }
-    return menuItems;
   }, [role]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      setOpen(false);
+      setProfileOpen(false);
+    }
+  }, [pathname]);
+
+  const filteredMenuItems = useMemo(() => {
+    const items = role === 'BOOTH' 
+      ? menuItems.filter(item => !['/home', '/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path))
+      : menuItems;
+
+    if (!printEnabled) {
+      return items.filter(item => item.path !== '/mobile/print');
+    }
+    return items;
+  }, [role, printEnabled]);
 
   const activeLabel = useMemo(() => {
     const found = filteredMenuItems.find((item) => pathname.startsWith(item.path));
@@ -102,7 +119,9 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 
   const handleNavClick = () => {
-    if (isSmallScreen()) {
+    if (!open) {
+      setOpen(true);
+    } else if (isSmallScreen()) {
       setOpen(false);
     }
   };

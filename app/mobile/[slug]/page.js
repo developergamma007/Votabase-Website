@@ -58,6 +58,10 @@ const labels = {
     title: 'Extract',
     description: 'Upload voter list PDFs and export structured Excel sheets.',
   },
+  promotions: {
+    title: 'Promotions',
+    description: 'Configure WhatsApp and SMS message templates for voter outreach.',
+  },
 };
 
 const dropdownOptions = {
@@ -109,11 +113,11 @@ function setCachedLocation(location) {
   localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify(payload));
 }
 function formatLocationError(err) {
-  if (!err) return 'Location permission is required to open voter info.';
-  if (err.code === 1) return 'Location permission denied. Please allow it in browser settings and retry.';
-  if (err.code === 2) return 'Position update is unavailable. Turn on device location services and allow the browser to use it.';
-  if (err.code === 3) return 'Location request timed out. Please retry.';
-  return err?.message || 'Location permission is required to open voter info.';
+  if (!err) return 'Location permission is required to continue.';
+  if (err.code === 1) return 'Location permission denied. Please allow it in both your browser and device settings, then retry.';
+  if (err.code === 2) return 'Position unavailable. Please ensure your device\'s Location/GPS is turned ON and you have a clear view of the sky or a stable data connection.';
+  if (err.code === 3) return 'Location request timed out. This often happens indoors; please try moving near a window or outdoors and retry.';
+  return err?.message || 'Location access is required.';
 }
 function requestLocation({ allowCached = true } = {}) {
   return new Promise((resolve, reject) => {
@@ -140,13 +144,15 @@ function requestLocation({ allowCached = true } = {}) {
     const cached = allowCached ? getCachedLocation() : null;
     const attempt = async () => {
       try {
-        const position = await runGeo({ enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
+        // Higher timeout for initial acquisition
+        const position = await runGeo({ enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
         setCachedLocation(position);
         resolve(position);
       } catch (err) {
         if (err?.code === 2 || err?.code === 3) {
           try {
-            const position = await runGeo({ enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
+            // Fallback: low accuracy with significantly longer timeout
+            const position = await runGeo({ enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 });
             setCachedLocation(position);
             resolve(position);
             return;
@@ -206,8 +212,8 @@ function normalizeBoothLocationLink(booth, templateLink) {
 function buildWhatsAppMessage(voter, booth, template) {
   const authority = template?.authorityName || 'Greater Bengaluru Authority';
   const election = template?.electionName || 'Election-2026';
-  const assembly = template?.assemblyLabel || 'Assembly';
-  const ward = template?.wardLabel || 'Ward';
+  const assembly = template?.assemblyLabel || 'Assembly:';
+  const ward = template?.wardLabel || 'Ward:';
   const candidateName = template?.candidateName || '';
   const candidateParty = template?.candidateParty || '';
   const candidateWard = template?.candidateWardLabel || '';
@@ -227,8 +233,8 @@ function buildWhatsAppMessage(voter, booth, template) {
   const lines = [
     authority,
     election,
-    `${assembly}`,
-    `${ward}`,
+    assembly,
+    ward,
     '***************************',
     'Voter details:',
     `Name: ${voterName}`,
@@ -244,7 +250,7 @@ function buildWhatsAppMessage(voter, booth, template) {
     voteTime ? `Voting Time: ${voteTime}` : '',
     locationLink ? `Polling booth Location: ${locationLink}` : 'Polling booth Location:',
     '***************************',
-    'Kindly do Cast Your Valuable Vote for INC',
+    candidateParty ? `Kindly do Cast Your Valuable Vote for ${candidateParty}` : 'Kindly do Cast Your Valuable Vote',
     candidateName,
     candidateParty,
     candidateWard,
@@ -255,8 +261,8 @@ function buildWhatsAppMessage(voter, booth, template) {
 function buildSMSMessage(voter, booth, template) {
   const authority = template?.authorityName || 'Greater Bengaluru Authority';
   const election = template?.electionName || 'Election-2026';
-  const assembly = template?.assemblyLabel || 'Assembly';
-  const ward = template?.wardLabel || 'Ward';
+  const assembly = template?.assemblyLabel || 'Assembly:';
+  const ward = template?.wardLabel || 'Ward:';
   const candidateName = template?.candidateName || '';
   const candidateParty = template?.candidateParty || '';
   const candidateWard = template?.candidateWardLabel || '';
@@ -276,8 +282,8 @@ function buildSMSMessage(voter, booth, template) {
   const lines = [
     authority,
     election,
-    `${assembly}`,
-    `${ward}`,
+    assembly,
+    ward,
     '***************************',
     'Voter details:',
     `Name: ${voterName}`,
@@ -293,7 +299,7 @@ function buildSMSMessage(voter, booth, template) {
     voteTime ? `Voting Time: ${voteTime}` : '',
     locationLink ? `Polling booth Location: ${locationLink}` : '',
     '***************************',
-    'Kindly do Cast Your Valuable Vote for INC',
+    candidateParty ? `Kindly do Cast Your Valuable Vote for ${candidateParty}` : 'Kindly do Cast Your Valuable Vote',
     candidateName,
     candidateParty,
     candidateWard,
@@ -317,7 +323,9 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState({ type: '', text: '' });
   const [mobileFocused, setMobileFocused] = useState(false);
-  const [messageTemplate, setMessageTemplate] = useState(null);
+  const [whatsAppTemplate, setWhatsAppTemplate] = useState(null);
+  const [smsTemplate, setSmsTemplate] = useState(null);
+  const [templateChannel, setTemplateChannel] = useState('WHATSAPP');
   const [templateDraft, setTemplateDraft] = useState({});
   const [templateStatus, setTemplateStatus] = useState({ loading: false, error: '', success: '' });
   const [bannerUpload, setBannerUpload] = useState({ loading: false, error: '' });
@@ -352,12 +360,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const boothNumber = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '';
   const boothTitle = `${boothNumber}${booth?.boothLabel || voter?.boothLabel ? ' - ' : ''}${booth?.boothLabel || voter?.boothLabel || ''}`;
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
-  const userInfo = typeof window !== 'undefined' ? (() => {
-    try { return JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { return {}; }
-  })() : {};
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
   const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || '';
   const wardLabel = booth?.wardNameEn || voter?.wardNameEn || voter?.wardLabel || '';
+  const activeTemplate = templateChannel === 'SMS' ? smsTemplate : whatsAppTemplate;
+  const canSendWhatsApp = !!whatsAppTemplate?.enabled;
+  const canSendSms = !!smsTemplate?.enabled;
   const resolvedPhone = normalizeMobileValue(currentPayload.mobile || voter?.mobile);
   const mapTarget = useMemo(() => {
     const lat = location?.latitude ?? voter?.latitude;
@@ -438,11 +446,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       setBanner({ type: 'error', text: 'Invalid mobile number.' });
       return;
     }
-    if (!messageTemplate?.enabled) {
+    if (!canSendSms) {
       setBanner({ type: 'error', text: 'SMS is disabled until the latest data file is uploaded.' });
       return;
     }
-    const encodedMessage = encodeURIComponent(buildSMSMessage({ ...voter, ...currentPayload }, booth, messageTemplate));
+    const encodedMessage = encodeURIComponent(buildSMSMessage({ ...voter, ...currentPayload }, booth, smsTemplate));
     const separator = /iPad|iPhone|iPod/.test(navigator.userAgent) ? '&' : '?';
     window.location.href = `sms:${resolvedPhone}${separator}body=${encodedMessage}`;
   };
@@ -452,11 +460,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       setBanner({ type: 'error', text: 'Invalid mobile number.' });
       return;
     }
-    if (!messageTemplate?.enabled) {
+    if (!canSendWhatsApp) {
       setBanner({ type: 'error', text: 'WhatsApp is disabled until the latest data file is uploaded.' });
       return;
     }
-    const encodedMessage = encodeURIComponent(buildWhatsAppMessage({ ...voter, ...currentPayload }, booth, messageTemplate));
+    const encodedMessage = encodeURIComponent(buildWhatsAppMessage({ ...voter, ...currentPayload }, booth, whatsAppTemplate));
     window.open(`https://wa.me/91${resolvedPhone}?text=${encodedMessage}`, '_blank', 'noopener,noreferrer');
   };
 
@@ -541,28 +549,36 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
 
   useEffect(() => {
     let active = true;
+    const toDraft = (tpl) => ({
+      authorityName: tpl?.authorityName || 'Greater Bengaluru Authority',
+      electionName: tpl?.electionName || 'Election-2026',
+      assemblyLabel: tpl?.assemblyLabel || '',
+      wardLabel: tpl?.wardLabel || wardLabel || '',
+      candidateName: tpl?.candidateName || '',
+      candidateParty: tpl?.candidateParty || '',
+      candidateWardLabel: tpl?.candidateWardLabel || '',
+      voteDate: tpl?.voteDate || '',
+      voteTime: tpl?.voteTime || '',
+      socialLink: tpl?.socialLink || '',
+      boothLocationLink: tpl?.boothLocationLink || '',
+      enabled: tpl?.enabled || false,
+      bannerUrl: tpl?.bannerUrl || '',
+    });
+    const fetchChannel = async (channel) => {
+      const wardRes = await mobileApi.fetchMessageTemplate(wardId || null, channel);
+      const wardTpl = wardRes?.data?.result || null;
+      if (wardTpl) return wardTpl;
+      const globalRes = await mobileApi.fetchMessageTemplate(null, channel);
+      return globalRes?.data?.result || null;
+    };
     const loadTemplate = async () => {
       setTemplateStatus({ loading: true, error: '', success: '' });
       try {
-        const res = await mobileApi.fetchMessageTemplate(wardId, 'WHATSAPP');
+        const [waTpl, smsTpl] = await Promise.all([fetchChannel('WHATSAPP'), fetchChannel('SMS')]);
         if (!active) return;
-        const tpl = res?.data?.result || null;
-        setMessageTemplate(tpl);
-        setTemplateDraft({
-          authorityName: tpl?.authorityName || 'Greater Bengaluru Authority',
-          electionName: tpl?.electionName || 'Election-2026',
-          assemblyLabel: tpl?.assemblyLabel || '',
-          wardLabel: tpl?.wardLabel || wardLabel || '',
-          candidateName: tpl?.candidateName || '',
-          candidateParty: tpl?.candidateParty || '',
-          candidateWardLabel: tpl?.candidateWardLabel || '',
-          voteDate: tpl?.voteDate || '',
-          voteTime: tpl?.voteTime || '',
-          socialLink: tpl?.socialLink || '',
-          boothLocationLink: tpl?.boothLocationLink || '',
-          enabled: tpl?.enabled || false,
-          bannerUrl: tpl?.bannerUrl || '',
-        });
+        setWhatsAppTemplate(waTpl);
+        setSmsTemplate(smsTpl);
+        setTemplateDraft(toDraft(templateChannel === 'SMS' ? smsTpl : waTpl));
       } catch (error) {
         if (!active) return;
         setTemplateStatus({ loading: false, error: error?.message || 'Unable to load message template.', success: '' });
@@ -570,9 +586,9 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
         if (active) setTemplateStatus((prev) => ({ ...prev, loading: false }));
       }
     };
-    if (wardId) loadTemplate();
+    loadTemplate();
     return () => { active = false; };
-  }, [wardId, wardLabel]);
+  }, [wardId, wardLabel, templateChannel]);
 
   const handleTemplateChange = (key, value) => {
     setTemplateDraft((prev) => ({ ...prev, [key]: value }));
@@ -583,7 +599,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     try {
       const payload = {
         wardId: wardId || null,
-        channel: 'WHATSAPP',
+        channel: templateChannel,
         authorityName: templateDraft.authorityName,
         electionName: templateDraft.electionName,
         assemblyLabel: templateDraft.assemblyLabel,
@@ -600,7 +616,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       };
       const res = await mobileApi.saveMessageTemplate(payload);
       const tpl = res?.data?.result || null;
-      setMessageTemplate(tpl);
+      if (templateChannel === 'SMS') setSmsTemplate(tpl);
+      else setWhatsAppTemplate(tpl);
       setTemplateStatus({ loading: false, error: '', success: 'Template saved.' });
     } catch (error) {
       setTemplateStatus({ loading: false, error: error?.message || 'Unable to save template.', success: '' });
@@ -613,7 +630,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     try {
       const res = await mobileApi.uploadMessageTemplateBanner({ wardId, channel: 'WHATSAPP', file });
       const tpl = res?.data?.result || null;
-      setMessageTemplate(tpl);
+      setWhatsAppTemplate(tpl);
       setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
       setBannerUpload({ loading: false, error: '' });
     } catch (error) {
@@ -658,11 +675,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <span>{location ? 'Location Captured' : 'Get Location'}</span>
         </button>
         <div className="mobile-web-contact-actions">
-          <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled={!messageTemplate?.enabled}>
+          <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled={!canSendSms}>
             <SmsOutlined />
             <span>SMS</span>
           </button>
-          <button className="mobile-web-contact-btn" onClick={openWhatsApp} type="button" disabled={!messageTemplate?.enabled}>
+          <button className="mobile-web-contact-btn" onClick={openWhatsApp} type="button" disabled={!canSendWhatsApp}>
             <WhatsApp />
             <span>WhatsApp</span>
           </button>
@@ -671,8 +688,14 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <span>Call</span>
           </button>
         </div>
-        {!messageTemplate?.enabled ? (
-          <div className="mobile-web-warning">WhatsApp & SMS are disabled until the next data file upload.</div>
+        {!canSendWhatsApp || !canSendSms ? (
+          <div className="mobile-web-warning">
+            {!canSendWhatsApp && !canSendSms
+              ? 'WhatsApp & SMS are disabled until the next data file upload.'
+              : !canSendWhatsApp
+                ? 'WhatsApp is disabled until the next data file upload.'
+                : 'SMS is disabled until the next data file upload.'}
+          </div>
         ) : null}
       </section>
       {isAdminUser ? (
@@ -680,6 +703,56 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <div className="mobile-web-section-title">WhatsApp / SMS Template (Admin)</div>
           {templateStatus.error ? <div className="mobile-web-error">{templateStatus.error}</div> : null}
           {templateStatus.success ? <div className="mobile-web-success">{templateStatus.success}</div> : null}
+          <div className="mobile-web-template-channel-tabs">
+            <button
+              type="button"
+              className={`mobile-web-chip-btn ${templateChannel === 'WHATSAPP' ? 'active' : ''}`}
+              onClick={() => {
+                setTemplateChannel('WHATSAPP');
+                setTemplateDraft({
+                  authorityName: whatsAppTemplate?.authorityName || 'Greater Bengaluru Authority',
+                  electionName: whatsAppTemplate?.electionName || 'Election-2026',
+                  assemblyLabel: whatsAppTemplate?.assemblyLabel || '',
+                  wardLabel: whatsAppTemplate?.wardLabel || wardLabel || '',
+                  candidateName: whatsAppTemplate?.candidateName || '',
+                  candidateParty: whatsAppTemplate?.candidateParty || '',
+                  candidateWardLabel: whatsAppTemplate?.candidateWardLabel || '',
+                  voteDate: whatsAppTemplate?.voteDate || '',
+                  voteTime: whatsAppTemplate?.voteTime || '',
+                  socialLink: whatsAppTemplate?.socialLink || '',
+                  boothLocationLink: whatsAppTemplate?.boothLocationLink || '',
+                  enabled: whatsAppTemplate?.enabled || false,
+                  bannerUrl: whatsAppTemplate?.bannerUrl || '',
+                });
+              }}
+            >
+              WhatsApp
+            </button>
+            <button
+              type="button"
+              className={`mobile-web-chip-btn ${templateChannel === 'SMS' ? 'active' : ''}`}
+              onClick={() => {
+                setTemplateChannel('SMS');
+                setTemplateDraft({
+                  authorityName: smsTemplate?.authorityName || 'Greater Bengaluru Authority',
+                  electionName: smsTemplate?.electionName || 'Election-2026',
+                  assemblyLabel: smsTemplate?.assemblyLabel || '',
+                  wardLabel: smsTemplate?.wardLabel || wardLabel || '',
+                  candidateName: smsTemplate?.candidateName || '',
+                  candidateParty: smsTemplate?.candidateParty || '',
+                  candidateWardLabel: smsTemplate?.candidateWardLabel || '',
+                  voteDate: smsTemplate?.voteDate || '',
+                  voteTime: smsTemplate?.voteTime || '',
+                  socialLink: smsTemplate?.socialLink || '',
+                  boothLocationLink: smsTemplate?.boothLocationLink || '',
+                  enabled: smsTemplate?.enabled || false,
+                  bannerUrl: smsTemplate?.bannerUrl || '',
+                });
+              }}
+            >
+              SMS
+            </button>
+          </div>
           <div className="mobile-web-form-grid two-cols">
             <div className="mobile-web-field">
               <label>Authority Name</label>
@@ -736,17 +809,21 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <label htmlFor="messageEnabled">Enable WhatsApp/SMS for this ward (after latest data upload)</label>
           </div>
           <div className="mobile-web-upload-row">
-            <div>
-              <label className="mobile-web-upload-label">Upload Banner / Candidate Photo</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => handleBannerUpload(e.target.files?.[0])}
-                disabled={bannerUpload.loading}
-              />
-              {bannerUpload.error ? <div className="mobile-web-error">{bannerUpload.error}</div> : null}
-              {templateDraft.bannerUrl ? <div className="mobile-web-upload-preview">Uploaded: {templateDraft.bannerUrl}</div> : null}
-            </div>
+            {templateChannel === 'WHATSAPP' ? (
+              <div>
+                <label className="mobile-web-upload-label">Upload Banner / Candidate Photo</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleBannerUpload(e.target.files?.[0])}
+                  disabled={bannerUpload.loading}
+                />
+                {bannerUpload.error ? <div className="mobile-web-error">{bannerUpload.error}</div> : null}
+                {templateDraft.bannerUrl ? <div className="mobile-web-upload-preview">Uploaded: {templateDraft.bannerUrl}</div> : null}
+              </div>
+            ) : (
+              <div className="mobile-web-upload-preview">SMS does not require photo upload.</div>
+            )}
             <button className="mobile-web-primary-btn" onClick={handleTemplateSave} type="button" disabled={templateStatus.loading}>
               {templateStatus.loading ? 'Saving...' : 'Save Template'}
             </button>
@@ -859,7 +936,176 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     </div>
   );
 }
-function VoterListScreen({ heading, voters, booth, loading, errorText, onBack, onLoadMore, hasMore, summary, mode = 'local', onSelectVoter, onRetryLocation }) { const [query, setQuery] = useState(''); const [localVisibleCount, setLocalVisibleCount] = useState(PAGE_SIZE); useEffect(() => { setQuery(''); setLocalVisibleCount(PAGE_SIZE); }, [heading, booth?.boothId]); const normalizedVoters = useMemo(() => voters.map((voter) => normalizeVoter(voter, booth)).sort((a, b) => { const aNum = Number.parseInt(String(a.serialNo ?? '').replace(/[^\d]/g, ''), 10); const bNum = Number.parseInt(String(b.serialNo ?? '').replace(/[^\d]/g, ''), 10); const aVal = Number.isFinite(aNum) ? aNum : Number.POSITIVE_INFINITY; const bVal = Number.isFinite(bNum) ? bNum : Number.POSITIVE_INFINITY; return aVal - bVal; }), [voters, booth]); const filteredVoters = useMemo(() => { const q = query.trim().toLowerCase(); if (!q) return normalizedVoters; return normalizedVoters.filter((voter) => [voter.name, voter.epicNo, voter.relationName, voter.houseNo, voter.gender, voter.boothId, voter.boothLabel].filter(Boolean).join(' ').toLowerCase().includes(q)); }, [normalizedVoters, query]); const displayedVoters = mode === 'local' ? filteredVoters.slice(0, localVisibleCount) : filteredVoters; const resolvedSummary = booth ? boothStats(booth) : { total: Number(summary?.total ?? filteredVoters.length), male: Number(summary?.male ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('M')).length), female: Number(summary?.female ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('F')).length) }; const canLoadMoreLocal = mode === 'local' && displayedVoters.length < filteredVoters.length; const sentinelRef = useInfiniteTrigger(canLoadMoreLocal || (!!hasMore && mode === 'remote'), () => { if (canLoadMoreLocal) setLocalVisibleCount((current) => Math.min(current + PAGE_SIZE, filteredVoters.length)); else if (hasMore && onLoadMore) onLoadMore(); }); const headerTitle = booth?.boothNo || booth?.boothId ? `${booth?.boothNo ?? booth?.boothId} - ${booth?.boothLabel || ''}` : heading; const headerSubtitle = <><span className="mobile-web-stat-pill total">Total Voters: <strong>{resolvedSummary.total}</strong></span><span className="mobile-web-stat-pill male">Male: <strong>{resolvedSummary.male}</strong></span><span className="mobile-web-stat-pill female">Female: <strong>{resolvedSummary.female}</strong></span></>; return <div className="mobile-web-stack"><MobileHeader title={headerTitle} subtitle={headerSubtitle} onBack={onBack} hideAvatar={true} /><section className="mobile-web-search-card mobile-web-card"><div className="mobile-web-search-input-wrap"><SearchRounded className="mobile-web-search-icon" /><input className="mobile-web-input" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} /></div></section>{errorText ? <div className="mobile-web-error"><div>{errorText}</div>{onRetryLocation ? <button type="button" className="mobile-web-secondary-btn" onClick={onRetryLocation}>Retry Location</button> : null}</div> : null}{loading && displayedVoters.length === 0 ? <div className="mobile-web-empty">Loading voters...</div> : null}<section className="mobile-web-voter-list">{displayedVoters.map((voter) => <button key={`${voter.boothId}-${voter.voterId}-${voter.epicNo}`} type="button" className="mobile-web-voter-card mobile-web-voter-button" onClick={() => onSelectVoter?.(voter, booth)}><div className="mobile-web-voter-card-head"><span>{voter.voterId ?? '-'}</span><strong>{voter.epicNo}</strong></div><div className="mobile-web-voter-grid"><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">Name</span><span className="mobile-web-voter-value">{voter.name}</span></div><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">{voter.relationLabel}</span><span className="mobile-web-voter-value">{voter.relationName || '-'}</span></div><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">House No.</span><span className="mobile-web-voter-value">{voter.houseNo}</span></div><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">Age</span><span className="mobile-web-voter-value">{voter.age}</span></div><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">Sex</span><span className={`mobile-web-voter-value mobile-web-gender-chip ${voter.genderClass}`}>{voter.gender}</span></div><div className="mobile-web-voter-row"><span className="mobile-web-voter-label">Booth</span><span className="mobile-web-voter-value">{voter.boothNo ? `${voter.boothNo} - ` : voter.boothId ? `${voter.boothId} - ` : ''}{voter.boothLabel || '-'}</span></div></div></button>)}</section>{!loading && displayedVoters.length === 0 ? <div className="mobile-web-empty">No voters found.</div> : null}{(canLoadMoreLocal || hasMore) ? <div ref={sentinelRef} className="mobile-web-load-note">Loading more...</div> : null}</div>; }
+function VoterListScreen({
+  heading,
+  voters,
+  booth,
+  loading,
+  isLocating,
+  errorText,
+  onBack,
+  onLoadMore,
+  hasMore,
+  summary,
+  mode = 'local',
+  onSelectVoter,
+  onRetryLocation,
+}) {
+  const [query, setQuery] = useState('');
+  const [localVisibleCount, setLocalVisibleCount] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    setQuery('');
+    setLocalVisibleCount(PAGE_SIZE);
+  }, [heading, booth?.boothId]);
+
+  const normalizedVoters = useMemo(
+    () =>
+      voters
+        .map((voter) => normalizeVoter(voter, booth))
+        .sort((a, b) => {
+          const aNum = Number.parseInt(String(a.serialNo ?? '').replace(/[^\d]/g, ''), 10);
+          const bNum = Number.parseInt(String(b.serialNo ?? '').replace(/[^\d]/g, ''), 10);
+          const aVal = Number.isFinite(aNum) ? aNum : Number.POSITIVE_INFINITY;
+          const bVal = Number.isFinite(bNum) ? bNum : Number.POSITIVE_INFINITY;
+          return aVal - bVal;
+        }),
+    [voters, booth]
+  );
+
+  const filteredVoters = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return normalizedVoters;
+    return normalizedVoters.filter((voter) =>
+      [voter.name, voter.epicNo, voter.relationName, voter.houseNo, voter.gender, voter.boothId, voter.boothLabel]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [normalizedVoters, query]);
+
+  const displayedVoters = mode === 'local' ? filteredVoters.slice(0, localVisibleCount) : filteredVoters;
+
+  const resolvedSummary = booth
+    ? boothStats(booth)
+    : {
+        total: Number(summary?.total ?? filteredVoters.length),
+        male: Number(summary?.male ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('M')).length),
+        female:
+          Number(summary?.female ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('F')).length),
+      };
+
+  const canLoadMoreLocal = mode === 'local' && displayedVoters.length < filteredVoters.length;
+  const sentinelRef = useInfiniteTrigger(canLoadMoreLocal || (!!hasMore && mode === 'remote'), () => {
+    if (canLoadMoreLocal) setLocalVisibleCount((current) => Math.min(current + PAGE_SIZE, filteredVoters.length));
+    else if (hasMore && onLoadMore) onLoadMore();
+  });
+
+  const headerTitle =
+    booth?.boothNo || booth?.boothId ? `${booth?.boothNo ?? booth?.boothId} - ${booth?.boothLabel || ''}` : heading;
+
+  const headerSubtitle = (
+    <>
+      <span className="mobile-web-stat-pill total">
+        Total Voters: <strong>{resolvedSummary.total}</strong>
+      </span>
+      <span className="mobile-web-stat-pill male">
+        Male: <strong>{resolvedSummary.male}</strong>
+      </span>
+      <span className="mobile-web-stat-pill female">
+        Female: <strong>{resolvedSummary.female}</strong>
+      </span>
+    </>
+  );
+
+  return (
+    <div className="mobile-web-stack">
+      {isLocating && (
+        <div className="mobile-web-locating-overlay">
+          <div className="mobile-web-locating-spinner" />
+          <div className="mobile-web-locating-text">Verifying Location...</div>
+          <div className="mobile-web-locating-subtext">Please wait while we capture your position</div>
+        </div>
+      )}
+      <MobileHeader title={headerTitle} subtitle={headerSubtitle} onBack={onBack} hideAvatar={true} />
+      <section className="mobile-web-search-card mobile-web-card">
+        <div className="mobile-web-search-input-wrap">
+          <SearchRounded className="mobile-web-search-icon" />
+          <input
+            className="mobile-web-input"
+            placeholder="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </section>
+      {errorText ? (
+        <div className="mobile-web-error">
+          <div>{errorText}</div>
+          {onRetryLocation ? (
+            <button type="button" className="mobile-web-secondary-btn" onClick={onRetryLocation}>
+              Retry Location
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {loading && displayedVoters.length === 0 ? <div className="mobile-web-empty">Loading voters...</div> : null}
+      <section className="mobile-web-voter-list">
+        {displayedVoters.map((voter) => (
+          <button
+            key={`${voter.boothId}-${voter.voterId}-${voter.epicNo}`}
+            type="button"
+            className="mobile-web-voter-card mobile-web-voter-button"
+            onClick={() => onSelectVoter?.(voter, booth)}
+          >
+            <div className="mobile-web-voter-card-head">
+              <span>{voter.voterId ?? '-'}</span>
+              <strong>{voter.epicNo}</strong>
+            </div>
+            <div className="mobile-web-voter-grid">
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">Name</span>
+                <span className="mobile-web-voter-value">{voter.name}</span>
+              </div>
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">{voter.relationLabel}</span>
+                <span className="mobile-web-voter-value">{voter.relationName || '-'}</span>
+              </div>
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">House No.</span>
+                <span className="mobile-web-voter-value">{voter.houseNo}</span>
+              </div>
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">Age</span>
+                <span className="mobile-web-voter-value">{voter.age}</span>
+              </div>
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">Sex</span>
+                <span className={`mobile-web-voter-value mobile-web-gender-chip ${voter.genderClass}`}>
+                  {voter.gender}
+                </span>
+              </div>
+              <div className="mobile-web-voter-row">
+                <span className="mobile-web-voter-label">Booth</span>
+                <span className="mobile-web-voter-value">
+                  {voter.boothNo ? `${voter.boothNo} - ` : voter.boothId ? `${voter.boothId} - ` : ''}
+                  {voter.boothLabel || '-'}
+                </span>
+              </div>
+            </div>
+          </button>
+        ))}
+      </section>
+      {!loading && displayedVoters.length === 0 ? <div className="mobile-web-empty">No voters found.</div> : null}
+      {canLoadMoreLocal || hasMore ? (
+        <div ref={sentinelRef} className="mobile-web-load-note">
+          Loading more...
+        </div>
+      ) : null}
+    </div>
+  );
+}
 function SearchVoterScreen() {
   const assemblyCode = getAssemblyCode();
   const [showMoreFilters, setShowMoreFilters] = useState(false);
@@ -883,6 +1129,7 @@ function SearchVoterScreen() {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [resultMeta, setResultMeta] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
   const lastWardLoadRef = useRef('');
   const lastSelectionRef = useRef(null);
 
@@ -1008,22 +1255,30 @@ function SearchVoterScreen() {
 
   const handleSelectVoter = async (voter) => {
     lastSelectionRef.current = { voter };
+    setIsLocating(true);
     try {
       const loc = await requestLocation();
       setSelectedVoter({ ...voter, ...loc });
       setErrorText('');
     } catch (error) {
-      setErrorText(error?.message || error?.detail || 'Location permission is required.');
+      console.warn("Location capture failed, proceeding without it:", error);
+      setSelectedVoter(voter);
+      setErrorText(''); // Clear error so it doesn't block UI unnecessarily
+    } finally {
+      setIsLocating(false);
     }
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
+    setIsLocating(true);
     try {
       const loc = await requestLocation();
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setErrorText('');
     } catch (error) {
       setErrorText(error?.message || error?.detail || 'Location permission is required.');
+    } finally {
+      setIsLocating(false);
     }
   };
 
@@ -1049,6 +1304,7 @@ function SearchVoterScreen() {
           heading={resultMeta?.total ? `${resultMeta.total} voters found` : 'Voters List'}
           voters={voterResults}
           loading={searching || loadingMore}
+          isLocating={isLocating}
           errorText={errorText}
           hasMore={hasMore}
           onLoadMore={loadMore}
@@ -1121,6 +1377,7 @@ function SearchBoothScreen() {
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [boothLoading, setBoothLoading] = useState(false);
   const [boothError, setBoothError] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
   const lastSelectionRef = useRef(null);
 
   useEffect(() => {
@@ -1220,22 +1477,30 @@ function SearchBoothScreen() {
 
   const handleSelectBoothVoter = async (voter) => {
     lastSelectionRef.current = { voter };
+    setIsLocating(true);
     try {
       const loc = await requestLocation();
       setSelectedVoter({ ...voter, ...loc });
       setBoothError('');
     } catch (error) {
-      setBoothError(error?.message || error?.detail || 'Location permission is required.');
+      console.warn("Location capture failed, proceeding without it:", error);
+      setSelectedVoter(voter);
+      setBoothError(''); 
+    } finally {
+      setIsLocating(false);
     }
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
+    setIsLocating(true);
     try {
       const loc = await requestLocation();
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setBoothError('');
     } catch (error) {
       setBoothError(error?.message || error?.detail || 'Location permission is required.');
+    } finally {
+      setIsLocating(false);
     }
   };
 
@@ -1267,6 +1532,7 @@ function SearchBoothScreen() {
           }}
           voters={payload.voters || []}
           loading={boothLoading}
+          isLocating={isLocating}
           errorText={boothError}
           onBack={() => {
             setSelectedBooth(null);
@@ -1312,6 +1578,391 @@ function SearchBoothScreen() {
     </ScreenFrame>
   );
 }
+function PromotionsScreen() {
+  const [wards, setWards] = useState([]);
+  const [selectedWard, setSelectedWard] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState({ error: '', success: '' });
+  const [form, setForm] = useState({
+    authorityName: '',
+    electionName: '',
+    assemblyLabel: '',
+    wardLabel: '',
+    candidateName: '',
+    candidateParty: '',
+    candidateWardLabel: '',
+    voteDate: '13-MAY-2024',
+    voteTime: '7.00AM-6.00PM',
+    socialLink: '',
+    boothLocationLink: '',
+    enabled: false,
+    bannerUrl: '',
+    showLogo: true,
+    channel: 'WHATSAPP',
+  });
+
+  const [userInfo, setUserInfo] = useState({});
+  const [role, setRole] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const info = getUserInfoSafe();
+    setUserInfo(info);
+    const raw = info?.role || '';
+    const r = raw.replace('ROLE_', '').toUpperCase();
+    setRole(r);
+    setIsAdmin(r === 'SUPER_ADMIN' || r === 'ADMIN');
+  }, []);
+
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [mapsKey, setMapsKey] = useState('');
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
+    const storedKey = localStorage.getItem('gmapsKey') || '';
+    setMapsKey(envKey || storedKey);
+  }, []);
+
+  const loadGoogleMaps = () => new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Maps are not available on the server.'));
+      return;
+    }
+    if (window.google?.maps) {
+      resolve(window.google);
+      return;
+    }
+    if (!mapsKey) {
+      reject(new Error('Google Maps key not configured.'));
+      return;
+    }
+    const existing = document.querySelector('script[data-google-maps="true"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.google));
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleMaps = 'true';
+    script.onload = () => resolve(window.google);
+    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
+    document.body.appendChild(script);
+  });
+
+  const parseLatLng = (link) => {
+    if (!link) return null;
+    const match = link.match(/query=([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
+    if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+    const simple = link.match(/([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)/);
+    if (simple) return { lat: parseFloat(simple[1]), lng: parseFloat(simple[2]) };
+    return null;
+  };
+
+  const initMap = async () => {
+    if (!mapRef.current || !mapsKey) return;
+    try {
+      const google = await loadGoogleMaps();
+      const existingPos = parseLatLng(form.boothLocationLink) || { lat: 12.9716, lng: 77.5946 };
+      
+      if (!mapInstanceRef.current) {
+        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+          center: existingPos,
+          zoom: 15,
+          mapTypeId: 'roadmap',
+          disableDefaultUI: true,
+          zoomControl: true,
+        });
+
+        markerRef.current = new google.maps.Marker({
+          position: existingPos,
+          map: mapInstanceRef.current,
+          draggable: true,
+          animation: google.maps.Animation.DROP,
+        });
+
+        google.maps.event.addListener(markerRef.current, 'dragend', () => {
+          const pos = markerRef.current.getPosition();
+          const lat = pos.lat().toFixed(6);
+          const lng = pos.lng().toFixed(6);
+          const newLink = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+          setForm(prev => ({ ...prev, boothLocationLink: newLink }));
+        });
+      } else {
+        mapInstanceRef.current.setCenter(existingPos);
+        markerRef.current.setPosition(existingPos);
+      }
+    } catch (err) {
+      console.warn('Map init failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedWard && mapsKey) {
+      initMap();
+    }
+  }, [selectedWard, mapsKey]);
+
+  const fetchWards = async () => {
+    try {
+      const assemblyCode = getAssemblyCode();
+      const res = await mobileApi.fetchWards(assemblyCode);
+      const list = (res || []).map(w => ({
+        id: w.wardId || w.id,
+        label: (w.wardNameEn || `Ward ${w.wardId || w.id}`) + (w.wardNo ? ` - ${w.wardNo}` : '')
+      }));
+      if (isAdmin) {
+        setWards([{ id: 'GLOBAL', label: 'All Wards (Global)' }, ...list]);
+      } else {
+        setWards(list);
+      }
+    } catch (err) {
+      setFeedback({ error: 'Failed to load wards.', success: '' });
+    }
+  };
+
+  useEffect(() => {
+    if (role) fetchWards();
+  }, [role, isAdmin]);
+
+  const loadTemplate = async (wardId) => {
+    setLoading(true);
+    setFeedback({ error: '', success: '' });
+    try {
+      const res = await mobileApi.fetchMessageTemplate(wardId, form.channel);
+      const data = res?.data?.result;
+      if (data) {
+        setForm(prev => ({
+          ...prev,
+          ...data,
+          socialLink: data.socialLink || '',
+          boothLocationLink: data.boothLocationLink || '',
+          bannerUrl: data.bannerUrl || '',
+        }));
+      } else {
+        setForm(prev => ({
+          ...prev,
+          authorityName: '',
+          electionName: '',
+          assemblyLabel: '',
+          wardLabel: '',
+          candidateName: '',
+          candidateParty: '',
+          candidateWardLabel: '',
+          voteDate: '13-MAY-2024',
+          voteTime: '7.00AM-6.00PM',
+          socialLink: '',
+          boothLocationLink: '',
+          enabled: false,
+          bannerUrl: '',
+        }));
+      }
+    } catch (err) {
+      setFeedback({ error: 'Failed to load template.', success: '' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedWard) {
+      loadTemplate(selectedWard.id);
+      setSelectedFile(null);
+      setPreviewUrl('');
+    }
+  }, [selectedWard, form.channel]);
+
+  const handleChange = (key, value) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    if (!isAdmin) {
+      setFeedback({ error: 'Only admin can customize WhatsApp/SMS templates.', success: '' });
+      return;
+    }
+    if (!selectedWard) {
+      setFeedback({ error: 'Please select a ward first.', success: '' });
+      return;
+    }
+    setSaving(true);
+    setFeedback({ error: '', success: '' });
+    try {
+      let currentBannerUrl = form.bannerUrl;
+      const wardIdForApi = selectedWard.id === 'GLOBAL' ? null : selectedWard.id;
+
+      if (selectedFile) {
+        setFeedback({ error: '', success: 'Uploading photo...' });
+        const uploadRes = await mobileApi.uploadMessageTemplateBanner({ 
+          wardId: wardIdForApi, 
+          channel: form.channel, 
+          file: selectedFile 
+        });
+        currentBannerUrl = uploadRes?.data?.result?.bannerUrl;
+      }
+
+      await mobileApi.saveMessageTemplate({ ...form, wardId: wardIdForApi, bannerUrl: currentBannerUrl });
+      setFeedback({ error: '', success: 'Template and photo saved successfully!' });
+      setSelectedFile(null);
+    } catch (err) {
+      setFeedback({ error: err?.message || 'Failed to save template. (Check AWS credentials for photo)', success: '' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !selectedWard) return;
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  return (
+    <ScreenFrame accent="light">
+      <section className="mobile-web-card">
+        <h2 className="text-xl font-bold mb-2">WhatsApp / SMS Promotions</h2>
+        <p className="mobile-web-subtitle mb-6">
+          Configure ward-wise message templates. WhatsApp/SMS should be enabled only after latest voter data upload.
+        </p>
+
+        {!isAdmin ? (
+          <div className="mobile-web-warning">Only admin login can customize promotional message templates.</div>
+        ) : null}
+
+        <div className="mobile-web-form-grid mb-6">
+          <div className="mobile-web-field">
+            <label>Select Ward</label>
+            <select
+              className="mobile-web-input"
+              value={selectedWard?.id || ''}
+              onChange={(e) => setSelectedWard(wards.find(w => String(w.id) === e.target.value))}
+            >
+              <option value="">Choose Ward</option>
+              {wards.map(w => (
+                <option key={w.id} value={w.id}>{w.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="mobile-web-field">
+            <label>Channel</label>
+            <select
+              className="mobile-web-input"
+              value={form.channel}
+              onChange={(e) => handleChange('channel', e.target.value)}
+              disabled={!isAdmin}
+            >
+              <option value="WHATSAPP">WhatsApp</option>
+              <option value="SMS">SMS</option>
+            </select>
+          </div>
+        </div>
+
+        {selectedWard ? (
+          <>
+            <div className="mobile-web-form-grid">
+              <div className="mobile-web-field">
+                <label>Authority Name</label>
+                <input className="mobile-web-input" placeholder="Greater Bengaluru Authority" value={form.authorityName} onChange={e => handleChange('authorityName', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Election Name</label>
+                <input className="mobile-web-input" placeholder="Election-2026" value={form.electionName} onChange={e => handleChange('electionName', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Assembly</label>
+                <input className="mobile-web-input" placeholder="Assembly: 151 - KR Puram" value={form.assemblyLabel} onChange={e => handleChange('assemblyLabel', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Ward</label>
+                <input className="mobile-web-input" placeholder="Ward: 2-Horamavu" value={form.wardLabel} onChange={e => handleChange('wardLabel', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Candidate Name</label>
+                <input className="mobile-web-input" value={form.candidateName} onChange={e => handleChange('candidateName', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Candidate Party</label>
+                <input className="mobile-web-input" value={form.candidateParty} onChange={e => handleChange('candidateParty', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Candidate Ward Label</label>
+                <input className="mobile-web-input" value={form.candidateWardLabel} onChange={e => handleChange('candidateWardLabel', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Vote Date</label>
+                <input className="mobile-web-input" value={form.voteDate} onChange={e => handleChange('voteDate', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Vote Time</label>
+                <input className="mobile-web-input" value={form.voteTime} onChange={e => handleChange('voteTime', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field">
+                <label>Social Media Link</label>
+                <input className="mobile-web-input" value={form.socialLink} onChange={e => handleChange('socialLink', e.target.value)} disabled={!isAdmin} />
+              </div>
+              <div className="mobile-web-field" style={{ gridColumn: 'span 2' }}>
+                <label>Booth Location Link (Generated from map)</label>
+                <input className="mobile-web-input" value={form.boothLocationLink} onChange={e => handleChange('boothLocationLink', e.target.value)} placeholder="Drag marker on map or paste link" disabled={!isAdmin} />
+              </div>
+            </div>
+
+            <div className="my-4">
+              <label className="text-sm font-semibold text-slate-600 mb-2 block">Set Location on Map (Drag to position)</label>
+              <div ref={mapRef} style={{ width: '100%', height: '240px', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
+            </div>
+
+            <div className="my-6">
+              <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={(e) => handleChange('enabled', e.target.checked)}
+                    disabled={!isAdmin}
+                    style={{ width: '20px', height: '20px' }}
+                  />
+                <span className="text-sm font-bold text-slate-700">Enable {form.channel} for this ward (after latest data upload)</span>
+              </label>
+            </div>
+
+            {form.channel !== 'SMS' && (
+              <div className="mobile-web-field mb-6">
+                <label>Upload Banner / Candidate Photo</label>
+                <div className="flex flex-col gap-4">
+                  <input type="file" accept="image/*" onChange={handlePhotoUpload} className="text-sm" disabled={!isAdmin} />
+                  {(previewUrl || form.bannerUrl) && (
+                    <img src={previewUrl || form.bannerUrl} alt="Banner" className="w-[120px] h-[120px] object-cover rounded-xl border border-slate-200" />
+                  )}
+                </div>
+              </div>
+            )}
+            {form.channel === 'SMS' ? <p className="mobile-web-subtitle mb-4">SMS uses link/text only. Photo upload is disabled for SMS.</p> : null}
+
+            <div className="mobile-web-actions">
+              <button className="mobile-web-primary-btn" onClick={handleSave} disabled={saving || loading || !isAdmin}>
+                {saving ? 'Saving...' : 'Save Template'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="mobile-web-empty">Please select a ward to configure its templates.</div>
+        )}
+
+        {feedback.error ? <p className="mobile-web-error mt-4">{feedback.error}</p> : null}
+        {feedback.success ? <p className="mobile-web-success mt-4">{feedback.success}</p> : null}
+      </section>
+    </ScreenFrame>
+  );
+}
+
 function getUserInfoSafe() { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { return {}; } }
 function AddVolunteerScreen() {
   const [form, setForm] = useState({
@@ -4410,6 +5061,7 @@ export default function MobileDetailPage({ params }) {
   if (slug === 'add-volunteer') return <AddVolunteerScreen />;
   if (slug === 'my-volunteers') return <MyVolunteersScreen />;
   if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen />;
+  if (slug === 'promotions') return <PromotionsScreen />;
   return (
     <ScreenFrame>
       <section className="mobile-web-card">
