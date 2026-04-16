@@ -54,10 +54,23 @@ async function request(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
+    // Check for blocked/deleted user status (403 or specific message)
+    if (response.status === 403 || (payload && (payload.detail === 'Please contact Admin' || String(payload.detail).includes('blocked')))) {
+      if (typeof window !== 'undefined') {
+        localStorage.clear();
+        document.cookie = 'token=; path=/; max-age=0';
+        window.location.href = '/ui/login?error=' + encodeURIComponent('Please contact Admin');
+      }
+    }
     throw payload;
   }
 
   if (payload && typeof payload === 'object' && payload.success === false) {
+    if (payload.detail === 'Please contact Admin' && typeof window !== 'undefined') {
+      localStorage.clear();
+      document.cookie = 'token=; path=/; max-age=0';
+      window.location.href = '/ui/login?error=' + encodeURIComponent('Please contact Admin');
+    }
     throw payload;
   }
 
@@ -466,6 +479,14 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchActivatedWards: async () => {
+    try {
+      return await request('/votebase/v1/api/message-template/activated-wards');
+    } catch (error) {
+      console.log('Error while fetching activated wards:', error);
+      throw error;
+    }
+  },
   saveMessageTemplate: async (payload) => {
     try {
       return await request('/votebase/v1/api/message-template', {
@@ -524,6 +545,58 @@ export const mobileApi = {
       });
     } catch (error) {
       console.log('Error while updating family:', error);
+      throw error;
+    }
+  },
+
+  createMeeting: async (jsonReq) => {
+    try {
+      return await request('/votebase/v1/api/meetings', {
+        method: 'POST',
+        body: JSON.stringify(jsonReq),
+      });
+    } catch (error) {
+      console.log('Error while creating meeting:', error);
+      throw error;
+    }
+  },
+
+  fetchMeetings: async () => {
+    try {
+      return await request('/votebase/v1/api/meetings');
+    } catch (error) {
+      console.log('Error while fetching meetings:', error);
+      throw error;
+    }
+  },
+
+  recordMeetingAttendance: async (id) => {
+    try {
+      return await request(`/votebase/v1/api/meetings/${encodeURIComponent(id)}/attendance`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.log('Error while recording meeting attendance:', error);
+      throw error;
+    }
+  },
+
+  fetchMeetingAttendance: async (id) => {
+    try {
+      return await request(`/votebase/v1/api/meetings/${encodeURIComponent(id)}/attendance`);
+    } catch (error) {
+      console.log('Error while fetching meeting attendance:', error);
+      throw error;
+    }
+  },
+
+  deleteFamily: async (id) => {
+    try {
+      return await request(`/votebase/v1/api/family/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.log('Error while deleting family:', error);
       throw error;
     }
   },

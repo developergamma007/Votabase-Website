@@ -94,12 +94,19 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
   }, [pathname]);
 
   const filteredMenuItems = useMemo(() => {
-    const items = role === 'BOOTH' 
-      ? menuItems.filter(item => !['/home', '/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path))
-      : menuItems;
+    let items = menuItems;
+    
+    if (role === 'BOOTH') {
+      items = items.filter(item => !['/home', '/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path));
+    }
+    
+    // Only show Promotions, Voters Family and Meetings to SUPER_ADMIN
+    if (role !== 'SUPER_ADMIN') {
+      items = items.filter(item => !['/mobile/promotions', '/mobile/voters-family', '/mobile/meetings'].includes(item.path));
+    }
 
     if (!printEnabled) {
-      return items.filter(item => item.path !== '/mobile/print');
+      items = items.filter(item => item.path !== '/mobile/print');
     }
     return items;
   }, [role, printEnabled]);

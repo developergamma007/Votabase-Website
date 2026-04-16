@@ -275,8 +275,8 @@ a {
 }
 
 .content-area {
-  padding: 28px 32px;
-  max-width: 1200px;
+  padding: 16px 20px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -480,8 +480,8 @@ a {
 }
 
 .mobile-web-card {
-  padding: 24px;
-  border-radius: 24px;
+  padding: 20px;
+  border-radius: 20px;
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -538,6 +538,12 @@ a {
   border-color: rgba(47, 86, 217, 0.5);
   box-shadow: 0 0 0 4px rgba(47, 86, 217, 0.12);
   background: #ffffff;
+}
+
+input[type="date"].mobile-web-input {
+  display: block;
+  min-width: 0;
+  width: 100%;
 }
 
 .mobile-web-search-input-wrap .mobile-web-input {
@@ -3175,7 +3181,7 @@ textarea {
   }
 
   .mobile-web-voter-card {
-    padding: 18px 18px;
+    padding: 14px 16px;
   }
 
   .mobile-web-voter-row {
