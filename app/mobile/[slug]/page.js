@@ -10,6 +10,10 @@ import {
   PhoneOutlined,
   Print as PrintIcon,
   SearchRounded,
+  ArrowForwardIos,
+  MessageOutlined,
+  LogoutOutlined,
+  VpnKeyOutlined,
   SmsOutlined,
   WhatsApp,
 } from '@mui/icons-material';
@@ -371,6 +375,22 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const lastEpicRef = useRef(null);
   const skipScrollRef = useRef(false);
 
+  const [activatedWards, setActivatedWards] = useState({ whatsapp: [], sms: [], print: [] });
+  const [voterActivation, setVoterActivation] = useState({ whatsapp: false, sms: false, print: false });
+  useEffect(() => {
+    mobileApi.fetchActivatedWards().then(res => {
+      const list = res?.data?.result || [];
+      const grouped = { whatsapp: [], sms: [], print: [] };
+      if (Array.isArray(list)) {
+        list.forEach(item => {
+          const chan = String(item.channel || '').toLowerCase();
+          if (grouped[chan]) grouped[chan].push(item);
+        });
+      }
+      setActivatedWards(grouped);
+    }).catch(e => console.error('Failed to load activated wards:', e));
+  }, []);
+
   const baseForm = useMemo(() => getDefaultVoterForm(voter), [voter]);
   const basePayload = useMemo(() => buildVoterPayload(baseForm, {}), [baseForm]);
   const currentPayload = useMemo(() => buildVoterPayload(form, customValues), [form, customValues]);
@@ -385,7 +405,20 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setForm(getDefaultVoterForm(voter));
     setCustomValues({});
     setMobileFocused(false);
-    if (!isSameVoter) setBanner({ type: '', text: '' });
+    if (!isSameVoter) {
+       setBanner({ type: '', text: '' });
+       setVoterActivation({ whatsapp: false, sms: false, print: false });
+       if (currentEpic) {
+         mobileApi.verifyVoterActivation(currentEpic).then(res => {
+           const d = res?.data?.result || {};
+           setVoterActivation({
+             whatsapp: !!d.whatsapp,
+             sms: !!d.sms,
+             print: !!d.print
+           });
+         }).catch(() => {});
+       }
+    }
     lastEpicRef.current = currentEpic;
     if (typeof window !== 'undefined') {
       if (skipScrollRef.current) {
@@ -400,11 +433,76 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const boothTitle = `${boothNumber}${booth?.boothLabel || voter?.boothLabel ? ' - ' : ''}${booth?.boothLabel || voter?.boothLabel || ''}`;
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
-  const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || '';
+  const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || voter?.wardCode || '';
   const wardLabel = booth?.wardNameEn || voter?.wardNameEn || voter?.wardLabel || '';
+  
+  // Smart ward-activation lookup
+  const isWardNameActivated = (channel) => {
+    const list = activatedWards[channel.toLowerCase()] || [];
+    if (!list || list.length === 0) return false;
+    
+    // Aggregate all possible textual identifiers for the voter's location
+    const searchText = [
+      wardLabel,
+      boothTitle,
+      voter?.pollingStationAdrEn,
+      voter?.pollingStationAdrLocal,
+      voter?.wardNameEn,
+      voter?.wardLabel,
+      voter?.wardName,
+      voter?.boothLabel,
+      voter?.boothNameEn
+    ].filter(Boolean).join(' ').toLowerCase();
+    
+    const normalizedWardId = String(wardId || '').replace(/^W0*/i, '').trim();
+    
+    // 1. Precise ID/Number match
+    const hasDirectMatch = list.some(w => (
+      (w.wardId && String(w.wardId).trim() === normalizedWardId) || 
+      (w.wardId && String(w.wardId).trim() === String(wardId).trim()) ||
+      (w.wardNo && String(w.wardNo).trim() === normalizedWardId)
+    ));
+    if (hasDirectMatch) return true;
+
+    // 2. Fuzzy matching based on keywords and labels
+    return list.some(w => {
+      const label = String(w.wardLabel || '').toLowerCase(); // e.g. "1 - k narayanapura"
+      const name = String(w.wardNameEn || w.wardName || '').toLowerCase(); // e.g. "k narayanapura"
+      
+      // Extract ward number from label if missing (e.g. from "1 - ...")
+      const wNo = String(w.wardNo || '').toLowerCase() || (label.match(/^(\d+)/) || [])[1];
+      const nameKeywords = label.split(/[^a-z0-9]+/i).filter(p => p.length > 3 && !/^\d+$/.test(p));
+
+      // Prefix match (e.g. "1 - " in booth title)
+      if (wNo && (searchText.includes(wNo + ' -') || searchText.includes(wNo + '-'))) return true;
+      
+      // Exact number match
+      if (wNo && normalizedWardId === wNo) return true;
+
+      // Keyword match (e.g. "narayanapura")
+      if (nameKeywords.some(k => searchText.includes(k))) return true;
+
+      // Direct phrase match
+      if (label && searchText.includes(label)) return true;
+      if (name && searchText.includes(name)) return true;
+
+      return false;
+    });
+  };
+
   const activeTemplate = templateChannel === 'SMS' ? smsTemplate : whatsAppTemplate;
-  const canSendWhatsApp = !!whatsAppTemplate?.enabled;
-  const canSendSms = !!smsTemplate?.enabled;
+  
+  // Use a memo for discovery to avoid thrashing
+  const discoveryStatus = useMemo(() => {
+    return {
+       whatsapp: (whatsAppTemplate?.enabled) || isWardNameActivated('WHATSAPP') || !!voterActivation.whatsapp,
+       sms: (smsTemplate?.enabled) || isWardNameActivated('SMS') || !!voterActivation.sms,
+       print: isWardNameActivated('PRINT') || !!voterActivation.print
+    };
+  }, [whatsAppTemplate, smsTemplate, activatedWards, voterActivation, wardLabel, boothTitle, wardId, voter]);
+
+  const canSendWhatsApp = discoveryStatus.whatsapp;
+  const canSendSms = discoveryStatus.sms;
   const resolvedPhone = normalizeMobileValue(currentPayload.mobile || voter?.mobile);
   const mapTarget = useMemo(() => {
     const lat = location?.latitude ?? voter?.latitude;
@@ -481,12 +579,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const openSms = () => {
-    if (resolvedPhone.length !== 10) {
-      setBanner({ type: 'error', text: 'Invalid mobile number.' });
-      return;
-    }
-    if (!canSendSms) {
-      setBanner({ type: 'error', text: 'SMS is disabled until the latest data file is uploaded.' });
+    if (resolvedPhone.length < 10) {
+      setBanner({ type: 'error', text: `Invalid phone number (${resolvedPhone.length} digits). Please enter a 10-digit number for SMS.` });
       return;
     }
     const encodedMessage = encodeURIComponent(buildSMSMessage({ ...voter, ...currentPayload }, booth, smsTemplate));
@@ -495,12 +589,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const openWhatsApp = () => {
-    if (resolvedPhone.length !== 10) {
-      setBanner({ type: 'error', text: 'Invalid mobile number.' });
-      return;
-    }
-    if (!canSendWhatsApp) {
-      setBanner({ type: 'error', text: 'WhatsApp is disabled until the latest data file is uploaded.' });
+    if (resolvedPhone.length < 10) {
+      setBanner({ type: 'error', text: `Invalid phone number (${resolvedPhone.length} digits). Please enter a 10-digit number for WhatsApp.` });
       return;
     }
     const encodedMessage = encodeURIComponent(buildWhatsAppMessage({ ...voter, ...currentPayload }, booth, whatsAppTemplate));
@@ -508,8 +598,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const openCall = () => {
-    if (resolvedPhone.length !== 10) {
-      setBanner({ type: 'error', text: 'Invalid mobile number.' });
+    if (resolvedPhone.length < 10) {
+      setBanner({ type: 'error', text: `Invalid phone number (${resolvedPhone.length} digits).` });
       return;
     }
     window.location.href = `tel:${resolvedPhone}`;
@@ -604,9 +694,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       bannerUrl: tpl?.bannerUrl || '',
     });
     const fetchChannel = async (channel) => {
-      const wardRes = await mobileApi.fetchMessageTemplate(wardId || null, channel);
+      // Robust ward ID resolution
+      const effectiveWardId = wardId || voter?.wardId || voter?.ward_id || voter?.wardNo || '';
+      const voterEpic = voter?.epicNo || voter?.epic || voter?.voterId;
+      const wardRes = await mobileApi.fetchMessageTemplate(effectiveWardId || null, channel, voterEpic);
       const wardTpl = wardRes?.data?.result || null;
       if (wardTpl) return wardTpl;
+      
       const globalRes = await mobileApi.fetchMessageTemplate(null, channel);
       return globalRes?.data?.result || null;
     };
@@ -670,13 +764,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       const res = await mobileApi.uploadMessageTemplateBanner({ wardId, channel: 'WHATSAPP', file });
       const tpl = res?.data?.result || null;
       setWhatsAppTemplate(tpl);
-      setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
-      setBannerUpload({ loading: false, error: '' });
+        setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
+        setBannerUpload({ loading: false, error: '' });
     } catch (error) {
       setBannerUpload({ loading: false, error: error?.message || 'Unable to upload banner.' });
     }
   };
-
+  
   return (
     <div className="mobile-web-stack">
       <MobileHeader title="Voter Info" onBack={onBack} />
@@ -694,6 +788,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <p>
             <strong>Polling Booth</strong>
             <span>{boothTitle || '-'}</span>
+          </p>
+          <p>
+            <strong>Ward</strong>
+            <span>{wardLabel || voter?.wardNameEn || '-'}</span>
           </p>
         </div>
         <div className="mobile-web-map-card">
@@ -714,11 +812,21 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <span>{location ? 'Location Captured' : 'Get Location'}</span>
         </button>
         <div className="mobile-web-contact-actions">
-          <button className="mobile-web-contact-btn" onClick={openSms} type="button" disabled={!canSendSms}>
+          <button 
+            className={`mobile-web-contact-btn ${!canSendSms ? 'is-disabled' : ''}`} 
+            onClick={openSms} 
+            type="button" 
+            disabled={!canSendSms}
+          >
             <SmsOutlined />
             <span>SMS</span>
           </button>
-          <button className="mobile-web-contact-btn" onClick={openWhatsApp} type="button" disabled={!canSendWhatsApp}>
+          <button 
+            className={`mobile-web-contact-btn ${!canSendWhatsApp ? 'is-disabled' : ''}`} 
+            onClick={openWhatsApp} 
+            type="button" 
+            disabled={!canSendWhatsApp}
+          >
             <WhatsApp />
             <span>WhatsApp</span>
           </button>
@@ -727,15 +835,6 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <span>Call</span>
           </button>
         </div>
-        {!canSendWhatsApp || !canSendSms ? (
-          <div className="mobile-web-warning">
-            {!canSendWhatsApp && !canSendSms
-              ? 'WhatsApp & SMS are disabled until the next data file upload.'
-              : !canSendWhatsApp
-                ? 'WhatsApp is disabled until the next data file upload.'
-                : 'SMS is disabled until the next data file upload.'}
-          </div>
-        ) : null}
       </section>
 
       <section className="mobile-web-tab-shell">
@@ -837,7 +936,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           </button>
         </div>
         {banner.text && banner.type === 'success' ? <div className="mobile-web-success">{banner.text}</div> : null}
-        <button className="mobile-web-slip-btn" onClick={() => window.print()} type="button">
+        <button 
+          className={`mobile-web-slip-btn ${!discoveryStatus.print ? 'is-disabled' : ''}`} 
+          onClick={() => window.print()} 
+          type="button" 
+          disabled={!discoveryStatus.print}
+        >
           Voter Slip Print
         </button>
       </section>
@@ -1036,10 +1140,26 @@ function SearchVoterScreen() {
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const [resultMeta, setResultMeta] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  const userInfo = useMemo(() => getUserInfoSafe(), []);
   const lastWardLoadRef = useRef('');
   const lastSelectionRef = useRef(null);
+
+  const accessWardIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+    if (userInfo?.wardId) ids.push(userInfo.wardId);
+    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
 
   useEffect(() => {
     const key = String(assemblyCode || '');
@@ -1069,9 +1189,14 @@ function SearchVoterScreen() {
         })
         .filter((item) => item.label)
         .sort((a, b) => Number(a.value) - Number(b.value));
-      setWardItems(list);
-      if (list.length > 0) lastWardLoadRef.current = key;
-      if (!list.length) setErrorText('No wards found for this user.');
+      
+      const filtered = accessWardIds.length
+        ? list.filter((item) => accessWardIds.includes(item.value))
+        : list;
+      
+      setWardItems(filtered);
+      if (filtered.length > 0) lastWardLoadRef.current = key;
+      if (!filtered.length) setErrorText('No wards found for this user.');
     }).catch((error) => {
       setWardItems([]);
       setErrorText(error?.message || error?.detail || 'Unable to load wards.');
@@ -1080,6 +1205,12 @@ function SearchVoterScreen() {
       active = false;
     };
   }, [assemblyCode, wardItems.length]);
+
+  useEffect(() => {
+    if (accessWardIds.length > 0 && !form.wards && wardItems.length > 0) {
+      handleChange('wards', wardItems[0].value);
+    }
+  }, [accessWardIds, wardItems.length, form.wards]);
 
   const handleChange = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   const handleReset = () => {
@@ -1316,8 +1447,28 @@ function SearchBoothScreen() {
     run();
   }, [assemblyCode]);
 
+  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const accessWardIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+    if (userInfo?.wardId) ids.push(userInfo.wardId);
+    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
+
   const booths = useMemo(() => {
-    const wards = assemblyData?.assembly?.wards || [];
+    let wards = assemblyData?.assembly?.wards || [];
+    if (accessWardIds.length) {
+      wards = wards.filter(w => accessWardIds.includes(String(w.wardId || w.id)));
+    }
     return wards.flatMap((ward) =>
       (ward.booths || []).map((booth) => ({
         ...booth,
@@ -1337,17 +1488,30 @@ function SearchBoothScreen() {
       const bVal = Number.isFinite(bNum) ? bNum : Number.POSITIVE_INFINITY;
       return aVal - bVal;
     });
-  }, [assemblyData]);
+  }, [assemblyData, accessWardIds]);
 
   const wardOptions = useMemo(() => {
-    const wards = assemblyData?.assembly?.wards || [];
-    return ['ALL', ...wards.map(w => w.wardNameEn || `Ward ${w.wardId}`)];
-  }, [assemblyData]);
+    let wards = assemblyData?.assembly?.wards || [];
+    if (accessWardIds.length) {
+      wards = wards.filter(w => accessWardIds.includes(String(w.wardId || w.id)));
+    }
+    const list = wards.map(w => w.wardNameEn || `Ward ${w.wardId}`);
+    return accessWardIds.length ? list : ['ALL', ...list];
+  }, [assemblyData, accessWardIds]);
+
+  useEffect(() => {
+    if (accessWardIds.length > 0 && selectedWardFilter === 'ALL' && wardOptions.length > 0) {
+      setSelectedWardFilter(wardOptions[0]);
+    }
+  }, [accessWardIds, wardOptions, selectedWardFilter]);
 
   const filteredBooths = useMemo(() => {
     let result = booths;
-    if (selectedWardFilter !== 'ALL') {
+    if (selectedWardFilter !== 'ALL' && !accessWardIds.length) {
       result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
+    } else if (accessWardIds.length && selectedWardFilter !== 'ALL') {
+       // if accessWardIds is present, selectedWardFilter might still be used if there are multiple accessible wards
+       result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -1717,10 +1881,29 @@ function PromotionsScreen() {
     if (!form.assemblyId) return;
     try {
       const res = await mobileApi.fetchWards(form.assemblyId);
-      const list = (res || []).map(w => ({
+      let list = (res || []).map(w => ({
         id: w.wardId || w.id,
         label: (w.wardNameEn || `Ward ${w.wardId || w.id}`) + (w.wardNo ? ` - ${w.wardNo}` : '')
       }));
+
+      const ids = [];
+      if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+      if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+      if (userInfo?.wardId) ids.push(userInfo.wardId);
+      if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+      if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+        String(userInfo.assignmentId)
+          .split(',')
+          .map((val) => val.trim())
+          .filter(Boolean)
+          .forEach((val) => ids.push(val));
+      }
+      const accessWardIds = Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+
+      if (accessWardIds.length) {
+        list = list.filter(item => accessWardIds.includes(String(item.id)));
+      }
+
       if (isAdmin) {
         setWards([{ id: 'GLOBAL', label: 'All Wards (Global)' }, ...list]);
       } else {
@@ -1892,6 +2075,93 @@ function PromotionsScreen() {
           </div>
         </div>
 
+        {/* Global Master Switches */}
+        {isAdmin && !selectedWard && (
+          <div className="mt-8 p-6 bg-blue-50/50 rounded-2xl border border-blue-100">
+            <h3 className="text-lg font-bold text-blue-900 mb-4 flex items-center gap-2">
+              <VpnKeyOutlined />
+              Assembly Master Control
+            </h3>
+            <p className="text-sm text-blue-700/80 mb-6">Quickly enable or disable messaging for all wards in this assembly.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="flex flex-col gap-2">
+                <button 
+                  type="button"
+                  className="flex items-center justify-between p-4 bg-white rounded-xl border border-blue-200 shadow-sm hover:border-blue-400 transition-colors"
+                  onClick={() => {
+                    setSelectedWard({ id: 'GLOBAL', label: 'All Wards (Global)' });
+                    handleChange('channel', 'WHATSAPP');
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <WhatsApp className="text-green-600" />
+                    <span className="font-bold">WhatsApp Global</span>
+                  </div>
+                  <ArrowForwardIos style={{ fontSize: 12 }} />
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-red-600 font-bold hover:underline self-end px-2"
+                  onClick={async () => {
+                    if (confirm('Deactivate WhatsApp GLOBALLY for EVERY single ward in this assembly?')) {
+                      setSaving(true);
+                      try {
+                        const res = await mobileApi.deactivateAllTemplates('WHATSAPP');
+                        setFeedback({ error: '', success: res?.data?.message || 'WhatsApp deactivated for all wards.' });
+                        loadActivatedWards();
+                        if (selectedWard) loadTemplate(selectedWard.id);
+                      } catch (err) {
+                        setFeedback({ error: `Failed to deactivate WhatsApp: ${err?.message || 'Server error'}`, success: '' });
+                      } finally {
+                        setSaving(false);
+                      }
+                    }
+                  }}
+                >
+                  Deactivate Global WhatsApp
+                </button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button 
+                  type="button"
+                  className="flex items-center justify-between p-4 bg-white rounded-xl border border-blue-200 shadow-sm hover:border-blue-400 transition-colors"
+                  onClick={() => {
+                    setSelectedWard({ id: 'GLOBAL', label: 'All Wards (Global)' });
+                    handleChange('channel', 'SMS');
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <MessageOutlined className="text-blue-600" />
+                    <span className="font-bold">SMS Global</span>
+                  </div>
+                  <ArrowForwardIos style={{ fontSize: 12 }} />
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-red-600 font-bold hover:underline self-end px-2"
+                  onClick={async () => {
+                    if (confirm('Deactivate SMS GLOBALLY for EVERY single ward in this assembly?')) {
+                      setSaving(true);
+                      try {
+                        const res = await mobileApi.deactivateAllTemplates('SMS');
+                        setFeedback({ error: '', success: res?.data?.message || 'SMS deactivated for all wards.' });
+                        loadActivatedWards();
+                        if (selectedWard) loadTemplate(selectedWard.id);
+                      } catch (err) {
+                        setFeedback({ error: `Failed to deactivate SMS: ${err?.message || 'Server error'}`, success: '' });
+                      } finally {
+                        setSaving(false);
+                      }
+                    }
+                  }}
+                >
+                  Deactivate Global SMS
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {selectedWard ? (
           <>
             <div className="mobile-web-form-grid">
@@ -2007,7 +2277,21 @@ function PromotionsScreen() {
                 <div className="flex flex-col gap-4">
                   <input type="file" accept="image/*" onChange={handlePhotoUpload} className="text-sm" disabled={!isAdmin} />
                   {(previewUrl || form.bannerUrl) && (
-                    <img src={previewUrl || form.bannerUrl} alt="Banner" className="w-[120px] h-[120px] object-cover rounded-xl border border-slate-200" />
+                    <div className="relative w-[120px] h-[120px]">
+                      <img src={previewUrl || form.bannerUrl} alt="Banner" className="w-full h-full object-cover rounded-xl border border-slate-200" />
+                      <button 
+                        type="button"
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-md border-2 border-white"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          setPreviewUrl('');
+                          handleChange('bannerUrl', '');
+                        }}
+                        title="Remove Photo"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -2115,11 +2399,26 @@ function AddVolunteerScreen() {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [editPhone, setEditPhone] = useState('');
-  // pendingEditRef holds ward/booth IDs to apply after dropdowns are loaded
+  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const accessWardIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+    if (userInfo?.wardId) ids.push(userInfo.wardId);
+    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
+
   const pendingEditRef = useRef(null);
   const prevWorkingLevelRef = useRef(null);
   const prevAssemblyRef = useRef(null);
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
   const role = userInfo?.role || 'ADMIN';
 
   // Load volunteerEdit from sessionStorage on mount
@@ -2214,8 +2513,13 @@ function AddVolunteerScreen() {
     prevAssemblyRef.current = form.assemblyId;
     mobileApi.fetchWards(form.assemblyId).then((res) => {
       const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
-      const formatted = raw.map((item) => ({ value: item.wardId, label: item.wardNameEn || `Ward ${item.wardId}` }));
-      setWards(formatted);
+      let list = raw.map((item) => ({ value: item.wardId, label: item.wardNameEn || `Ward ${item.wardId}` }));
+      
+      if (accessWardIds.length) {
+        list = list.filter(item => accessWardIds.includes(String(item.value)));
+      }
+      
+      setWards(list);
       // Apply pending edit ward/booth selection after wards are loaded
       if (pendingEditRef.current) {
         const pending = pendingEditRef.current;
@@ -2227,13 +2531,11 @@ function AddVolunteerScreen() {
               const obj = item?.data?.result || item?.result || item;
               return Array.isArray(obj) ? obj : [obj];
             }).flat().filter(Boolean).map((item) => {
-              const ward = wards.find(w => String(w.value) === String(item.wardId));
-              const wardPrefix = ward ? `[${ward.label}] ` : '';
               const boothNo = item.boothNo || item.booth_no || '';
               const address = item.pollingStationAdrEn || item.boothNameEn || item.booth_add_en || `Booth ${item.boothId}`;
               return { 
                 value: item.boothId, 
-                label: `${wardPrefix}${boothNo ? `${boothNo} - ` : ''}${address}` 
+                label: `${boothNo ? `${boothNo} - ` : ''}${address}` 
               };
             });
             const unique = Array.from(new Map(merged.map((item) => [String(item.value), item])).values());
@@ -2264,13 +2566,11 @@ function AddVolunteerScreen() {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
         return raw;
       }).flat().filter(Boolean).map((item) => {
-        const ward = wards.find(w => String(w.value) === String(item.wardId));
-        const wardPrefix = ward ? `[${ward.label}] ` : '';
         const boothNo = item.boothNo || item.booth_no || '';
         const address = item.pollingStationAdrEn || item.boothNameEn || item.booth_add_en || `Booth ${item.boothId}`;
         return { 
           value: item.boothId, 
-          label: `${wardPrefix}${boothNo ? `${boothNo} - ` : ''}${address}` 
+          label: `${boothNo ? `${boothNo} - ` : ''}${address}` 
         };
       });
       const unique = Array.from(new Map(merged.map((item) => [String(item.value), item])).values());
@@ -2469,15 +2769,23 @@ function MyVolunteersScreen() {
         boothResponses.flat().forEach((booth) => {
           const boothId = String(booth?.boothId ?? booth?.booth_id ?? booth?.id ?? '');
           const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.boothNumber;
-          const boothLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en
-            ?? (boothNo ? `Booth ${boothNo}` : boothId);
+          const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
+          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo))) 
+            ? `${boothNo} - ${basicLabel}` 
+            : (basicLabel || (boothNo ? `Booth ${boothNo}` : boothId));
+          
           if (boothId) boothMap[boothId] = boothLabel;
           if (boothNo !== undefined && boothNo !== null) boothMap[String(boothNo)] = boothLabel;
         });
         publicBoothResponses.flat().forEach((booth) => {
-          const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.id;
-          const boothLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en
-            ?? (boothNo ? `Booth ${boothNo}` : '');
+          const boothId = String(booth?.id ?? booth?.booth_id ?? '');
+          const boothNo = booth?.boothNo ?? booth?.booth_no;
+          const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
+          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo))) 
+            ? `${boothNo} - ${basicLabel}` 
+            : (basicLabel || (boothNo ? `Booth ${boothNo}` : boothId));
+
+          if (boothId) boothMap[boothId] = boothLabel;
           if (boothNo !== undefined && boothNo !== null && boothLabel) {
             boothMap[String(boothNo)] = boothLabel;
           }
@@ -2889,6 +3197,16 @@ function VotersFamilyScreen() {
   const [families, setFamilies] = useState([]);
   const [familiesLoading, setFamiliesLoading] = useState(false);
   const searchTimerRef = useRef(null);
+  const [mounted, setMounted] = useState(false);
+  
+  const role = useMemo(() => {
+    if (!mounted) return '';
+    const info = getUserInfoSafe();
+    return String(info?.role || '').replace('ROLE_', '').toUpperCase();
+  }, [mounted]);
+
+  const isSuperAdmin = role === 'SUPER_ADMIN';
+  const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(role);
 
   const loadSuggestions = async () => {
     try {
@@ -2905,6 +3223,7 @@ function VotersFamilyScreen() {
   };
 
   useEffect(() => {
+    setMounted(true);
     loadSuggestions();
     if (typeof window !== 'undefined') {
       window.scrollTo(0, 0);
@@ -2971,6 +3290,7 @@ function VotersFamilyScreen() {
       id: suggestion.epicNo || `${name}-${Date.now()}`,
       name: name || suggestion.epicNo || 'Unknown',
       epic: suggestion.epicNo || '',
+      relation: suggestion.relationNameEn || suggestion.relationNameLocal || '',
       phone: suggestion.mobile || '',
       houseNo: suggestion.houseNoEn || suggestion.houseNoLocal || '',
       boothId: suggestion.boothInfo?.boothId || suggestion.boothId || suggestion.booth_id || '',
@@ -3112,13 +3432,15 @@ function VotersFamilyScreen() {
           >
             New Family
           </button>
-          <button 
-            type="button" 
-            className={`mobile-web-subtab ${activeTab === 'LIST' ? 'active' : ''}`}
-            onClick={() => setActiveTab('LIST')}
-          >
-            Families
-          </button>
+          {isSuperAdmin && (
+            <button 
+              type="button" 
+              className={`mobile-web-subtab ${activeTab === 'LIST' ? 'active' : ''}`}
+              onClick={() => setActiveTab('LIST')}
+            >
+              Families
+            </button>
+          )}
         </div>
 
         {activeTab === 'NEW' ? (
@@ -3212,6 +3534,7 @@ function VotersFamilyScreen() {
             <div className="mobile-web-table-head">
               <span>Name</span>
               <span>EPIC</span>
+              <span>Relation</span>
               <span>Phone</span>
               <span>House No</span>
               <span>Actions</span>
@@ -3223,6 +3546,7 @@ function VotersFamilyScreen() {
                 <div key={member.id} className="mobile-web-table-row">
                   <span>{member.name}</span>
                   <span>{member.epic}</span>
+                  <span>{member.relation || '-'}</span>
                   <span>{member.phone}</span>
                   <span>{member.houseNo}</span>
                   <span className="mobile-web-row-actions">
@@ -3454,9 +3778,15 @@ function MeetingsScreen({ userRole }) {
   const [newMeetingChannels, setNewMeetingChannels] = useState({ appAlert: true, whatsapp: false });
   const [activeMeetingTab, setActiveMeetingTab] = useState('list');
   const [activeSubTab, setActiveSubTab] = useState('details');
+  const [mounted, setMounted] = useState(false);
 
-  const role = String(userRole || '').replace('ROLE_', '').toUpperCase();
+  const role = useMemo(() => {
+    if (!mounted) return '';
+    return String(userRole || '').replace('ROLE_', '').toUpperCase();
+  }, [userRole, mounted]);
+
   const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(role);
+  const isSuperAdmin = role === 'SUPER_ADMIN';
 
   const filteredMeetings = useMemo(() => {
     return meetings.filter(m => {
@@ -3493,6 +3823,7 @@ function MeetingsScreen({ userRole }) {
   const newMeetingLocInitRef = useRef(false);
 
   useEffect(() => {
+    setMounted(true);
     if (typeof window === 'undefined') return;
     const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
     const storedKey = localStorage.getItem('gmapsKey') || '';
@@ -3929,7 +4260,7 @@ function MeetingsScreen({ userRole }) {
                 >
                   Details
                 </button>
-                {userRole === 'SUPER_ADMIN' && (
+                {isSuperAdmin && (
                   <button
                     type="button"
                     className={`mobile-web-subtab ${activeSubTab === 'attendance' ? 'active' : ''}`}
@@ -5546,6 +5877,19 @@ export default function MobileDetailPage({ params }) {
     setUserRole(info?.role || '');
     if (typeof window !== 'undefined') {
       window.scrollTo(0, 0);
+    }
+
+    // Refresh profile to sync ward/booth assignments if they are missing
+    if (info?.token && !info.wardIds && !info.boothIds && info.role !== 'SUPER_ADMIN') {
+      mobileApi.fetchMe().then(res => {
+        const updated = res?.data?.result || res?.result || res;
+        if (updated && updated.userName) {
+          const merged = { ...info, ...updated };
+          localStorage.setItem('userInfo', JSON.stringify(merged));
+          // If we are on a screen that depends on these, a refresh might be needed
+          // but for now, the screens use useMemo on getUserInfoSafe() which will pick it up on sub-screens.
+        }
+      }).catch(err => console.warn('Failed to refresh user profile:', err));
     }
   }, [params.slug]);
 

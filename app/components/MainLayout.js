@@ -28,15 +28,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { mobileApi } from '../lib/mobileApi';
 
 const menuItems = [
-  // Core dashboard
-  { label: 'Home', path: '/home', icon: <HomeIcon fontSize="small" /> },
-  // { label: 'Voters Data', path: '/votersData', icon: <HowToVote fontSize="small" /> },
-  // { label: 'Voters Reach', path: '/votersReach', icon: <TrackChanges fontSize="small" /> },
-  // { label: 'Result Analysis', path: '/resultAnalysis', icon: <Assessment fontSize="small" /> },
-  // { label: 'Client Banners', path: '/clientBanners', icon: <Campaign fontSize="small" /> },
-  // { label: 'Tenants', path: '/tenants', icon: <Apartment fontSize="small" /> },
-  // { label: 'Reports', path: '/reports', icon: <BarChart fontSize="small" /> },
-
   // Mobile suite (these paths are more specific than '/mobile', so should come first)
   { label: 'Search Voter', path: '/mobile/search-voter', icon: <SearchIcon fontSize="small" /> },
   { label: 'Search Booth', path: '/mobile/search-booth', icon: <HowToVoteIcon fontSize="small" /> },
@@ -103,7 +94,7 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     let items = menuItems;
     
     if (role === 'BOOTH') {
-      items = items.filter(item => !['/home', '/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path));
+      items = items.filter(item => !['/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path));
     }
     
     // Only show Promotions to SUPER_ADMIN

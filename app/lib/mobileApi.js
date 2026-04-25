@@ -144,6 +144,9 @@ function buildPublicVoterUpdatePayload(jsonReq = {}, options = {}) {
 }
 
 export const mobileApi = {
+  fetchMe: async () => {
+    return await request('/votebase/v1/api/me');
+  },
   getBoothList: async (assemblyCode = getAssemblyCode() || DEFAULT_ASSEMBLY_CODE) => {
     const res = await mobileApi.loadDataLite(assemblyCode);
     if (res?.snapshotMode === 'link' && typeof res?.data?.result === 'string') {
@@ -469,15 +472,24 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchMessageTemplate: async (wardId, channel) => {
+  fetchMessageTemplate: async (wardId, channel, epicNo = null) => {
     try {
       const params = new URLSearchParams();
       if (wardId !== undefined && wardId !== null && wardId !== '') params.set('wardId', wardId);
       if (channel) params.set('channel', channel);
+      if (epicNo) params.set('epicNo', epicNo);
       const query = params.toString();
       return await request(`/votebase/v1/api/message-template${query ? `?${query}` : ''}`);
     } catch (error) {
       console.log('Error while fetching message template:', error);
+      throw error;
+    }
+  },
+  verifyVoterActivation: async (epicNo) => {
+    try {
+      return await request(`/votebase/v1/api/voter-activation/verify?epicNo=${encodeURIComponent(epicNo)}`);
+    } catch (error) {
+      console.log('Error while verifying voter activation:', error);
       throw error;
     }
   },
@@ -607,6 +619,12 @@ export const mobileApi = {
       console.log('Error while deleting family:', error);
       throw error;
     }
+  },
+  deactivateAllTemplates: async (channel) => {
+    const tenantId = typeof window !== 'undefined' ? (localStorage.getItem('tenantId') || localStorage.getItem('tenant_id')) : '';
+    return await request(`/votebase/v1/api/message-template/deactivate-all?channel=${channel.toUpperCase()}&tenantId=${tenantId || ''}`, {
+      method: 'POST'
+    });
   },
 };
 
