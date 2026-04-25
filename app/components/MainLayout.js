@@ -87,6 +87,12 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    
+    // Reset scroll position on route change
+    window.scrollTo(0, 0);
+    const contentArea = document.querySelector('.content-area');
+    if (contentArea) contentArea.scrollTop = 0;
+
     if (window.matchMedia('(max-width: 900px)').matches) {
       setOpen(false);
       setProfileOpen(false);
@@ -100,9 +106,14 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
       items = items.filter(item => !['/home', '/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers', '/mobile/volunteer-analysis'].includes(item.path));
     }
     
-    // Only show Promotions, Voters Family and Meetings to SUPER_ADMIN
+    // Only show Promotions to SUPER_ADMIN
     if (role !== 'SUPER_ADMIN') {
-      items = items.filter(item => !['/mobile/promotions', '/mobile/voters-family', '/mobile/meetings'].includes(item.path));
+      items = items.filter(item => item.path !== '/mobile/promotions');
+    }
+    
+    // Voters Family and Meetings restricted to specific volunteer levels
+    if (!['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH', 'USER'].includes(role)) {
+      items = items.filter(item => !['/mobile/voters-family', '/mobile/meetings'].includes(item.path));
     }
 
     if (!printEnabled) {

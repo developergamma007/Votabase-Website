@@ -451,9 +451,11 @@ export const mobileApi = {
 
   fetchFamilies: async (hasAssociation, page, size, boothId) => {
     try {
-      return await request(
-        `/votebase/v1/api/family?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&boothId=${encodeURIComponent(boothId)}&association=${encodeURIComponent(hasAssociation)}`
-      );
+      let url = `/votebase/v1/api/family?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&boothId=${encodeURIComponent(boothId)}`;
+      if (hasAssociation !== undefined && hasAssociation !== null) {
+        url += `&association=${encodeURIComponent(hasAssociation)}`;
+      }
+      return await request(url);
     } catch (error) {
       console.log('Error while fetching families:', error);
       throw error;
@@ -572,11 +574,17 @@ export const mobileApi = {
 
   recordMeetingAttendance: async (id) => {
     try {
-      return await request(`/votebase/v1/api/meetings/${encodeURIComponent(id)}/attendance`, {
-        method: 'POST',
-      });
+      return await request(`/votebase/v1/api/meetings/${id}/attendance`, { method: 'POST' });
     } catch (error) {
       console.log('Error while recording meeting attendance:', error);
+      throw error;
+    }
+  },
+  attendMeetingSelf: async (id) => {
+    try {
+      return await request(`/votebase/v1/api/meetings/${id}/attend-self`, { method: 'POST' });
+    } catch (error) {
+      console.log('Error while recording self attendance:', error);
       throw error;
     }
   },

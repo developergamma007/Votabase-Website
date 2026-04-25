@@ -682,7 +682,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       <MobileHeader title="Voter Info" onBack={onBack} />
       {banner.text && banner.type === 'error' ? <div className="mobile-web-error">{banner.text}</div> : null}
       <section className="mobile-web-detail-card">
-        <div className="mobile-web-detail-meta">
+        <div className="mobile-web-detail-meta p-5">
           <p>
             <strong>Name</strong>
             <span>{voter?.name || '-'}</span>
@@ -968,7 +968,7 @@ function VoterListScreen({
             onClick={() => onSelectVoter?.(voter, booth)}
           >
             <div className="mobile-web-voter-card-head">
-              <span>{voter.voterId ?? '-'}</span>
+              <span>{voter.serialNo ?? '-'}</span>
               <strong>{voter.epicNo}</strong>
             </div>
             <div className="mobile-web-voter-grid">
@@ -1165,7 +1165,7 @@ function SearchVoterScreen() {
     lastSelectionRef.current = { voter };
     setIsLocating(true);
     try {
-      const loc = await requestLocation();
+      const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...voter, ...loc });
       setErrorText('');
     } catch (error) {
@@ -1178,7 +1178,7 @@ function SearchVoterScreen() {
     if (!lastSelectionRef.current?.voter) return;
     setIsLocating(true);
     try {
-      const loc = await requestLocation();
+      const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setErrorText('');
     } catch (error) {
@@ -1421,7 +1421,7 @@ function SearchBoothScreen() {
     lastSelectionRef.current = { voter };
     setIsLocating(true);
     try {
-      const loc = await requestLocation();
+      const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...voter, ...loc });
       setBoothError('');
     } catch (error) {
@@ -1434,7 +1434,7 @@ function SearchBoothScreen() {
     if (!lastSelectionRef.current?.voter) return;
     setIsLocating(true);
     try {
-      const loc = await requestLocation();
+      const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setBoothError('');
     } catch (error) {
@@ -1602,6 +1602,7 @@ function PromotionsScreen() {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
+
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2913,7 +2914,7 @@ function VotersFamilyScreen() {
   const loadFamiliesList = async () => {
     setFamiliesLoading(true);
     try {
-      const res = await mobileApi.fetchFamilies(false, 0, 100, '');
+      const res = await mobileApi.fetchFamilies(undefined, 0, 100, '');
       const payload =
         res?.content ||
         res?.data?.content ||
@@ -3134,19 +3135,21 @@ function VotersFamilyScreen() {
         </div>
 
         <div className="my-4">
-           {location ? (
-              <div className="mobile-web-map-card mb-4" style={{ height: '180px' }}>
-                <iframe
-                  className="mobile-web-map-frame"
-                  title="Family location map"
-                  src={`https://www.google.com/maps/embed/v1/place?key=${mobileApi.getMapsKey()}&q=${location.latitude},${location.longitude}`}
-                  loading="lazy"
-                />
-              </div>
-           ) : null}
-           <button className="mobile-web-location-btn w-full flex items-center justify-center gap-2" onClick={handleGetLocation} type="button">
+           <div className="mobile-web-map-card mb-3">
+             {location ? (
+               <iframe
+                 className="mobile-web-map-frame"
+                 title="Family location map"
+                 src={`https://maps.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`}
+                 loading="lazy"
+               />
+             ) : (
+               <div className="mobile-web-map-placeholder">Capture location to preview household map.</div>
+             )}
+           </div>
+           <button className="mobile-web-location-btn w-full" onClick={handleGetLocation} type="button">
              <LocationOnOutlined />
-             <span>{location ? 'Location Captured' : 'Get Location'}</span>
+             <span>{location ? 'Location Captured' : 'Capture Household Location'}</span>
            </button>
         </div>
 
@@ -3380,23 +3383,37 @@ function VotersFamilyScreen() {
                   <thead>
                     <tr>
                       <th>Family Name</th>
-                      <th>Head</th>
+                      <th>Head of Family</th>
                       <th>EPIC</th>
                       <th>Members</th>
+                      <th>Status</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {families.map((f) => (
                       <tr key={f.familyId}>
-                        <td><div className="font-bold">{f.familyName}</div><div className="text-xs text-slate-500">{f.familyAddress}</div></td>
-                        <td>{f.headName}</td>
-                        <td>{f.headEpicNo}</td>
-                        <td>{f.memberCount || 0}</td>
+                        <td>
+                          <div className="font-bold text-slate-800">{f.familyName}</div>
+                          <div className="text-xs text-slate-500 truncate max-w-[150px]">{f.familyAddress}</div>
+                        </td>
+                        <td>{f.headName || '-'}</td>
+                        <td>{f.headEpicNo || '-'}</td>
+                        <td className="text-center">{f.memberCount || 0}</td>
+                        <td>
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                            f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
+                            f.economicStatus === 'Medium' ? 'bg-blue-100 text-blue-700' :
+                            f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            {f.economicStatus}
+                          </span>
+                        </td>
                         <td>
                           <button 
                             type="button" 
-                            className="text-red-600 hover:text-red-800 font-bold text-xs"
+                            className="text-red-500 hover:text-red-700 font-bold text-[11px] uppercase tracking-wider"
                             onClick={() => handleDeleteFamily(f.familyId)}
                           >
                             Delete
@@ -3415,27 +3432,8 @@ function VotersFamilyScreen() {
   );
 }
 
-function MeetingsScreen() {
-  const [meetings, setMeetings] = useState([
-    {
-      id: 1,
-      title: 'Ward Coordination Meeting',
-      dateTime: '11/15/2025, 1:48:42 AM',
-      description: 'Discuss booth assignments and outreach',
-      latitude: 12.9716,
-      longitude: 77.5946,
-      radius: 150,
-    },
-    {
-      id: 2,
-      title: 'Booth Volunteer Training',
-      dateTime: '11/16/2025, 12:48:42 AM',
-      description: 'Training for booth volunteers',
-      latitude: 12.9352,
-      longitude: 77.6245,
-      radius: 80,
-    },
-  ]);
+function MeetingsScreen({ userRole }) {
+  const [meetings, setMeetings] = useState([]);
   const [selectedMeeting, setSelectedMeeting] = useState(meetings[0]);
   const [newMeeting, setNewMeeting] = useState({
     title: '',
@@ -3456,6 +3454,34 @@ function MeetingsScreen() {
   const [newMeetingChannels, setNewMeetingChannels] = useState({ appAlert: true, whatsapp: false });
   const [activeMeetingTab, setActiveMeetingTab] = useState('list');
   const [activeSubTab, setActiveSubTab] = useState('details');
+
+  const role = String(userRole || '').replace('ROLE_', '').toUpperCase();
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(role);
+
+  const filteredMeetings = useMemo(() => {
+    return meetings.filter(m => {
+      const rec = String(m.recipients || '').toLowerCase();
+      if (!rec) return true; // Default to public if no recipients specified
+      const list = rec.split(',').map(s => s.trim());
+      
+      // If "assembly" is checked, only admins see it
+      if (list.includes('assembly')) {
+         return isAdmin;
+      }
+      
+      // If "ward" is checked, only ward upwards see it
+      if (list.includes('ward')) {
+         return isAdmin || role === 'WARD';
+      }
+
+      // If "booth" is checked, everyone can see it (or booth upwards)
+      if (list.includes('booth')) {
+         return true;
+      }
+
+      return true;
+    });
+  }, [meetings, role, isAdmin]);
   const [mapsKey, setMapsKey] = useState('');
   const [mapsKeyInput, setMapsKeyInput] = useState('');
   const mapRef = useRef(null);
@@ -3509,7 +3535,7 @@ function MeetingsScreen() {
         fetchMeetingsList();
       }, 1500);
     } catch(err) {
-      setMeetingMessage('Failed to save meeting.');
+      setMeetingMessage(err?.message || err?.detail || 'Failed to save meeting.');
     }
   };
 
@@ -3517,10 +3543,27 @@ function MeetingsScreen() {
     if (!selectedMeeting?.id) return;
     try {
       setAttendanceLoading(true);
-      await mobileApi.recordMeetingAttendance(selectedMeeting.id);
+      const res = await mobileApi.recordMeetingAttendance(selectedMeeting.id);
+      const added = res?.added || res?.data?.added || res?.data?.result?.added || 0;
+      setMeetingMessage(`Success: ${added} voters discovered within radius.`);
       loadAttendance(selectedMeeting.id);
+      setTimeout(() => setMeetingMessage(''), 4000);
     } catch (err) {
-      console.log('Failed to record attendance');
+      setMeetingMessage('Failed to record attendance. Ensure map settings and voter locations are correct.');
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
+  const handleAttendSelf = async () => {
+    if (!selectedMeeting?.id) return;
+    try {
+      setAttendanceLoading(true);
+      await mobileApi.attendMeetingSelf(selectedMeeting.id);
+      setMeetingMessage('Success: You have marked your attendance.');
+      setTimeout(() => setMeetingMessage(''), 3000);
+    } catch (err) {
+      setMeetingMessage('Failed to mark attendance.');
     } finally {
       setAttendanceLoading(false);
     }
@@ -3707,7 +3750,7 @@ function MeetingsScreen() {
           {[
             { key: 'list', label: 'Meetings' },
             { key: 'new', label: 'New Meeting' },
-          ].map((tab) => (
+          ].filter(t => t.key !== 'new' || ['SUPER_ADMIN', 'ADMIN'].includes(userRole)).map((tab) => (
             <button
               key={tab.key}
               type="button"
@@ -3725,13 +3768,19 @@ function MeetingsScreen() {
         </div>
         {activeMeetingTab === 'list' ? (
           <div className="mobile-web-meeting-grid">
-            {meetings.map((meeting) => (
+            {filteredMeetings.map((meeting) => (
               <div key={meeting.id} className="mobile-web-meeting-card">
                 <div>
                   <h3>{meeting.title}</h3>
                   <p>{meeting.dateTime}</p>
                   <p className="mobile-web-muted">{meeting.description}</p>
-                  <p className="mobile-web-muted">Location: {meeting.latitude.toFixed(4)}, {meeting.longitude.toFixed(4)} · Radius: {meeting.radius} m</p>
+                  <div className="mobile-web-role-list">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter mr-1">Invited:</span>
+                    {(meeting.recipients || 'All').split(',').map(r => (
+                      <span key={r} className="mobile-web-tag-mini">{r}</span>
+                    ))}
+                  </div>
+                  <p className="mobile-web-muted">Location: {(meeting.latitude || 0).toFixed(4)}, {(meeting.longitude || 0).toFixed(4)} · Radius: {meeting.radius} m</p>
                 </div>
                 <button
                   className="mobile-web-secondary-btn"
@@ -3812,7 +3861,7 @@ function MeetingsScreen() {
                   {[
                     ['assembly', 'Assembly'],
                     ['ward', 'Ward'],
-                    ['booth', 'Booth Level'],
+                    ['booth', 'Booth'],
                   ].map(([key, label]) => (
                     <label key={key} className="mobile-web-checkbox">
                       <input
@@ -3829,7 +3878,6 @@ function MeetingsScreen() {
                 <h4>Channels</h4>
                 <div className="mobile-web-checkbox-grid mobile-web-checkbox-grid-tight">
                   {[
-                    ['appAlert', 'App Alert'],
                     ['whatsapp', 'WhatsApp'],
                   ].map(([key, label]) => (
                     <label key={key} className="mobile-web-checkbox">
@@ -3872,7 +3920,7 @@ function MeetingsScreen() {
         ) : null}
         <div className="mobile-web-meeting-detail">
           {selectedMeeting ? (
-            <div className="mobile-web-meeting-detail-card" style={{ marginTop: '24px', borderTop: '2px solid var(--accent-light)', paddingTop: '24px' }}>
+            <div className="mobile-web-meeting-detail-card" style={{  borderTop: '2px solid var(--accent-light)', paddingTop: '24px' }}>
               <div className="mobile-web-subtabs" style={{ marginBottom: '16px' }}>
                 <button
                   type="button"
@@ -3881,16 +3929,18 @@ function MeetingsScreen() {
                 >
                   Details
                 </button>
-                <button
-                  type="button"
-                  className={`mobile-web-subtab ${activeSubTab === 'attendance' ? 'active' : ''}`}
-                  onClick={() => {
-                    setActiveSubTab('attendance');
-                    loadAttendance(selectedMeeting.id);
-                  }}
-                >
-                  Attendance
-                </button>
+                {userRole === 'SUPER_ADMIN' && (
+                  <button
+                    type="button"
+                    className={`mobile-web-subtab ${activeSubTab === 'attendance' ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveSubTab('attendance');
+                      loadAttendance(selectedMeeting.id);
+                    }}
+                  >
+                    Attendance
+                  </button>
+                )}
               </div>
 
               {!activeSubTab || activeSubTab === 'details' ? (
@@ -3898,6 +3948,12 @@ function MeetingsScreen() {
                   <h4>{selectedMeeting.title}</h4>
                   <p>{selectedMeeting.dateTime}</p>
                   <p className="mobile-web-muted">{selectedMeeting.description}</p>
+                  <div className="mobile-web-role-list mb-3">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter mr-1">Invited:</span>
+                    {(selectedMeeting.recipients || 'All').split(',').map(r => (
+                      <span key={r} className="mobile-web-tag-mini">{r}</span>
+                    ))}
+                  </div>
                   <p className="mobile-web-muted">
                     Location: {(selectedMeeting.latitude || 0).toFixed(4)}, {(selectedMeeting.longitude || 0).toFixed(4)} · Radius: {selectedMeeting.radius} m
                   </p>
@@ -3916,16 +3972,25 @@ function MeetingsScreen() {
                     </div>
                   ) : null}
                   <div className="mobile-web-meeting-map" ref={mapRef} style={{ height: '200px', margin: '16px 0', borderRadius: '12px', background: '#f8fafc' }} />
-                  <div className="mt-4">
+                  <div className="mt-4 flex flex-col sm:flex-row gap-3">
                     <button
-                      className="mobile-web-primary-btn"
+                      className="mobile-web-primary-btn flex-1"
                       type="button"
-                      onClick={handleRecordAttendance}
+                      onClick={handleAttendSelf}
                       disabled={attendanceLoading}
                     >
-                      {attendanceLoading ? <span className="mobile-web-spinner" /> : null}
-                      {attendanceLoading ? ' Recording...' : 'Record Attendance via Geo-Radius'}
+                      Record my Attendance
                     </button>
+                    {['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH'].includes(userRole) && (
+                      <button
+                        className="mobile-web-secondary-btn flex-1"
+                        type="button"
+                        onClick={handleRecordAttendance}
+                        disabled={attendanceLoading}
+                      >
+                        Scan Radius (Admins)
+                      </button>
+                    )}
                   </div>
                 </>
               ) : (
@@ -4796,6 +4861,10 @@ function VolunteerAnalysisScreen() {
     setDbDumpProgress(0);
     try {
       const response = await mobileApi.downloadDbDump();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Server error while generating dump.' }));
+        throw new Error(errorData.detail || 'Download failed');
+      }
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
       let loaded = 0;
@@ -5483,11 +5552,11 @@ export default function MobileDetailPage({ params }) {
   const slug = params.slug;
   const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' };
   
-  if ((slug === 'voters-family' || slug === 'meetings') && userRole && userRole !== 'SUPER_ADMIN') {
+  if ((slug === 'voters-family' || slug === 'meetings') && userRole && !['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH', 'USER'].includes(userRole)) {
     return (
       <ScreenFrame>
         <section className="mobile-web-card text-center p-6 text-red-600 font-bold border border-red-200 bg-red-50 rounded-xl mt-6">
-          Access Restricted: Super Admin Level Required
+          Access Restricted: Proper Volunteer Level Required
         </section>
       </ScreenFrame>
     );
@@ -5496,7 +5565,7 @@ export default function MobileDetailPage({ params }) {
   if (slug === 'search-voter') return <SearchVoterScreen />;
   if (slug === 'search-booth') return <SearchBoothScreen />;
   if (slug === 'voters-family') return <VotersFamilyScreen />;
-  if (slug === 'meetings') return <MeetingsScreen />;
+  if (slug === 'meetings') return <MeetingsScreen userRole={userRole} />;
   if (slug === 'poll-day') return <PollDayScreen />;
   if (slug === 'print') return <PrintScreen />;
   if (slug === 'extract') return <ExtractScreen />;
