@@ -1140,6 +1140,7 @@ function SearchVoterScreen() {
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [resultMeta, setResultMeta] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
   const userInfo = useMemo(() => getUserInfoSafe(), []);
   const lastWardLoadRef = useRef('');
