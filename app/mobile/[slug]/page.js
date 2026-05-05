@@ -98,6 +98,14 @@ function normalizeMobileValue(value) { return String(value || '').replace(/\D/g,
 function maskTrailingValue(value) { const raw = String(value || ''); return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw; }
 const LOCATION_CACHE_KEY = 'lastKnownLocation';
 const LOCATION_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
+
+function useHasHydrated() {
+  const [hasHydrated, setHasHydrated] = useState(false);
+  useEffect(() => {
+    setHasHydrated(true);
+  }, []);
+  return hasHydrated;
+}
 function getCachedLocation() {
   if (typeof window === 'undefined') return null;
   try {
@@ -317,23 +325,23 @@ function getBoothOptionsFromCache() { try { const raw = localStorage.getItem(BOO
 function MobileHeader({ title, subtitle, onBack, hideAvatar = false }) { return <div className={`mobile-web-list-topbar ${hideAvatar ? 'no-avatar' : ''}`}><button className="mobile-web-back-btn" onClick={onBack} type="button"><ArrowBackIosNewRounded fontSize="small" /></button><div className="mobile-web-header-copy"><h2>{title}</h2>{subtitle ? <div className="mobile-web-header-subtitle">{subtitle}</div> : null}</div>{hideAvatar ? <div /> : <div className="mobile-web-avatar"><PersonOutlineRounded /></div>}</div>; }
 function useDropdownDismiss(rootRef, onClose) { useEffect(() => { const handlePointerDown = (event) => { if (!rootRef.current?.contains(event.target)) onClose(); }; document.addEventListener('mousedown', handlePointerDown); return () => document.removeEventListener('mousedown', handlePointerDown); }, [rootRef, onClose]); }
 function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) { const [open, setOpen] = useState(false); const rootRef = useRef(null); useDropdownDismiss(rootRef, () => setOpen(false)); const optionSet = new Set(options); const isUnknown = !!value && value !== 'Others' && !optionSet.has(value); const showOther = value === 'Others' || isUnknown || !!customValue; const summaryValue = showOther ? 'Others' : value; const otherValue = customValue || (isUnknown ? value : ''); return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel">{options.map((option) => { const checked = option === 'Others' ? showOther : value === option; return <button key={option} type="button" className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`} onClick={() => { onSelect(option); setOpen(false); }}><span>{option}</span></button>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; }
-function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onCustomValueChange, disabled = false }) { 
-  const [open, setOpen] = useState(false); 
+function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onCustomValueChange, disabled = false }) {
+  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const rootRef = useRef(null); 
+  const rootRef = useRef(null);
   useDropdownDismiss(rootRef, () => {
     setOpen(false);
     setSearch('');
-  }); 
-  const optionSet = new Set(options); 
-  const selectedLabels = value.filter((item) => item !== 'Others' && optionSet.has(item)); 
-  const unknownLabels = value.filter((item) => item !== 'Others' && !optionSet.has(item)); 
-  const otherValue = customValue || unknownLabels.join(', '); 
-  const showOther = value.includes('Others') || unknownLabels.length > 0 || !!customValue; 
-  const summaryItems = selectedLabels.length ? selectedLabels.slice() : []; 
-  if (showOther) summaryItems.push('Others'); 
-  const summary = summaryItems.length ? `${summaryItems[0]}${summaryItems.length > 1 ? ` +${summaryItems.length - 1}` : ''}` : `Select ${label}`; 
-  
+  });
+  const optionSet = new Set(options);
+  const selectedLabels = value.filter((item) => item !== 'Others' && optionSet.has(item));
+  const unknownLabels = value.filter((item) => item !== 'Others' && !optionSet.has(item));
+  const otherValue = customValue || unknownLabels.join(', ');
+  const showOther = value.includes('Others') || unknownLabels.length > 0 || !!customValue;
+  const summaryItems = selectedLabels.length ? selectedLabels.slice() : [];
+  if (showOther) summaryItems.push('Others');
+  const summary = summaryItems.length ? `${summaryItems[0]}${summaryItems.length > 1 ? ` +${summaryItems.length - 1}` : ''}` : `Select ${label}`;
+
   const filteredOptions = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
@@ -343,18 +351,18 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
   return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryItems.length ? 'has-value' : 'is-placeholder'}>{summary}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel">
     {options.length > 5 && (
       <div style={{ padding: '0 8px 8px 8px', position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
-        <input 
-          type="text" 
-          value={search} 
-          onChange={(e) => setSearch(e.target.value)} 
-          placeholder="Search..." 
-          className="mobile-web-input" 
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search..."
+          className="mobile-web-input"
           style={{ minHeight: '40px', padding: '8px 12px' }}
         />
       </div>
     )}
     {filteredOptions.length === 0 ? <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No matches found</div> : null}
-    {filteredOptions.map((option) => { const checked = option === 'Others' ? showOther : value.includes(option); return <label key={option} className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}><input type="checkbox" checked={checked} onChange={() => onToggle(option)} /><span>{option}</span></label>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; 
+    {filteredOptions.map((option) => { const checked = option === 'Others' ? showOther : value.includes(option); return <label key={option} className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}><input type="checkbox" checked={checked} onChange={() => onToggle(option)} /><span>{option}</span></label>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>;
 }
 function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [activeTab, setActiveTab] = useState('PRIMARY');
@@ -406,18 +414,18 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setCustomValues({});
     setMobileFocused(false);
     if (!isSameVoter) {
-       setBanner({ type: '', text: '' });
-       setVoterActivation({ whatsapp: false, sms: false, print: false });
-       if (currentEpic) {
-         mobileApi.verifyVoterActivation(currentEpic).then(res => {
-           const d = res?.data?.result || {};
-           setVoterActivation({
-             whatsapp: !!d.whatsapp,
-             sms: !!d.sms,
-             print: !!d.print
-           });
-         }).catch(() => {});
-       }
+      setBanner({ type: '', text: '' });
+      setVoterActivation({ whatsapp: false, sms: false, print: false });
+      if (currentEpic) {
+        mobileApi.verifyVoterActivation(currentEpic).then(res => {
+          const d = res?.data?.result || {};
+          setVoterActivation({
+            whatsapp: !!d.whatsapp,
+            sms: !!d.sms,
+            print: !!d.print
+          });
+        }).catch(() => { });
+      }
     }
     lastEpicRef.current = currentEpic;
     if (typeof window !== 'undefined') {
@@ -435,12 +443,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
   const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || voter?.wardCode || '';
   const wardLabel = booth?.wardNameEn || voter?.wardNameEn || voter?.wardLabel || '';
-  
+
   // Smart ward-activation lookup
   const isWardNameActivated = (channel) => {
     const list = activatedWards[channel.toLowerCase()] || [];
     if (!list || list.length === 0) return false;
-    
+
     // Aggregate all possible textual identifiers for the voter's location
     const searchText = [
       wardLabel,
@@ -453,12 +461,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       voter?.boothLabel,
       voter?.boothNameEn
     ].filter(Boolean).join(' ').toLowerCase();
-    
+
     const normalizedWardId = String(wardId || '').replace(/^W0*/i, '').trim();
-    
+
     // 1. Precise ID/Number match
     const hasDirectMatch = list.some(w => (
-      (w.wardId && String(w.wardId).trim() === normalizedWardId) || 
+      (w.wardId && String(w.wardId).trim() === normalizedWardId) ||
       (w.wardId && String(w.wardId).trim() === String(wardId).trim()) ||
       (w.wardNo && String(w.wardNo).trim() === normalizedWardId)
     ));
@@ -468,14 +476,14 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     return list.some(w => {
       const label = String(w.wardLabel || '').toLowerCase(); // e.g. "1 - k narayanapura"
       const name = String(w.wardNameEn || w.wardName || '').toLowerCase(); // e.g. "k narayanapura"
-      
+
       // Extract ward number from label if missing (e.g. from "1 - ...")
       const wNo = String(w.wardNo || '').toLowerCase() || (label.match(/^(\d+)/) || [])[1];
       const nameKeywords = label.split(/[^a-z0-9]+/i).filter(p => p.length > 3 && !/^\d+$/.test(p));
 
       // Prefix match (e.g. "1 - " in booth title)
       if (wNo && (searchText.includes(wNo + ' -') || searchText.includes(wNo + '-'))) return true;
-      
+
       // Exact number match
       if (wNo && normalizedWardId === wNo) return true;
 
@@ -491,13 +499,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const activeTemplate = templateChannel === 'SMS' ? smsTemplate : whatsAppTemplate;
-  
+
   // Use a memo for discovery to avoid thrashing
   const discoveryStatus = useMemo(() => {
     return {
-       whatsapp: (whatsAppTemplate?.enabled) || isWardNameActivated('WHATSAPP') || !!voterActivation.whatsapp,
-       sms: (smsTemplate?.enabled) || isWardNameActivated('SMS') || !!voterActivation.sms,
-       print: isWardNameActivated('PRINT') || !!voterActivation.print
+      whatsapp: (whatsAppTemplate?.enabled) || isWardNameActivated('WHATSAPP') || !!voterActivation.whatsapp,
+      sms: (smsTemplate?.enabled) || isWardNameActivated('SMS') || !!voterActivation.sms,
+      print: isWardNameActivated('PRINT') || !!voterActivation.print
     };
   }, [whatsAppTemplate, smsTemplate, activatedWards, voterActivation, wardLabel, boothTitle, wardId, voter]);
 
@@ -700,7 +708,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       const wardRes = await mobileApi.fetchMessageTemplate(effectiveWardId || null, channel, voterEpic);
       const wardTpl = wardRes?.data?.result || null;
       if (wardTpl) return wardTpl;
-      
+
       const globalRes = await mobileApi.fetchMessageTemplate(null, channel);
       return globalRes?.data?.result || null;
     };
@@ -764,13 +772,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       const res = await mobileApi.uploadMessageTemplateBanner({ wardId, channel: 'WHATSAPP', file });
       const tpl = res?.data?.result || null;
       setWhatsAppTemplate(tpl);
-        setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
-        setBannerUpload({ loading: false, error: '' });
+      setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
+      setBannerUpload({ loading: false, error: '' });
     } catch (error) {
       setBannerUpload({ loading: false, error: error?.message || 'Unable to upload banner.' });
     }
   };
-  
+
   return (
     <div className="mobile-web-stack">
       <MobileHeader title="Voter Info" onBack={onBack} />
@@ -812,19 +820,19 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           <span>{location ? 'Location Captured' : 'Get Location'}</span>
         </button>
         <div className="mobile-web-contact-actions">
-          <button 
-            className={`mobile-web-contact-btn ${!canSendSms ? 'is-disabled' : ''}`} 
-            onClick={openSms} 
-            type="button" 
+          <button
+            className={`mobile-web-contact-btn ${!canSendSms ? 'is-disabled' : ''}`}
+            onClick={openSms}
+            type="button"
             disabled={!canSendSms}
           >
             <SmsOutlined />
             <span>SMS</span>
           </button>
-          <button 
-            className={`mobile-web-contact-btn ${!canSendWhatsApp ? 'is-disabled' : ''}`} 
-            onClick={openWhatsApp} 
-            type="button" 
+          <button
+            className={`mobile-web-contact-btn ${!canSendWhatsApp ? 'is-disabled' : ''}`}
+            onClick={openWhatsApp}
+            type="button"
             disabled={!canSendWhatsApp}
           >
             <WhatsApp />
@@ -936,10 +944,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           </button>
         </div>
         {banner.text && banner.type === 'success' ? <div className="mobile-web-success">{banner.text}</div> : null}
-        <button 
-          className={`mobile-web-slip-btn ${!discoveryStatus.print ? 'is-disabled' : ''}`} 
-          onClick={() => window.print()} 
-          type="button" 
+        <button
+          className={`mobile-web-slip-btn ${!discoveryStatus.print ? 'is-disabled' : ''}`}
+          onClick={() => window.print()}
+          type="button"
           disabled={!discoveryStatus.print}
         >
           Voter Slip Print
@@ -1002,11 +1010,11 @@ function VoterListScreen({
   const resolvedSummary = booth
     ? boothStats(booth)
     : {
-        total: Number(summary?.total ?? filteredVoters.length),
-        male: Number(summary?.male ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('M')).length),
-        female:
-          Number(summary?.female ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('F')).length),
-      };
+      total: Number(summary?.total ?? filteredVoters.length),
+      male: Number(summary?.male ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('M')).length),
+      female:
+        Number(summary?.female ?? filteredVoters.filter((v) => String(v.gender).toUpperCase().startsWith('F')).length),
+    };
 
   const canLoadMoreLocal = mode === 'local' && displayedVoters.length < filteredVoters.length;
   const sentinelRef = useInfiniteTrigger(canLoadMoreLocal || (!!hasMore && mode === 'remote'), () => {
@@ -1119,7 +1127,8 @@ function VoterListScreen({
   );
 }
 function SearchVoterScreen() {
-  const assemblyCode = getAssemblyCode();
+  const hasHydrated = useHasHydrated();
+  const assemblyCode = useMemo(() => (hasHydrated ? getAssemblyCode() : ''), [hasHydrated]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [wardItems, setWardItems] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -1142,7 +1151,7 @@ function SearchVoterScreen() {
   const [hasMore, setHasMore] = useState(false);
   const [resultMeta, setResultMeta] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const lastWardLoadRef = useRef('');
   const lastSelectionRef = useRef(null);
 
@@ -1190,11 +1199,11 @@ function SearchVoterScreen() {
         })
         .filter((item) => item.label)
         .sort((a, b) => Number(a.value) - Number(b.value));
-      
+
       const filtered = accessWardIds.length
         ? list.filter((item) => accessWardIds.includes(item.value))
         : list;
-      
+
       setWardItems(filtered);
       if (filtered.length > 0) lastWardLoadRef.current = key;
       if (!filtered.length) setErrorText('No wards found for this user.');
@@ -1404,7 +1413,8 @@ function SearchVoterScreen() {
 }
 
 function SearchBoothScreen() {
-  const assemblyCode = getAssemblyCode();
+  const hasHydrated = useHasHydrated();
+  const assemblyCode = useMemo(() => (hasHydrated ? getAssemblyCode() : ''), [hasHydrated]);
   const [search, setSearch] = useState('');
   const [assemblyData, setAssemblyData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1448,7 +1458,7 @@ function SearchBoothScreen() {
     run();
   }, [assemblyCode]);
 
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const accessWardIds = useMemo(() => {
     const ids = [];
     if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
@@ -1511,8 +1521,8 @@ function SearchBoothScreen() {
     if (selectedWardFilter !== 'ALL' && !accessWardIds.length) {
       result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
     } else if (accessWardIds.length && selectedWardFilter !== 'ALL') {
-       // if accessWardIds is present, selectedWardFilter might still be used if there are multiple accessible wards
-       result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
+      // if accessWardIds is present, selectedWardFilter might still be used if there are multiple accessible wards
+      result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -1527,7 +1537,7 @@ function SearchBoothScreen() {
     let totalVoters = 0;
     let maleVoters = 0;
     let femaleVoters = 0;
-    
+
     // We use filteredBooths for dynamic ward-level stats
     filteredBooths.forEach(b => {
       const stats = boothStats(b);
@@ -1656,18 +1666,18 @@ function SearchBoothScreen() {
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-search-card">
         <div className="mobile-web-search-row">
-            <div className="mobile-web-search-input-wrap">
-              <SearchRounded className="mobile-web-search-icon" />
-              <input className="mobile-web-input" placeholder="Search booth name or booth number" value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-            <div className="mobile-web-select-wrap">
-              <SingleOptionSelect 
-                label="Filter by Ward"
-                options={wardOptions}
-                value={selectedWardFilter}
-                onSelect={setSelectedWardFilter}
-              />
-            </div>
+          <div className="mobile-web-search-input-wrap">
+            <SearchRounded className="mobile-web-search-icon" />
+            <input className="mobile-web-input" placeholder="Search booth name or booth number" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <div className="mobile-web-select-wrap">
+            <SingleOptionSelect
+              label="Filter by Ward"
+              options={wardOptions}
+              value={selectedWardFilter}
+              onSelect={setSelectedWardFilter}
+            />
+          </div>
         </div>
       </section>
 
@@ -1819,7 +1829,7 @@ function PromotionsScreen() {
     try {
       const google = await loadGoogleMaps();
       const existingPos = parseLatLng(form.boothLocationLink) || { lat: 12.9716, lng: 77.5946 };
-      
+
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = new google.maps.Map(mapRef.current, {
           center: existingPos,
@@ -1868,13 +1878,13 @@ function PromotionsScreen() {
         }));
         setAssemblies(formatted);
         if (formatted.length > 0 && !form.assemblyId) {
-           const initial = getAssemblyCode();
-           const match = formatted.find(a => String(a.id) === String(initial)) || formatted[0];
-           setForm(prev => ({ ...prev, assemblyId: String(match.id) }));
+          const initial = getAssemblyCode();
+          const match = formatted.find(a => String(a.id) === String(initial)) || formatted[0];
+          setForm(prev => ({ ...prev, assemblyId: String(match.id) }));
         }
       });
     } else if (role) {
-       setForm(prev => ({ ...prev, assemblyId: getAssemblyCode() }));
+      setForm(prev => ({ ...prev, assemblyId: getAssemblyCode() }));
     }
   }, [role, isAdmin]);
 
@@ -1997,10 +2007,10 @@ function PromotionsScreen() {
 
       if (selectedFile) {
         setFeedback({ error: '', success: 'Uploading photo...' });
-        const uploadRes = await mobileApi.uploadMessageTemplateBanner({ 
-          wardId: wardIdForApi, 
-          channel: form.channel, 
-          file: selectedFile 
+        const uploadRes = await mobileApi.uploadMessageTemplateBanner({
+          wardId: wardIdForApi,
+          channel: form.channel,
+          file: selectedFile
         });
         currentBannerUrl = uploadRes?.data?.result?.bannerUrl;
       }
@@ -2041,10 +2051,10 @@ function PromotionsScreen() {
           {isAdmin && assemblies.length > 0 ? (
             <div className="mobile-web-field">
               <label>Select Assembly</label>
-              <SingleOptionSelect 
-                label="Assembly" 
-                options={assemblies.map(a => a.label)} 
-                value={assemblies.find(a => String(a.id) === String(form.assemblyId))?.label || ''} 
+              <SingleOptionSelect
+                label="Assembly"
+                options={assemblies.map(a => a.label)}
+                value={assemblies.find(a => String(a.id) === String(form.assemblyId))?.label || ''}
                 onSelect={(label) => {
                   const id = assemblies.find(a => a.label === label)?.id;
                   if (id) handleChange('assemblyId', String(id));
@@ -2054,10 +2064,10 @@ function PromotionsScreen() {
           ) : null}
           <div className="mobile-web-field">
             <label>Select Ward</label>
-            <SingleOptionSelect 
-              label="Ward" 
-              options={wards.map(w => w.label)} 
-              value={selectedWard?.label || ''} 
+            <SingleOptionSelect
+              label="Ward"
+              options={wards.map(w => w.label)}
+              value={selectedWard?.label || ''}
               onSelect={(label) => {
                 const w = wards.find(item => item.label === label);
                 if (w) setSelectedWard(w);
@@ -2066,10 +2076,10 @@ function PromotionsScreen() {
           </div>
           <div className="mobile-web-field">
             <label>Channel</label>
-            <SingleOptionSelect 
-              label="Channel" 
-              options={role === 'SUPER_ADMIN' ? ['WhatsApp', 'SMS', 'Print'] : ['WhatsApp', 'SMS']} 
-              value={form.channel === 'WHATSAPP' ? 'WhatsApp' : form.channel === 'SMS' ? 'SMS' : 'Print'} 
+            <SingleOptionSelect
+              label="Channel"
+              options={role === 'SUPER_ADMIN' ? ['WhatsApp', 'SMS', 'Print'] : ['WhatsApp', 'SMS']}
+              value={form.channel === 'WHATSAPP' ? 'WhatsApp' : form.channel === 'SMS' ? 'SMS' : 'Print'}
               onSelect={(opt) => handleChange('channel', opt.toUpperCase())}
               disabled={!isAdmin}
             />
@@ -2086,7 +2096,7 @@ function PromotionsScreen() {
             <p className="text-sm text-blue-700/80 mb-6">Quickly enable or disable messaging for all wards in this assembly.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="flex flex-col gap-2">
-                <button 
+                <button
                   type="button"
                   className="flex items-center justify-between p-4 bg-white rounded-xl border border-blue-200 shadow-sm hover:border-blue-400 transition-colors"
                   onClick={() => {
@@ -2123,7 +2133,7 @@ function PromotionsScreen() {
                 </button>
               </div>
               <div className="flex flex-col gap-2">
-                <button 
+                <button
                   type="button"
                   className="flex items-center justify-between p-4 bg-white rounded-xl border border-blue-200 shadow-sm hover:border-blue-400 transition-colors"
                   onClick={() => {
@@ -2221,8 +2231,8 @@ function PromotionsScreen() {
                   </label>
                   <p className="text-xs text-slate-500 mt-1">Review the configured variables for this ward.</p>
                 </div>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="mobile-web-secondary-btn py-2 px-4 shadow-sm"
                   onClick={() => setShowPreviewModal(true)}
                 >
@@ -2261,13 +2271,13 @@ function PromotionsScreen() {
 
             <div className="my-6">
               <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.enabled}
-                    onChange={(e) => handleChange('enabled', e.target.checked)}
-                    disabled={!isAdmin}
-                    style={{ width: '20px', height: '20px' }}
-                  />
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(e) => handleChange('enabled', e.target.checked)}
+                  disabled={!isAdmin}
+                  style={{ width: '20px', height: '20px' }}
+                />
                 <span className="text-sm font-bold text-slate-700">Enable {form.channel} for this ward (after latest data upload)</span>
               </label>
             </div>
@@ -2280,7 +2290,7 @@ function PromotionsScreen() {
                   {(previewUrl || form.bannerUrl) && (
                     <div className="relative w-[120px] h-[120px]">
                       <img src={previewUrl || form.bannerUrl} alt="Banner" className="w-full h-full object-cover rounded-xl border border-slate-200" />
-                      <button 
+                      <button
                         type="button"
                         className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-md border-2 border-white"
                         onClick={() => {
@@ -2400,23 +2410,6 @@ function AddVolunteerScreen() {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [editPhone, setEditPhone] = useState('');
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
-  const accessWardIds = useMemo(() => {
-    const ids = [];
-    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
-    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
-    if (userInfo?.wardId) ids.push(userInfo.wardId);
-    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
-    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
-      String(userInfo.assignmentId)
-        .split(',')
-        .map((val) => val.trim())
-        .filter(Boolean)
-        .forEach((val) => ids.push(val));
-    }
-    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
-  }, [userInfo]);
-
   const pendingEditRef = useRef(null);
   const prevWorkingLevelRef = useRef(null);
   const prevAssemblyRef = useRef(null);
@@ -2481,8 +2474,8 @@ function AddVolunteerScreen() {
       const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
       const formatted = raw.map((item) => ({
         value: item.id,
-        label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id))) 
-          ? `${item.name} (${item.id})` 
+        label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id)))
+          ? `${item.name} (${item.id})`
           : (item.name || `Assembly ${item.id}`),
       }));
       setAssemblies(formatted);
@@ -2515,11 +2508,11 @@ function AddVolunteerScreen() {
     mobileApi.fetchWards(form.assemblyId).then((res) => {
       const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
       let list = raw.map((item) => ({ value: item.wardId, label: item.wardNameEn || `Ward ${item.wardId}` }));
-      
+
       if (accessWardIds.length) {
         list = list.filter(item => accessWardIds.includes(String(item.value)));
       }
-      
+
       setWards(list);
       // Apply pending edit ward/booth selection after wards are loaded
       if (pendingEditRef.current) {
@@ -2534,9 +2527,9 @@ function AddVolunteerScreen() {
             }).flat().filter(Boolean).map((item) => {
               const boothNo = item.boothNo || item.booth_no || '';
               const address = item.pollingStationAdrEn || item.boothNameEn || item.booth_add_en || `Booth ${item.boothId}`;
-              return { 
-                value: item.boothId, 
-                label: `${boothNo ? `${boothNo} - ` : ''}${address}` 
+              return {
+                value: item.boothId,
+                label: `${boothNo ? `${boothNo} - ` : ''}${address}`
               };
             });
             const unique = Array.from(new Map(merged.map((item) => [String(item.value), item])).values());
@@ -2569,9 +2562,9 @@ function AddVolunteerScreen() {
       }).flat().filter(Boolean).map((item) => {
         const boothNo = item.boothNo || item.booth_no || '';
         const address = item.pollingStationAdrEn || item.boothNameEn || item.booth_add_en || `Booth ${item.boothId}`;
-        return { 
-          value: item.boothId, 
-          label: `${boothNo ? `${boothNo} - ` : ''}${address}` 
+        return {
+          value: item.boothId,
+          label: `${boothNo ? `${boothNo} - ` : ''}${address}`
         };
       });
       const unique = Array.from(new Map(merged.map((item) => [String(item.value), item])).values());
@@ -2723,7 +2716,8 @@ function MyVolunteersScreen() {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [wardLookup, setWardLookup] = useState({});
   const [boothLookup, setBoothLookup] = useState({});
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const hasHydrated = useHasHydrated();
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const role = userInfo?.role || 'ADMIN';
 
   useEffect(() => {
@@ -2771,10 +2765,10 @@ function MyVolunteersScreen() {
           const boothId = String(booth?.boothId ?? booth?.booth_id ?? booth?.id ?? '');
           const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.boothNumber;
           const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
-          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo))) 
-            ? `${boothNo} - ${basicLabel}` 
+          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo)))
+            ? `${boothNo} - ${basicLabel}`
             : (basicLabel || (boothNo ? `Booth ${boothNo}` : boothId));
-          
+
           if (boothId) boothMap[boothId] = boothLabel;
           if (boothNo !== undefined && boothNo !== null) boothMap[String(boothNo)] = boothLabel;
         });
@@ -2782,8 +2776,8 @@ function MyVolunteersScreen() {
           const boothId = String(booth?.id ?? booth?.booth_id ?? '');
           const boothNo = booth?.boothNo ?? booth?.booth_no;
           const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
-          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo))) 
-            ? `${boothNo} - ${basicLabel}` 
+          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo)))
+            ? `${boothNo} - ${basicLabel}`
             : (basicLabel || (boothNo ? `Booth ${boothNo}` : boothId));
 
           if (boothId) boothMap[boothId] = boothLabel;
@@ -3199,7 +3193,7 @@ function VotersFamilyScreen() {
   const [familiesLoading, setFamiliesLoading] = useState(false);
   const searchTimerRef = useRef(null);
   const [mounted, setMounted] = useState(false);
-  
+
   const role = useMemo(() => {
     if (!mounted) return '';
     const info = getUserInfoSafe();
@@ -3393,7 +3387,7 @@ function VotersFamilyScreen() {
 
       await mobileApi.createFamily(payload);
       setSuccess('Family saved successfully!');
-      
+
       // Refresh suggestions for the next entry
       loadSuggestions();
 
@@ -3424,18 +3418,18 @@ function VotersFamilyScreen() {
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-family-shell">
         <MobileHeader title="Voters Family" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
-        
+
         <div className="mobile-web-subtabs mb-6">
-          <button 
-            type="button" 
+          <button
+            type="button"
             className={`mobile-web-subtab ${activeTab === 'NEW' ? 'active' : ''}`}
             onClick={() => setActiveTab('NEW')}
           >
             New Family
           </button>
           {isSuperAdmin && (
-            <button 
-              type="button" 
+            <button
+              type="button"
               className={`mobile-web-subtab ${activeTab === 'LIST' ? 'active' : ''}`}
               onClick={() => setActiveTab('LIST')}
             >
@@ -3446,257 +3440,257 @@ function VotersFamilyScreen() {
 
         {activeTab === 'NEW' ? (
           <>
-        <div className="mobile-web-family-grid">
-          <label className="mobile-web-field">
-            <span>Enter family name</span>
-            <input className="mobile-web-input" placeholder="Family name" value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
-          </label>
-          <label className="mobile-web-field">
-            <span>Family Address</span>
-            <input className="mobile-web-input" placeholder="Family Address" value={familyAddress} onChange={(e) => setFamilyAddress(e.target.value)} />
-          </label>
-        </div>
+            <div className="mobile-web-family-grid">
+              <label className="mobile-web-field">
+                <span>Enter family name</span>
+                <input className="mobile-web-input" placeholder="Family name" value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
+              </label>
+              <label className="mobile-web-field">
+                <span>Family Address</span>
+                <input className="mobile-web-input" placeholder="Family Address" value={familyAddress} onChange={(e) => setFamilyAddress(e.target.value)} />
+              </label>
+            </div>
 
-        <div className="my-4">
-           <div className="mobile-web-map-card mb-3">
-             {location ? (
-               <iframe
-                 className="mobile-web-map-frame"
-                 title="Family location map"
-                 src={`https://maps.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`}
-                 loading="lazy"
-               />
-             ) : (
-               <div className="mobile-web-map-placeholder">Capture location to preview household map.</div>
-             )}
-           </div>
-           <button className="mobile-web-location-btn w-full" onClick={handleGetLocation} type="button">
-             <LocationOnOutlined />
-             <span>{location ? 'Location Captured' : 'Capture Household Location'}</span>
-           </button>
-        </div>
+            <div className="my-4">
+              <div className="mobile-web-map-card mb-3">
+                {location ? (
+                  <iframe
+                    className="mobile-web-map-frame"
+                    title="Family location map"
+                    src={`https://maps.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="mobile-web-map-placeholder">Capture location to preview household map.</div>
+                )}
+              </div>
+              <button className="mobile-web-location-btn w-full" onClick={handleGetLocation} type="button">
+                <LocationOnOutlined />
+                <span>{location ? 'Location Captured' : 'Capture Household Location'}</span>
+              </button>
+            </div>
 
-        <div className="mobile-web-family-members">
-          <div className="mobile-web-section-title">Family Members</div>
-          <div className="mobile-web-member-row">
-            <div className="mobile-web-member-search">
-              <input
-                className="mobile-web-input"
-                placeholder="Search voter by EPIC or name"
-                value={memberQuery}
-                onChange={(e) => setMemberQuery(e.target.value)}
-                onFocus={() => {
-                  if (memberQuery.trim()) setShowSuggestions(true);
-                }}
-              />
-              {showSuggestions ? (
-                <div className="mobile-web-suggestion-panel">
-                  <div className="mobile-web-suggestion-search">
-                    <input
-                      className="mobile-web-input"
-                      placeholder="Search by relation"
-                      value={relationQuery}
-                      onChange={(e) => setRelationQuery(e.target.value)}
-                    />
-                  </div>
-                  {memberLoading ? <div className="mobile-web-suggestion-empty">Searching...</div> : null}
-                  {!memberLoading && memberSuggestions.length === 0 ? (
-                    <div className="mobile-web-suggestion-empty">No voters found.</div>
-                  ) : null}
-                  {!memberLoading && memberSuggestions.length > 0 ? (
-                    <div className="mobile-web-suggestion-list">
-                      {memberSuggestions.map((item) => {
-                        const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
-                        return (
-                          <button
-                            key={`${item.epicNo}-${item.voterId}`}
-                            type="button"
-                            className="mobile-web-suggestion-item"
-                            onClick={() => handleAddSuggestion(item)}
-                          >
-                            <div>
-                              <div className="mobile-web-suggestion-name">{name || item.epicNo || 'Unknown'}</div>
-                              <div className="mobile-web-suggestion-meta">
-                                {item.epicNo || '-'} · {item.houseNoEn || item.houseNoLocal || 'House -'} · {item.mobile || 'No phone'}
-                              </div>
-                            </div>
-                            <span className="mobile-web-suggestion-action">Add</span>
-                          </button>
-                        );
-                      })}
+            <div className="mobile-web-family-members">
+              <div className="mobile-web-section-title">Family Members</div>
+              <div className="mobile-web-member-row">
+                <div className="mobile-web-member-search">
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Search voter by EPIC or name"
+                    value={memberQuery}
+                    onChange={(e) => setMemberQuery(e.target.value)}
+                    onFocus={() => {
+                      if (memberQuery.trim()) setShowSuggestions(true);
+                    }}
+                  />
+                  {showSuggestions ? (
+                    <div className="mobile-web-suggestion-panel">
+                      <div className="mobile-web-suggestion-search">
+                        <input
+                          className="mobile-web-input"
+                          placeholder="Search by relation"
+                          value={relationQuery}
+                          onChange={(e) => setRelationQuery(e.target.value)}
+                        />
+                      </div>
+                      {memberLoading ? <div className="mobile-web-suggestion-empty">Searching...</div> : null}
+                      {!memberLoading && memberSuggestions.length === 0 ? (
+                        <div className="mobile-web-suggestion-empty">No voters found.</div>
+                      ) : null}
+                      {!memberLoading && memberSuggestions.length > 0 ? (
+                        <div className="mobile-web-suggestion-list">
+                          {memberSuggestions.map((item) => {
+                            const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
+                            return (
+                              <button
+                                key={`${item.epicNo}-${item.voterId}`}
+                                type="button"
+                                className="mobile-web-suggestion-item"
+                                onClick={() => handleAddSuggestion(item)}
+                              >
+                                <div>
+                                  <div className="mobile-web-suggestion-name">{name || item.epicNo || 'Unknown'}</div>
+                                  <div className="mobile-web-suggestion-meta">
+                                    {item.epicNo || '-'} · {item.houseNoEn || item.houseNoLocal || 'House -'} · {item.mobile || 'No phone'}
+                                  </div>
+                                </div>
+                                <span className="mobile-web-suggestion-action">Add</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
-              ) : null}
-            </div>
-            <button className="mobile-web-primary-btn" type="button" onClick={addMember}>Add</button>
-          </div>
-          <div className="mobile-web-table">
-            <div className="mobile-web-table-head">
-              <span>Name</span>
-              <span>EPIC</span>
-              <span>Relation</span>
-              <span>Phone</span>
-              <span>House No</span>
-              <span>Actions</span>
-            </div>
-            {members.length === 0 ? (
-              <div className="mobile-web-table-empty">No family members yet</div>
-            ) : (
-              members.map((member) => (
-                <div key={member.id} className="mobile-web-table-row">
-                  <span>{member.name}</span>
-                  <span>{member.epic}</span>
-                  <span>{member.relation || '-'}</span>
-                  <span>{member.phone}</span>
-                  <span>{member.houseNo}</span>
-                  <span className="mobile-web-row-actions">
-                    <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
-                  </span>
+                <button className="mobile-web-primary-btn" type="button" onClick={addMember}>Add</button>
+              </div>
+              <div className="mobile-web-table">
+                <div className="mobile-web-table-head">
+                  <span>Name</span>
+                  <span>EPIC</span>
+                  <span>Relation</span>
+                  <span>Phone</span>
+                  <span>House No</span>
+                  <span>Actions</span>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="mobile-web-family-grid">
-          <label className="mobile-web-field">
-            <span>Economic status</span>
-            <select className="mobile-web-input" value={economicStatus} onChange={(e) => setEconomicStatus(e.target.value)}>
-              {['NA', 'Low', 'Medium', 'High'].map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </label>
-          <label className="mobile-web-field">
-            <span>Head of Family</span>
-            <select className="mobile-web-input" value={headOfFamily} onChange={(e) => setHeadOfFamily(e.target.value)}>
-              <option value="">Pick head of family</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>{member.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="mobile-web-field">
-            <span>Family Head Phone Number (10 digits)</span>
-            <input
-              className="mobile-web-input"
-              placeholder="Phone number"
-              value={headPhone}
-              onChange={(e) => setHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-              inputMode="numeric"
-            />
-          </label>
-          <label className="mobile-web-field">
-            <span>Family Nature</span>
-            <select className="mobile-web-input" value={familyNature} onChange={(e) => setFamilyNature(e.target.value)}>
-              {['NA', 'Supporter', 'Neutral', 'Opposition'].map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </label>
-          <label className="mobile-web-field">
-            <span>Points to the family</span>
-            <select className="mobile-web-input" value={familyPoints} onChange={(e) => setFamilyPoints(e.target.value)}>
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <button
-          type="button"
-          className="mobile-web-primary-btn mobile-web-tag-btn"
-          onClick={() => setShowBuildingTag((prev) => !prev)}
-        >
-          Tag Building/ Apartment
-        </button>
-        {showBuildingTag ? (
-          <div className="mobile-web-family-grid mobile-web-tag-grid">
-            <label className="mobile-web-field">
-              <span>Building/ Apartment Name</span>
-              <input
-                className="mobile-web-input"
-                placeholder="Name"
-                value={buildingName}
-                onChange={(e) => setBuildingName(e.target.value)}
-                list="building-suggestions"
-              />
-              <datalist id="building-suggestions">
-                {buildingSuggestions.map((item) => (
-                  <option key={item} value={item} />
-                ))}
-              </datalist>
-            </label>
-            <label className="mobile-web-field">
-              <span>Address</span>
-              <input
-                className="mobile-web-input"
-                placeholder="Building Address"
-                value={buildingAddress}
-                onChange={(e) => setBuildingAddress(e.target.value)}
-              />
-            </label>
-            
-            <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
-              <input
-                type="checkbox"
-                id="has-association-check"
-                className="mobile-web-checkbox-large"
-                checked={hasAssociation}
-                onChange={(e) => setHasAssociation(e.target.checked)}
-              />
-              <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
+                {members.length === 0 ? (
+                  <div className="mobile-web-table-empty">No family members yet</div>
+                ) : (
+                  members.map((member) => (
+                    <div key={member.id} className="mobile-web-table-row">
+                      <span>{member.name}</span>
+                      <span>{member.epic}</span>
+                      <span>{member.relation || '-'}</span>
+                      <span>{member.phone}</span>
+                      <span>{member.houseNo}</span>
+                      <span className="mobile-web-row-actions">
+                        <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-
-            {hasAssociation && (
-              <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
+            <div className="mobile-web-family-grid">
+              <label className="mobile-web-field">
+                <span>Economic status</span>
+                <select className="mobile-web-input" value={economicStatus} onChange={(e) => setEconomicStatus(e.target.value)}>
+                  {['NA', 'Low', 'Medium', 'High'].map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mobile-web-field">
+                <span>Head of Family</span>
+                <select className="mobile-web-input" value={headOfFamily} onChange={(e) => setHeadOfFamily(e.target.value)}>
+                  <option value="">Pick head of family</option>
+                  {members.map((member) => (
+                    <option key={member.id} value={member.id}>{member.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mobile-web-field">
+                <span>Family Head Phone Number (10 digits)</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Phone number"
+                  value={headPhone}
+                  onChange={(e) => setHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  inputMode="numeric"
+                />
+              </label>
+              <label className="mobile-web-field">
+                <span>Family Nature</span>
+                <select className="mobile-web-input" value={familyNature} onChange={(e) => setFamilyNature(e.target.value)}>
+                  {['NA', 'Supporter', 'Neutral', 'Opposition'].map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mobile-web-field">
+                <span>Points to the family</span>
+                <select className="mobile-web-input" value={familyPoints} onChange={(e) => setFamilyPoints(e.target.value)}>
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button
+              type="button"
+              className="mobile-web-primary-btn mobile-web-tag-btn"
+              onClick={() => setShowBuildingTag((prev) => !prev)}
+            >
+              Tag Building/ Apartment
+            </button>
+            {showBuildingTag ? (
+              <div className="mobile-web-family-grid mobile-web-tag-grid">
                 <label className="mobile-web-field">
-                  <span>Association Name</span>
+                  <span>Building/ Apartment Name</span>
                   <input
                     className="mobile-web-input"
-                    placeholder="Association Name"
-                    value={associationName}
-                    onChange={(e) => setAssociationName(e.target.value)}
-                    list="association-suggestions"
+                    placeholder="Name"
+                    value={buildingName}
+                    onChange={(e) => setBuildingName(e.target.value)}
+                    list="building-suggestions"
                   />
-                  <datalist id="association-suggestions">
-                    {associationSuggestions.map((item) => (
+                  <datalist id="building-suggestions">
+                    {buildingSuggestions.map((item) => (
                       <option key={item} value={item} />
                     ))}
                   </datalist>
                 </label>
                 <label className="mobile-web-field">
-                  <span>Association Head Name</span>
+                  <span>Address</span>
                   <input
                     className="mobile-web-input"
-                    placeholder="Association Head Name"
-                    value={associationHeadName}
-                    onChange={(e) => setAssociationHeadName(e.target.value)}
+                    placeholder="Building Address"
+                    value={buildingAddress}
+                    onChange={(e) => setBuildingAddress(e.target.value)}
                   />
                 </label>
-                <label className="mobile-web-field">
-                  <span>Association Head Phone number (10 digits)</span>
+
+                <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
                   <input
-                    className="mobile-web-input"
-                    placeholder="Phone number"
-                    value={associationHeadPhone}
-                    onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    inputMode="numeric"
+                    type="checkbox"
+                    id="has-association-check"
+                    className="mobile-web-checkbox-large"
+                    checked={hasAssociation}
+                    onChange={(e) => setHasAssociation(e.target.checked)}
                   />
-                </label>
+                  <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
+                </div>
+
+                {hasAssociation && (
+                  <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
+                    <label className="mobile-web-field">
+                      <span>Association Name</span>
+                      <input
+                        className="mobile-web-input"
+                        placeholder="Association Name"
+                        value={associationName}
+                        onChange={(e) => setAssociationName(e.target.value)}
+                        list="association-suggestions"
+                      />
+                      <datalist id="association-suggestions">
+                        {associationSuggestions.map((item) => (
+                          <option key={item} value={item} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="mobile-web-field">
+                      <span>Association Head Name</span>
+                      <input
+                        className="mobile-web-input"
+                        placeholder="Association Head Name"
+                        value={associationHeadName}
+                        onChange={(e) => setAssociationHeadName(e.target.value)}
+                      />
+                    </label>
+                    <label className="mobile-web-field">
+                      <span>Association Head Phone number (10 digits)</span>
+                      <input
+                        className="mobile-web-input"
+                        placeholder="Phone number"
+                        value={associationHeadPhone}
+                        onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        inputMode="numeric"
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        ) : null}
-        {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
-        {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
-        <div className="mobile-web-actions">
-          <button className="mobile-web-secondary-btn" type="button">Preview Screen</button>
-          <button className="mobile-web-primary-btn" type="button" onClick={handleUpdate} disabled={saving}>
-            {saving ? 'Updating...' : 'Update'}
-          </button>
-        </div>
-        </>
+            ) : null}
+            {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
+            {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
+            <div className="mobile-web-actions">
+              <button className="mobile-web-secondary-btn" type="button">Preview Screen</button>
+              <button className="mobile-web-primary-btn" type="button" onClick={handleUpdate} disabled={saving}>
+                {saving ? 'Updating...' : 'Update'}
+              </button>
+            </div>
+          </>
         ) : (
           <div className="mobile-web-families-list">
             <h3 className="text-lg font-bold mb-4">Saved Families</h3>
@@ -3726,18 +3720,17 @@ function VotersFamilyScreen() {
                         <td>{f.headEpicNo || '-'}</td>
                         <td className="text-center">{f.memberCount || 0}</td>
                         <td>
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-                            f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
                             f.economicStatus === 'Medium' ? 'bg-blue-100 text-blue-700' :
-                            f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>
+                              f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
+                                'bg-slate-100 text-slate-600'
+                            }`}>
                             {f.economicStatus}
                           </span>
                         </td>
                         <td>
-                          <button 
-                            type="button" 
+                          <button
+                            type="button"
                             className="text-red-500 hover:text-red-700 font-bold text-[11px] uppercase tracking-wider"
                             onClick={() => handleDeleteFamily(f.familyId)}
                           >
@@ -3794,20 +3787,20 @@ function MeetingsScreen({ userRole }) {
       const rec = String(m.recipients || '').toLowerCase();
       if (!rec) return true; // Default to public if no recipients specified
       const list = rec.split(',').map(s => s.trim());
-      
+
       // If "assembly" is checked, only admins see it
       if (list.includes('assembly')) {
-         return isAdmin;
+        return isAdmin;
       }
-      
+
       // If "ward" is checked, only ward upwards see it
       if (list.includes('ward')) {
-         return isAdmin || role === 'WARD';
+        return isAdmin || role === 'WARD';
       }
 
       // If "booth" is checked, everyone can see it (or booth upwards)
       if (list.includes('booth')) {
-         return true;
+        return true;
       }
 
       return true;
@@ -3866,7 +3859,7 @@ function MeetingsScreen({ userRole }) {
         setActiveMeetingTab('list');
         fetchMeetingsList();
       }, 1500);
-    } catch(err) {
+    } catch (err) {
       setMeetingMessage(err?.message || err?.detail || 'Failed to save meeting.');
     }
   };
@@ -4246,13 +4239,13 @@ function MeetingsScreen({ userRole }) {
                   Save Meeting
                 </button>
               </div>
-              {meetingMessage && <div className="mobile-web-success" style={{marginTop:'12px'}}>{meetingMessage}</div>}
+              {meetingMessage && <div className="mobile-web-success" style={{ marginTop: '12px' }}>{meetingMessage}</div>}
             </div>
           </div>
         ) : null}
         <div className="mobile-web-meeting-detail">
           {selectedMeeting ? (
-            <div className="mobile-web-meeting-detail-card" style={{  borderTop: '2px solid var(--accent-light)', paddingTop: '24px' }}>
+            <div className="mobile-web-meeting-detail-card" style={{ borderTop: '2px solid var(--accent-light)', paddingTop: '24px' }}>
               <div className="mobile-web-subtabs" style={{ marginBottom: '16px' }}>
                 <button
                   type="button"
@@ -4333,16 +4326,16 @@ function MeetingsScreen({ userRole }) {
                     <div className="mobile-web-empty">No attendance recorded yet. Ensure voters have location setup.</div>
                   ) : (
                     <div className="mobile-web-analysis-table-wrap">
-                       <table className="mobile-web-analysis-table">
-                         <thead><tr><th>Name</th><th>EPIC</th><th>Phone</th><th>Distance (m)</th></tr></thead>
-                         <tbody>
-                           {attendanceList.map((a) => (
-                             <tr key={a.id}>
-                               <td>{a.name}</td><td>{a.epic}</td><td>{a.phone}</td><td>{a.distance?.toFixed(1)}</td>
-                             </tr>
-                           ))}
-                         </tbody>
-                       </table>
+                      <table className="mobile-web-analysis-table">
+                        <thead><tr><th>Name</th><th>EPIC</th><th>Phone</th><th>Distance (m)</th></tr></thead>
+                        <tbody>
+                          {attendanceList.map((a) => (
+                            <tr key={a.id}>
+                              <td>{a.name}</td><td>{a.epic}</td><td>{a.phone}</td><td>{a.distance?.toFixed(1)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -4956,7 +4949,8 @@ function VolunteerAnalysisScreen() {
   const [mapError, setMapError] = useState('');
   const [mapsKey, setMapsKey] = useState('');
   const [mapsKeyInput, setMapsKeyInput] = useState('');
-  const userInfo = useMemo(() => getUserInfoSafe(), []);
+  const hasHydrated = useHasHydrated();
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const [role, setRole] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [wardItems, setWardItems] = useState([]);
@@ -4978,17 +4972,22 @@ function VolunteerAnalysisScreen() {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
         const formatted = raw.map(item => ({
           value: String(item.id),
-          label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id))) 
-            ? `${item.name} (${item.id})` 
+          label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id)))
+            ? `${item.name} (${item.id})`
             : (item.name || `Assembly ${item.id}`),
         }));
         setAssemblies(formatted);
+        setSelectedAssembly(prev => {
+          if (!prev) return formatted.length > 0 ? formatted[0].value : '';
+          return formatted.some(a => a.value === prev) ? prev : (formatted.length > 0 ? formatted[0].value : '');
+        });
       });
     }
   }, [userInfo]);
 
   const accessWardIds = useMemo(() => {
     const ids = [];
+    if (!hydrated) return ids;
     if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
     if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
     if (userInfo?.wardId) ids.push(userInfo.wardId);
@@ -5000,8 +4999,8 @@ function VolunteerAnalysisScreen() {
         .filter(Boolean)
         .forEach((val) => ids.push(val));
     }
-    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
-  }, [userInfo]);
+    return Array.from(new Set(ids.map((id) => String(id).replace(/^W0*/i, '').trim()).filter(Boolean)));
+  }, [userInfo, hydrated]);
 
   const effectiveWard = useMemo(() => {
     if (role === 'WARD' && accessWardIds.length === 1) {
@@ -5018,7 +5017,7 @@ function VolunteerAnalysisScreen() {
       const wards = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
       const list = (wards || [])
         .map((ward) => ({
-          value: String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ''),
+          value: String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? '').replace(/^W0*/i, '').trim(),
           label: ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name_en ?? ward?.name ?? '',
         }))
         .filter((item) => item.value && item.label);
@@ -5202,8 +5201,8 @@ function VolunteerAnalysisScreen() {
       let loaded = 0;
       const reader = response.body.getReader();
       const chunks = [];
-      while(true) {
-        const {done, value} = await reader.read();
+      while (true) {
+        const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
         loaded += value.length;
@@ -5318,24 +5317,32 @@ function VolunteerAnalysisScreen() {
     URL.revokeObjectURL(link.href);
   };
 
+  const currentFetchId = useRef(0);
+
   const loadAnalysis = async () => {
+    const fetchId = ++currentFetchId.current;
     setLoading(true);
     setError('');
     try {
       const res = await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode);
+      if (fetchId !== currentFetchId.current) return;
       const payload = res?.data?.result || res?.result || {};
       setRows(payload?.rows || []);
       setFields(payload?.fields || []);
     } catch (err) {
+      if (fetchId !== currentFetchId.current) return;
       setError(err?.message || 'Unable to load volunteer analysis.');
     } finally {
-      setLoading(false);
+      if (fetchId === currentFetchId.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (role !== 'BOOTH') loadAnalysis();
-  }, [role, effectiveWard, viewMode]);
+    if (!role || role === 'BOOTH') return;
+    if (wardItems.length === 0) return;
+    if (accessWardIds.length > 0 && !effectiveWard) return;
+    loadAnalysis();
+  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -5804,7 +5811,7 @@ function VolunteerAnalysisScreen() {
             <div className="mobile-web-map-container" ref={mapRef} />
           </div>
         )}
-        {activeTab === 'table' && hydrated && ['SUPER_ADMIN', 'ADMIN', 'WARD'].includes(role) ? (
+        {activeTab === 'table' && hydrated && ['SUPER_ADMIN'].includes(role) ? (
           <div className="mobile-web-field">
             <label className="mt-5">Details</label>
             <button type="button" className="mobile-web-secondary-btn mobile-web-detail-toggle" onClick={toggleDetails} disabled={detailLoading}>
@@ -5812,7 +5819,7 @@ function VolunteerAnalysisScreen() {
             </button>
           </div>
         ) : null}
-        {activeTab === 'table' && hydrated && ['SUPER_ADMIN', 'ADMIN', 'WARD'].includes(role) && showDetails ? (
+        {activeTab === 'table' && hydrated && ['SUPER_ADMIN'].includes(role) && showDetails ? (
           <div className="mobile-web-stack">
             {role === 'SUPER_ADMIN' && (
               <div className="mobile-web-action-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
@@ -5823,7 +5830,7 @@ function VolunteerAnalysisScreen() {
                   Download Detailed Excel
                 </button>
                 <button type="button" className="mobile-web-gradient-btn subtle" onClick={downloadDbDump} disabled={dbDumpLoading}>
-                  {dbDumpLoading ? `Downloading Dump... ${dbDumpProgress >= 0 ? (dbDumpProgress > 100 ? `${Math.round(dbDumpProgress/1024/1024)} MB` : `${dbDumpProgress}%`) : ''}` : 'DOWNLOAD COMPLETE DB DUMP'}
+                  {dbDumpLoading ? `Downloading Dump... ${dbDumpProgress >= 0 ? (dbDumpProgress > 100 ? `${Math.round(dbDumpProgress / 1024 / 1024)} MB` : `${dbDumpProgress}%`) : ''}` : 'DOWNLOAD COMPLETE DB DUMP'}
                 </button>
               </div>
             )}
@@ -5896,7 +5903,7 @@ export default function MobileDetailPage({ params }) {
 
   const slug = params.slug;
   const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' };
-  
+
   if ((slug === 'voters-family' || slug === 'meetings') && userRole && !['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH', 'USER'].includes(userRole)) {
     return (
       <ScreenFrame>
