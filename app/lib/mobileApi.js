@@ -1,5 +1,6 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 const DEFAULT_ASSEMBLY_CODE = process.env.NEXT_PUBLIC_DEFAULT_ASSEMBLY_CODE || '000000000151';
+const _apiCache = {};
 
 function getToken() {
   if (typeof window === 'undefined') return '';
@@ -268,11 +269,19 @@ export const mobileApi = {
     }
   },
 
-  getVolunteerList: async (role, page, size, search, blocked, sortBy, direction, assignmentType, deleted) => {
+  getVolunteerList: async (role, page, size, search, blocked, sortBy, direction, assignmentType, deleted, assemblyId) => {
     try {
-      return await request(
-        `/votebase/v1/api/volunteers?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&search=${encodeURIComponent(search)}&blocked=${encodeURIComponent(blocked)}&sortBy=${encodeURIComponent(sortBy)}&direction=${encodeURIComponent(direction)}&workingLevel=${encodeURIComponent(assignmentType)}&deleted=${encodeURIComponent(deleted ?? '')}`
-      );
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('size', String(size));
+      params.set('search', String(search || ''));
+      params.set('blocked', String(blocked || ''));
+      params.set('sortBy', String(sortBy));
+      params.set('direction', String(direction));
+      params.set('workingLevel', String(assignmentType || ''));
+      params.set('deleted', String(deleted ?? ''));
+      if (assemblyId) params.set('assemblyCode', String(assemblyId));
+      return await request(`/votebase/v1/api/volunteers?${params.toString()}`);
     } catch (error) {
       console.log('Error while fetching volunteer data:', error);
       throw error;
@@ -312,7 +321,7 @@ export const mobileApi = {
       });
     } catch (error) {
       console.log('Error while adding volunteer:', error);
-      return error?.message ? error.message : error;
+      throw error;
     }
   },
   updateVolunteer: async (data) => {
@@ -323,7 +332,7 @@ export const mobileApi = {
       });
     } catch (error) {
       console.log('Error while updating volunteer:', error);
-      return error?.message ? error.message : error;
+      throw error;
     }
   },
 
@@ -422,30 +431,40 @@ export const mobileApi = {
     }
   },
   fetchWards: async (assemblyId) => {
+    const url = assemblyId ? `/votebase/v1/api/wards?assemblyId=${encodeURIComponent(assemblyId)}` : '/votebase/v1/api/wards';
+    if (_apiCache[url]) return _apiCache[url];
     try {
-      const query = assemblyId ? `?assemblyId=${encodeURIComponent(assemblyId)}` : '';
-      return await request(`/votebase/v1/api/wards${query}`);
+      const res = await request(url);
+      _apiCache[url] = res;
+      return res;
     } catch (error) {
       console.log('Error while fetching wards:', error);
       throw error;
     }
   },
   fetchBooths: async (assemblyCode, wardId) => {
+    const params = new URLSearchParams();
+    if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
+    if (wardId) params.set('wardId', String(wardId));
+    const qs = params.toString();
+    const url = `/votebase/v1/api/booths${qs ? `?${qs}` : ''}`;
+    if (_apiCache[url]) return _apiCache[url];
     try {
-      const params = new URLSearchParams();
-      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
-      if (wardId) params.set('wardId', String(wardId));
-      const qs = params.toString();
-      return await request(`/votebase/v1/api/booths${qs ? `?${qs}` : ''}`);
+      const res = await request(url);
+      _apiCache[url] = res;
+      return res;
     } catch (error) {
       console.log('Error while fetching booths:', error);
       throw error;
     }
   },
-  fetchPublicBooths: async (wardId) => {
+  fetchPublicBooths: async (wardId, assemblyId) => {
     try {
-      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
-      return await request(`/votebase/v1/api/booths/public${query}`);
+      const params = new URLSearchParams();
+      if (wardId) params.set('wardId', String(wardId));
+      if (assemblyId) params.set('assemblyId', String(assemblyId));
+      const query = params.toString();
+      return await request(`/votebase/v1/api/booths/public${query ? `?${query}` : ''}`);
     } catch (error) {
       console.log('Error while fetching public booths:', error);
       throw error;
@@ -624,6 +643,37 @@ export const mobileApi = {
     const tenantId = typeof window !== 'undefined' ? (localStorage.getItem('tenantId') || localStorage.getItem('tenant_id')) : '';
     return await request(`/votebase/v1/api/message-template/deactivate-all?channel=${channel.toUpperCase()}&tenantId=${tenantId || ''}`, {
       method: 'POST'
+    });
+  },
+  uploadMasterRoll: async (file, onProgress) => {
+    const token = getToken();
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE_URL}/votebase/v1/api/admin/master-roll/upload`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          if (onProgress) onProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        try {
+          const res = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) resolve(res);
+          else reject(res);
+        } catch (err) {
+          reject({ message: 'Server error' });
+        }
+      };
+
+      xhr.onerror = () => reject({ message: 'Network error' });
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      xhr.send(formData);
     });
   },
 };

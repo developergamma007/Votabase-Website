@@ -1126,9 +1126,9 @@ function VoterListScreen({
     </div>
   );
 }
-function SearchVoterScreen() {
+function SearchVoterScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
-  const assemblyCode = useMemo(() => (hasHydrated ? getAssemblyCode() : ''), [hasHydrated]);
+  const assemblyCode = useMemo(() => assemblyCodeProp || (hasHydrated ? getAssemblyCode() : ''), [hasHydrated, assemblyCodeProp]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [wardItems, setWardItems] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -1176,7 +1176,8 @@ function SearchVoterScreen() {
     if (lastWardLoadRef.current === key && wardItems.length > 0) return;
     let active = true;
     setErrorText('');
-    mobileApi.fetchWards().then((res) => {
+    const assemblyId = getAssemblyCode();
+    mobileApi.fetchWards(assemblyId).then((res) => {
       if (!active) return;
       const wards = Array.isArray(res)
         ? res
@@ -1412,9 +1413,9 @@ function SearchVoterScreen() {
   );
 }
 
-function SearchBoothScreen() {
+function SearchBoothScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
-  const assemblyCode = useMemo(() => (hasHydrated ? getAssemblyCode() : ''), [hasHydrated]);
+  const assemblyCode = useMemo(() => assemblyCodeProp || (hasHydrated ? getAssemblyCode() : ''), [hasHydrated, assemblyCodeProp]);
   const [search, setSearch] = useState('');
   const [assemblyData, setAssemblyData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1449,7 +1450,8 @@ function SearchBoothScreen() {
           setAssemblyData(JSON.parse(fallback));
           setLoadError('Showing cached booth data.');
         } else {
-          setLoadError(error?.message || 'Unable to load booths');
+          const detail = error?.data?.error || error?.message || 'Unable to load booths';
+          setLoadError(detail);
         }
       } finally {
         setLoading(false);
@@ -1729,7 +1731,7 @@ function SearchBoothScreen() {
     </ScreenFrame>
   );
 }
-function PromotionsScreen() {
+function PromotionsScreen({ assemblyCodeProp }) {
   const [wards, setWards] = useState([]);
   const [selectedWard, setSelectedWard] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1884,9 +1886,9 @@ function PromotionsScreen() {
         }
       });
     } else if (role) {
-      setForm(prev => ({ ...prev, assemblyId: getAssemblyCode() }));
+      setForm(prev => ({ ...prev, assemblyId: assemblyCodeProp || getAssemblyCode() }));
     }
-  }, [role, isAdmin]);
+  }, [role, isAdmin, assemblyCodeProp]);
 
   const loadWardsForCurrentAssembly = async () => {
     if (!form.assemblyId) return;
@@ -2394,7 +2396,7 @@ function PromotionsScreen() {
 }
 
 function getUserInfoSafe() { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { return {}; } }
-function AddVolunteerScreen() {
+function AddVolunteerScreen({ assemblyCodeProp }) {
   const [form, setForm] = useState({
     firstName: '',
     phone: '',
@@ -2411,9 +2413,16 @@ function AddVolunteerScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [editPhone, setEditPhone] = useState('');
   const pendingEditRef = useRef(null);
+  const hasHydrated = useHasHydrated();
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
+  const role = userInfo?.role || 'ADMIN';
   const prevWorkingLevelRef = useRef(null);
   const prevAssemblyRef = useRef(null);
-  const role = userInfo?.role || 'ADMIN';
+  const accessWardIds = useMemo(() => {
+    const ids = String(userInfo?.assignmentId || '').split(',').map((id) => id.trim()).filter(Boolean);
+    return ids;
+  }, [userInfo]);
+
 
   // Load volunteerEdit from sessionStorage on mount
   useEffect(() => {
@@ -2507,7 +2516,11 @@ function AddVolunteerScreen() {
     prevAssemblyRef.current = form.assemblyId;
     mobileApi.fetchWards(form.assemblyId).then((res) => {
       const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
-      let list = raw.map((item) => ({ value: item.wardId, label: item.wardNameEn || `Ward ${item.wardId}` }));
+      let list = raw.map((item) => {
+        const id = item.wardId ?? item.ward_id ?? item.id;
+        const name = item.wardNameEn ?? item.ward_name_en ?? item.wardNameLocal ?? item.ward_name_local ?? item.name_en ?? item.name ?? `Ward ${id}`;
+        return { value: id, label: name };
+      });
 
       if (accessWardIds.length) {
         list = list.filter(item => accessWardIds.includes(String(item.value)));
@@ -2527,8 +2540,9 @@ function AddVolunteerScreen() {
             }).flat().filter(Boolean).map((item) => {
               const boothNo = item.boothNo || item.booth_no || '';
               const address = item.pollingStationAdrEn || item.boothNameEn || item.booth_add_en || `Booth ${item.boothId}`;
+              const bId = item.boothId ?? item.booth_id ?? item.id;
               return {
-                value: item.boothId,
+                value: bId,
                 label: `${boothNo ? `${boothNo} - ` : ''}${address}`
               };
             });
@@ -2598,7 +2612,15 @@ function AddVolunteerScreen() {
         setFeedback({ error: res?.detail || res?.message || 'Unable to add volunteer.', success: '' });
       }
     } catch (error) {
-      setFeedback({ error: error?.detail || error?.message || 'Unable to add volunteer.', success: '' });
+      console.error('Save volunteer error:', error);
+      let msg = error?.message || error?.detail || 'Unable to save volunteer.';
+      if (error?.data?.error) {
+        const details = Object.entries(error.data.error)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(', ');
+        if (details) msg = `${msg} (${details})`;
+      }
+      setFeedback({ error: msg, success: '' });
     } finally {
       setSaving(false);
     }
@@ -2704,8 +2726,10 @@ function AddVolunteerScreen() {
     </ScreenFrame>
   );
 }
-function MyVolunteersScreen() {
+function MyVolunteersScreen({ assemblyCodeProp }) {
   const [volunteers, setVolunteers] = useState([]);
+  const [assemblies, setAssemblies] = useState([]);
+  const selectedAssembly = assemblyCodeProp || getAssemblyCode() || '';
   const [search, setSearch] = useState('');
   const [workingLevel, setWorkingLevel] = useState('');
   const [sortMode, setSortMode] = useState('latest');
@@ -2736,9 +2760,9 @@ function MyVolunteersScreen() {
     };
 
     const loadLookups = async () => {
-      if (typeof window === 'undefined') return;
+      if (typeof window === 'undefined' || !selectedAssembly) return;
       try {
-        const wardsRes = await mobileApi.fetchWards();
+        const wardsRes = await mobileApi.fetchWards(selectedAssembly);
         const wards = Array.isArray(wardsRes)
           ? wardsRes
           : Array.isArray(wardsRes?.data?.result)
@@ -2748,32 +2772,20 @@ function MyVolunteersScreen() {
               : Array.isArray(wardsRes?.result)
                 ? wardsRes.result
                 : [];
-        buildLookupsFromWards(wards);
-
-        const wardIds = wards
-          .map((ward) => ward?.wardId ?? ward?.ward_id ?? ward?.id)
-          .filter((id) => id !== undefined && id !== null);
-        if (!wardIds.length) return;
-        const boothResponses = await Promise.all(
-          wardIds.map((wardId) => mobileApi.fetchBooths(null, wardId).catch(() => []))
-        );
-        const publicBoothResponses = await Promise.all(
-          wardIds.map((wardId) => mobileApi.fetchPublicBooths(wardId).catch(() => []))
-        );
-        const boothMap = {};
-        boothResponses.flat().forEach((booth) => {
-          const boothId = String(booth?.boothId ?? booth?.booth_id ?? booth?.id ?? '');
-          const boothNo = booth?.boothNo ?? booth?.booth_no ?? booth?.boothNumber;
-          const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
-          const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo)))
-            ? `${boothNo} - ${basicLabel}`
-            : (basicLabel || (boothNo ? `Booth ${boothNo}` : boothId));
-
-          if (boothId) boothMap[boothId] = boothLabel;
-          if (boothNo !== undefined && boothNo !== null) boothMap[String(boothNo)] = boothLabel;
+        
+        const wardMap = {};
+        wards.forEach((ward) => {
+          const wardId = String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ward?.ward_no ?? '');
+          const wardLabel = ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name ?? wardId;
+          if (wardId) wardMap[wardId] = wardLabel;
         });
-        publicBoothResponses.flat().forEach((booth) => {
-          const boothId = String(booth?.id ?? booth?.booth_id ?? '');
+
+        const boothsRes = await mobileApi.fetchPublicBooths(null, selectedAssembly);
+        const publicBooths = Array.isArray(boothsRes) ? boothsRes : (boothsRes?.data?.result || boothsRes?.result || []);
+        
+        const boothMap = {};
+        publicBooths.forEach((booth) => {
+          const boothId = String(booth?.id ?? booth?.boothId ?? booth?.booth_id ?? '');
           const boothNo = booth?.boothNo ?? booth?.booth_no;
           const basicLabel = booth?.boothNameEn ?? booth?.booth_name_en ?? booth?.pollingStationAdrEn ?? booth?.polling_station_adr_en ?? booth?.booth_add_en;
           const boothLabel = (boothNo && basicLabel && !basicLabel.startsWith(String(boothNo)))
@@ -2785,15 +2797,35 @@ function MyVolunteersScreen() {
             boothMap[String(boothNo)] = boothLabel;
           }
         });
+
         if (!active) return;
+        setWardLookup(wardMap);
         setBoothLookup(boothMap);
-      } catch { }
+      } catch (err) {
+        console.error('Lookup load error:', err);
+      }
     };
 
     loadLookups();
     return () => {
       active = false;
     };
+  }, [selectedAssembly]);
+
+  useEffect(() => {
+    mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
+      const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
+      const formatted = raw.map((item) => ({
+        value: String(item.id),
+        label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id)))
+          ? `${item.name} (${item.id})`
+          : (item.name || `Assembly ${item.id}`),
+      }));
+      setAssemblies(formatted);
+      if (!selectedAssembly && formatted.length > 0) {
+        setSelectedAssembly(formatted[0].value);
+      }
+    }).catch(() => setAssemblies([]));
   }, []);
 
   const resolveSort = () => {
@@ -2824,7 +2856,8 @@ function MyVolunteersScreen() {
         sortConfig.sortBy,
         sortConfig.direction,
         workingLevel,
-        showDeleted ? 'true' : 'false'
+        showDeleted ? 'true' : 'false',
+        selectedAssembly
       );
       const list = res?.content ?? [];
       setVolunteers(list);
@@ -2837,7 +2870,7 @@ function MyVolunteersScreen() {
 
   useEffect(() => {
     loadVolunteers();
-  }, [search, workingLevel, sortMode, showDeleted]);
+  }, [search, workingLevel, sortMode, showDeleted, selectedAssembly]);
 
   const toggleSelect = (email) => {
     setSelected((prev) => (prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]));
@@ -3161,7 +3194,7 @@ function MyVolunteersScreen() {
   );
 }
 
-function VotersFamilyScreen() {
+function VotersFamilyScreen({ assemblyCodeProp }) {
   const [familyName, setFamilyName] = useState('');
   const [familyAddress, setFamilyAddress] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
@@ -3750,7 +3783,7 @@ function VotersFamilyScreen() {
   );
 }
 
-function MeetingsScreen({ userRole }) {
+function MeetingsScreen({ userRole, assemblyCodeProp }) {
   const [meetings, setMeetings] = useState([]);
   const [selectedMeeting, setSelectedMeeting] = useState(meetings[0]);
   const [newMeeting, setNewMeeting] = useState({
@@ -4348,7 +4381,7 @@ function MeetingsScreen({ userRole }) {
   );
 }
 
-function PollDayScreen() {
+function PollDayScreen({ assemblyCodeProp }) {
   const [tab, setTab] = useState('ALL');
   const [natureFilter, setNatureFilter] = useState('');
   const [pollQuery, setPollQuery] = useState('');
@@ -4381,6 +4414,7 @@ function PollDayScreen() {
     setPollError('');
     try {
       const res = await mobileApi.searchVoters({
+        assemblyCode: assemblyCodeProp,
         searchQuery: queryValue.trim() || undefined,
         relationName: pollRelationQuery.trim() || undefined,
         size: 200,
@@ -4399,10 +4433,6 @@ function PollDayScreen() {
   };
 
   useEffect(() => {
-    fetchPollVoters('');
-  }, []);
-
-  useEffect(() => {
     if (pollSearchTimerRef.current) {
       clearTimeout(pollSearchTimerRef.current);
     }
@@ -4418,6 +4448,7 @@ function PollDayScreen() {
     pollSearchTimerRef.current = setTimeout(async () => {
       try {
         const res = await mobileApi.searchVoters({
+          assemblyCode: assemblyCodeProp,
           searchQuery: query,
           relationName: pollRelationQuery.trim() || undefined,
           size: 20,
@@ -4437,7 +4468,7 @@ function PollDayScreen() {
         clearTimeout(pollSearchTimerRef.current);
       }
     };
-  }, [pollQuery, pollRelationQuery]);
+  }, [pollQuery, pollRelationQuery, assemblyCodeProp]);
 
   const handlePollSuggestion = (item) => {
     const display = buildPollDisplay(item);
@@ -4667,7 +4698,7 @@ function getApiToken() {
   return localStorage.getItem('X_INIT_TOKEN') || localStorage.getItem('token') || '';
 }
 
-function ExtractScreen() {
+function ExtractScreen({ assemblyCodeProp }) {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -4824,7 +4855,7 @@ function ExtractScreen() {
   );
 }
 
-function PrintScreen() {
+function PrintScreen({ assemblyCodeProp }) {
   const [printers, setPrinters] = useState([]);
   const [connectedPrinter, setConnectedPrinter] = useState(null);
   const [scanStatus, setScanStatus] = useState('');
@@ -4926,7 +4957,7 @@ function PrintScreen() {
   );
 }
 
-function VolunteerAnalysisScreen() {
+function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [rows, setRows] = useState([]);
   const [fields, setFields] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -4949,6 +4980,10 @@ function VolunteerAnalysisScreen() {
   const [mapError, setMapError] = useState('');
   const [mapsKey, setMapsKey] = useState('');
   const [mapsKeyInput, setMapsKeyInput] = useState('');
+  const [masterUploadLoading, setMasterUploadLoading] = useState(false);
+  const [masterUploadProgress, setMasterUploadProgress] = useState(0);
+  const [masterUploadFeedback, setMasterUploadFeedback] = useState({ error: '', success: '' });
+  const masterFileInputRef = useRef(null);
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const [role, setRole] = useState('');
@@ -4963,7 +4998,8 @@ function VolunteerAnalysisScreen() {
 
   useEffect(() => {
     setRole((userInfo?.role || '').toUpperCase());
-    const initialAssembly = getAssemblyCode();
+    const rawAssembly = getAssemblyCode();
+    const initialAssembly = rawAssembly ? String(parseInt(rawAssembly)) : '';
     setSelectedAssembly(initialAssembly);
     setHydrated(true);
 
@@ -4978,8 +5014,9 @@ function VolunteerAnalysisScreen() {
         }));
         setAssemblies(formatted);
         setSelectedAssembly(prev => {
-          if (!prev) return formatted.length > 0 ? formatted[0].value : '';
-          return formatted.some(a => a.value === prev) ? prev : (formatted.length > 0 ? formatted[0].value : '');
+          const normalizedPrev = prev ? String(parseInt(prev)) : '';
+          if (!normalizedPrev) return formatted.length > 0 ? formatted[0].value : '';
+          return formatted.some(a => String(a.value) === normalizedPrev) ? normalizedPrev : (formatted.length > 0 ? formatted[0].value : '');
         });
       });
     }
@@ -4999,7 +5036,7 @@ function VolunteerAnalysisScreen() {
         .filter(Boolean)
         .forEach((val) => ids.push(val));
     }
-    return Array.from(new Set(ids.map((id) => String(id).replace(/^W0*/i, '').trim()).filter(Boolean)));
+    return Array.from(new Set(ids.map((id) => String(id).trim()).filter(Boolean)));
   }, [userInfo, hydrated]);
 
   const effectiveWard = useMemo(() => {
@@ -5010,14 +5047,19 @@ function VolunteerAnalysisScreen() {
   }, [role, accessWardIds, selectedWard]);
 
   useEffect(() => {
+    setSelectedWard('');
+  }, [selectedAssembly]);
+
+  useEffect(() => {
     let active = true;
     const assemblyId = selectedAssembly || getAssemblyCode();
+    setWardItems([]);
     mobileApi.fetchWards(assemblyId).then((res) => {
       if (!active) return;
       const wards = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
       const list = (wards || [])
         .map((ward) => ({
-          value: String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? '').replace(/^W0*/i, '').trim(),
+          value: String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ''),
           label: ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name_local ?? ward?.name_en ?? ward?.name ?? '',
         }))
         .filter((item) => item.value && item.label);
@@ -5032,7 +5074,7 @@ function VolunteerAnalysisScreen() {
     return () => {
       active = false;
     };
-  }, [accessWardIds, selectedWard]);
+  }, [accessWardIds, selectedWard, selectedAssembly]);
 
   const sortOptions = [
     { label: 'Name A-Z', value: 'name-asc' },
@@ -5198,6 +5240,7 @@ function VolunteerAnalysisScreen() {
       }
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
+
       let loaded = 0;
       const reader = response.body.getReader();
       const chunks = [];
@@ -5225,6 +5268,29 @@ function VolunteerAnalysisScreen() {
     } finally {
       setDbDumpLoading(false);
       setDbDumpProgress(-1);
+    }
+  };
+
+  const handleMasterUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMasterUploadLoading(true);
+    setMasterUploadProgress(0);
+    setMasterUploadFeedback({ error: '', success: '' });
+    try {
+      const res = await mobileApi.uploadMasterRoll(file, (percent) => {
+        setMasterUploadProgress(percent);
+      });
+      setMasterUploadFeedback({ 
+        success: `Successfully imported ${res?.data?.voters || res?.voters || ''} voters into ${res?.data?.tenant_id || res?.tenant_id || ''}`, 
+        error: '' 
+      });
+      if (masterFileInputRef.current) masterFileInputRef.current.value = '';
+    } catch (err) {
+      setMasterUploadFeedback({ error: err?.detail || err?.message || 'Upload failed', success: '' });
+    } finally {
+      setMasterUploadLoading(false);
+      setMasterUploadProgress(0);
     }
   };
 
@@ -5657,6 +5723,15 @@ function VolunteerAnalysisScreen() {
               <button type="button" className="mobile-web-secondary-btn" onClick={downloadXls} disabled={!rows.length}>
                 Download Excel
               </button>
+              {role === 'SUPER_ADMIN' && (
+                <button
+                  type="button"
+                  className={`mobile-web-primary-btn ${showDetails ? 'subtle' : ''}`}
+                  onClick={toggleDetails}
+                >
+                  {showDetails ? 'Hide Enrichment Details' : 'View Enrichment Details'}
+                </button>
+              )}
             </>
           ) : (
             <button type="button" className="mobile-web-primary-btn" onClick={loadMapPoints} disabled={mapLoading}>
@@ -5832,6 +5907,23 @@ function VolunteerAnalysisScreen() {
                 <button type="button" className="mobile-web-gradient-btn subtle" onClick={downloadDbDump} disabled={dbDumpLoading}>
                   {dbDumpLoading ? `Downloading Dump... ${dbDumpProgress >= 0 ? (dbDumpProgress > 100 ? `${Math.round(dbDumpProgress / 1024 / 1024)} MB` : `${dbDumpProgress}%`) : ''}` : 'DOWNLOAD COMPLETE DB DUMP'}
                 </button>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  ref={masterFileInputRef}
+                  onChange={handleMasterUpload}
+                />
+                <button
+                  type="button"
+                  className="mobile-web-gradient-btn subtle"
+                  disabled={masterUploadLoading}
+                  onClick={() => masterFileInputRef.current?.click()}
+                >
+                  {masterUploadLoading ? `Uploading Roll... ${masterUploadProgress}%` : 'UPLOAD MASTER ROLL EXCEL'}
+                </button>
+                {masterUploadFeedback.success && <div className="text-green-600 text-xs w-full text-center mt-1">{masterUploadFeedback.success}</div>}
+                {masterUploadFeedback.error && <div className="text-red-600 text-xs w-full text-center mt-1">{masterUploadFeedback.error}</div>}
               </div>
             )}
             {detailError ? <div className="mobile-web-error">{detailError}</div> : null}
@@ -5879,12 +5971,33 @@ function VolunteerAnalysisScreen() {
 }
 export default function MobileDetailPage({ params }) {
   const [userRole, setUserRole] = useState('');
+  const [assemblies, setAssemblies] = useState([]);
+  const [selectedAssembly, setSelectedAssembly] = useState('');
+  const [assemblyKey, setAssemblyKey] = useState(0);
+  const hasHydrated = useHasHydrated();
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
 
   useEffect(() => {
     const info = getUserInfoSafe();
     setUserRole(info?.role || '');
+    const initialAsm = getAssemblyCode();
+    setSelectedAssembly(initialAsm);
+
     if (typeof window !== 'undefined') {
       window.scrollTo(0, 0);
+    }
+
+    if (info?.userName === 'admin@iswot.io' || info?.role === 'SUPER_ADMIN') {
+      mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
+        const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
+        const formatted = raw.map((item) => ({
+          value: String(item.id),
+          label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id)))
+            ? `${item.name} (${item.id})`
+            : (item.name || `Assembly ${item.id}`),
+        }));
+        setAssemblies(formatted);
+      }).catch(() => setAssemblies([]));
     }
 
     // Refresh profile to sync ward/booth assignments if they are missing
@@ -5894,15 +6007,40 @@ export default function MobileDetailPage({ params }) {
         if (updated && updated.userName) {
           const merged = { ...info, ...updated };
           localStorage.setItem('userInfo', JSON.stringify(merged));
-          // If we are on a screen that depends on these, a refresh might be needed
-          // but for now, the screens use useMemo on getUserInfoSafe() which will pick it up on sub-screens.
         }
       }).catch(err => console.warn('Failed to refresh user profile:', err));
     }
   }, [params.slug]);
 
+  const handleAssemblyChange = (asmId) => {
+    setSelectedAssembly(asmId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('assemblyCode', asmId);
+      setAssemblyKey(prev => prev + 1);
+    }
+  };
+
   const slug = params.slug;
   const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' };
+  const isSuperAdmin = userInfo?.userName === 'admin@iswot.io' || userRole === 'SUPER_ADMIN';
+
+  const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && (
+    <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-[100] shadow-sm">
+      <div className="flex items-center gap-3 max-w-lg mx-auto">
+        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Context</label>
+        <div className="flex-1">
+          <SingleOptionSelect
+            label="Select Assembly"
+            options={assemblies.map(a => a.label)}
+            value={assemblies.find(a => String(a.value) === String(selectedAssembly))?.label || ''}
+            onSelect={(label) => handleAssemblyChange(assemblies.find(a => a.label === label)?.value || '')}
+            customValue=""
+            onCustomValueChange={() => {}}
+          />
+        </div>
+      </div>
+    </div>
+  );
 
   if ((slug === 'voters-family' || slug === 'meetings') && userRole && !['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH', 'USER'].includes(userRole)) {
     return (
@@ -5914,19 +6052,20 @@ export default function MobileDetailPage({ params }) {
     );
   }
 
-  if (slug === 'search-voter') return <SearchVoterScreen />;
-  if (slug === 'search-booth') return <SearchBoothScreen />;
-  if (slug === 'voters-family') return <VotersFamilyScreen />;
-  if (slug === 'meetings') return <MeetingsScreen userRole={userRole} />;
-  if (slug === 'poll-day') return <PollDayScreen />;
-  if (slug === 'print') return <PrintScreen />;
-  if (slug === 'extract') return <ExtractScreen />;
-  if (slug === 'add-volunteer') return <AddVolunteerScreen />;
-  if (slug === 'my-volunteers') return <MyVolunteersScreen />;
-  if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen />;
-  if (slug === 'promotions') return <PromotionsScreen />;
-  return (
-    <ScreenFrame>
+  const renderScreen = () => {
+    const props = { assemblyCodeProp: selectedAssembly, key: assemblyKey };
+    if (slug === 'search-voter') return <SearchVoterScreen {...props} />;
+    if (slug === 'search-booth') return <SearchBoothScreen {...props} />;
+    if (slug === 'voters-family') return <VotersFamilyScreen {...props} />;
+    if (slug === 'meetings') return <MeetingsScreen userRole={userRole} {...props} />;
+    if (slug === 'poll-day') return <PollDayScreen {...props} />;
+    if (slug === 'print') return <PrintScreen {...props} />;
+    if (slug === 'extract') return <ExtractScreen {...props} />;
+    if (slug === 'add-volunteer') return <AddVolunteerScreen {...props} />;
+    if (slug === 'my-volunteers') return <MyVolunteersScreen {...props} />;
+    if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen {...props} />;
+    if (slug === 'promotions') return <PromotionsScreen {...props} />;
+    return (
       <section className="mobile-web-card">
         <p className="text-slate-600">{screen.description}</p>
         <p className="text-slate-500 mt-3">Search Booth and Search Voter now support booth list, voter list, and voter info drill-down.</p>
@@ -5934,6 +6073,13 @@ export default function MobileDetailPage({ params }) {
           <Link href="/mobile/search-voter" className="mobile-web-primary-btn">Go to Search Voter</Link>
         </div>
       </section>
-    </ScreenFrame>
+    );
+  };
+
+  return (
+    <>
+      {globalAssemblySelector}
+      {renderScreen()}
+    </>
   );
 }
