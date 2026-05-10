@@ -163,7 +163,7 @@ a {
 .top-bar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 1001;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -204,7 +204,7 @@ a {
   border-radius: 16px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
   padding: 12px;
-  z-index: 40;
+  z-index: 1010;
 }
 
 .profile-info {
@@ -3002,11 +3002,11 @@ textarea {
 }
 
 .mobile-web-map-legend .legend-dot.male {
-  background: #2563eb;
+  background: #DDA0DD;
 }
 
 .mobile-web-map-legend .legend-dot.female {
-  background: #db2777;
+  background: #FFA6C9;
 }
 
 .mobile-web-map-legend .legend-dot.unknown {

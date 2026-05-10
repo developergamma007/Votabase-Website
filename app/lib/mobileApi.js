@@ -473,11 +473,14 @@ export const mobileApi = {
 
   fetchFamilies: async (hasAssociation, page, size, boothId) => {
     try {
-      let url = `/votebase/v1/api/family?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}&boothId=${encodeURIComponent(boothId)}`;
-      if (hasAssociation !== undefined && hasAssociation !== null) {
-        url += `&association=${encodeURIComponent(hasAssociation)}`;
+      const params = { page, size };
+      if (boothId !== undefined && boothId !== null && String(boothId).trim() !== '') {
+        params.boothId = boothId;
       }
-      return await request(url);
+      if (hasAssociation !== undefined && hasAssociation !== null && String(hasAssociation).trim() !== '') {
+        params.association = hasAssociation;
+      }
+      return await request(`/votebase/v1/api/family${qs(params)}`);
     } catch (error) {
       console.log('Error while fetching families:', error);
       throw error;
@@ -611,9 +614,13 @@ export const mobileApi = {
       throw error;
     }
   },
-  attendMeetingSelf: async (id) => {
+  attendMeetingSelf: async (id, lat, lng) => {
     try {
-      return await request(`/votebase/v1/api/meetings/${id}/attend-self`, { method: 'POST' });
+      let url = `/votebase/v1/api/meetings/${id}/attend-self`;
+      if (lat !== null && lng !== null && lat !== undefined && lng !== undefined) {
+        url += `?lat=${lat}&lng=${lng}`;
+      }
+      return await request(url, { method: 'POST' });
     } catch (error) {
       console.log('Error while recording self attendance:', error);
       throw error;
@@ -675,6 +682,46 @@ export const mobileApi = {
       formData.append('file', file);
       xhr.send(formData);
     });
+  },
+
+  fetchPollDayConfig: async (assemblyId, wardId) => {
+    try {
+      const params = new URLSearchParams();
+      if (assemblyId) params.set('assemblyId', assemblyId);
+      if (wardId) params.set('wardId', wardId);
+      return await request(`/votebase/v1/api/poll-day/config?${params.toString()}`);
+    } catch (error) {
+      console.log('Error while fetching poll day config:', error);
+      throw error;
+    }
+  },
+
+  updatePollDayConfig: async (assemblyId, wardId, enabled) => {
+    try {
+      return await request('/votebase/v1/api/poll-day/config', {
+        method: 'POST',
+        body: JSON.stringify({ assemblyId, wardId, enabled }),
+      });
+    } catch (error) {
+      console.log('Error while updating poll day config:', error);
+      throw error;
+    }
+  },
+
+  updateVoterStatus: async (epic, status, wardCode, boothNo) => {
+    try {
+      return await request(`/votebase/v1/api/voters/by-epic/${encodeURIComponent(epic)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          wardCode,
+          boothNo,
+          updateRequest: { status }
+        }),
+      });
+    } catch (error) {
+      console.log('Error while updating voter status:', error);
+      throw error;
+    }
   },
 };
 

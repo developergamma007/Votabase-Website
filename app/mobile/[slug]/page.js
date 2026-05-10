@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowBackIosNewRounded,
@@ -2645,7 +2645,6 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="blue">
       <section className="mobile-web-card">
-        <MobileHeader title="Add Volunteer" subtitle="Create a volunteer and assign a working level." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-stack">
           <div className="mobile-web-form-grid">
             <div className="mobile-web-field">
@@ -3010,7 +3009,6 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-volunteer-shell">
-        <MobileHeader title="Manage Volunteers" subtitle="Search and manage volunteer profiles." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-stack">
           <div className="mobile-web-volunteer-toolbar">
             <div className="mobile-web-form-grid">
@@ -3225,6 +3223,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [families, setFamilies] = useState([]);
   const [familiesLoading, setFamiliesLoading] = useState(false);
   const searchTimerRef = useRef(null);
+  const [expandedFamilyId, setExpandedFamilyId] = useState(null);
+  const [familiesPage, setFamiliesPage] = useState(0);
+  const [hasMoreFamilies, setHasMoreFamilies] = useState(true);
   const [mounted, setMounted] = useState(false);
 
   const role = useMemo(() => {
@@ -3258,10 +3259,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     }
   }, []);
 
-  const loadFamiliesList = async () => {
+  const loadFamiliesList = async (page = 0, refresh = false) => {
+    if (familiesLoading) return;
     setFamiliesLoading(true);
     try {
-      const res = await mobileApi.fetchFamilies(undefined, 0, 100, '');
+      const size = 50;
+      const res = await mobileApi.fetchFamilies(undefined, page, size, undefined);
       const payload =
         res?.content ||
         res?.data?.content ||
@@ -3269,7 +3272,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         res?.result ||
         res?.data ||
         [];
-      setFamilies(Array.isArray(payload) ? payload : []);
+      const newList = Array.isArray(payload) ? payload : [];
+      setFamilies((prev) => (refresh ? newList : [...prev, ...newList]));
+      setHasMoreFamilies(newList.length === size);
+      setFamiliesPage(page);
     } catch (err) {
       console.error('Failed to load families:', err);
     } finally {
@@ -3279,9 +3285,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (activeTab === 'LIST') {
-      loadFamiliesList();
+      loadFamiliesList(0, true);
     }
   }, [activeTab]);
+
+  const familiesSentinelRef = useInfiniteTrigger(activeTab === 'LIST' && hasMoreFamilies && !familiesLoading, () => {
+    loadFamiliesList(familiesPage + 1);
+  });
 
   const handleDeleteFamily = async (id) => {
     if (!window.confirm('Are you sure you want to delete this family?')) return;
@@ -3315,7 +3325,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     if (!suggestion) return;
     const name = [suggestion.firstMiddleNameEn, suggestion.lastNameEn].filter(Boolean).join(' ').trim();
     const newMember = {
-      id: suggestion.epicNo || `${name}-${Date.now()}`,
+      id: `${suggestion.epicNo || name}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       name: name || suggestion.epicNo || 'Unknown',
       epic: suggestion.epicNo || '',
       relation: suggestion.relationNameEn || suggestion.relationNameLocal || '',
@@ -3323,12 +3333,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       houseNo: suggestion.houseNoEn || suggestion.houseNoLocal || '',
       boothId: suggestion.boothInfo?.boothId || suggestion.boothId || suggestion.booth_id || '',
     };
-    setMembers((current) => {
-      if (current.some((m) => m.epic && m.epic === newMember.epic)) {
-        return current;
-      }
-      return current.concat(newMember);
-    });
+    setMembers((current) => current.concat(newMember));
     setMemberQuery('');
     setRelationQuery('');
     setMemberSuggestions([]);
@@ -3450,8 +3455,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-family-shell">
-        <MobileHeader title="Voters Family" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
-
         <div className="mobile-web-subtabs mb-6">
           <button
             type="button"
@@ -3562,7 +3565,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <div className="mobile-web-table-head">
                   <span>Name</span>
                   <span>EPIC</span>
-                  <span>Relation</span>
+                  <span>Relation name</span>
                   <span>Phone</span>
                   <span>House No</span>
                   <span>Actions</span>
@@ -3616,7 +3619,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               <label className="mobile-web-field">
                 <span>Family Nature</span>
                 <select className="mobile-web-input" value={familyNature} onChange={(e) => setFamilyNature(e.target.value)}>
-                  {['NA', 'Supporter', 'Neutral', 'Opposition'].map((item) => (
+                  {['A', 'B', 'C', 'NA'].map((item) => (
                     <option key={item} value={item}>{item}</option>
                   ))}
                 </select>
@@ -3726,7 +3729,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
           </>
         ) : (
           <div className="mobile-web-families-list">
-            <h3 className="text-lg font-bold mb-4">Saved Families</h3>
             {familiesLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
             {!familiesLoading && families.length === 0 ? <div className="mobile-web-empty">No families found.</div> : null}
             {!familiesLoading && families.length > 0 && (
@@ -3743,37 +3745,83 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {families.map((f) => (
-                      <tr key={f.familyId}>
-                        <td>
-                          <div className="font-bold text-slate-800">{f.familyName}</div>
-                          <div className="text-xs text-slate-500 truncate max-w-[150px]">{f.familyAddress}</div>
-                        </td>
-                        <td>{f.headName || '-'}</td>
-                        <td>{f.headEpicNo || '-'}</td>
-                        <td className="text-center">{f.memberCount || 0}</td>
-                        <td>
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
-                            f.economicStatus === 'Medium' ? 'bg-blue-100 text-blue-700' :
-                              f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
-                                'bg-slate-100 text-slate-600'
-                            }`}>
-                            {f.economicStatus}
-                          </span>
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="text-red-500 hover:text-red-700 font-bold text-[11px] uppercase tracking-wider"
-                            onClick={() => handleDeleteFamily(f.familyId)}
+                    {families.map((f) => {
+                      const isExpanded = expandedFamilyId === f.familyId;
+                      return (
+                        <React.Fragment key={f.familyId}>
+                          <tr
+                            className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : ''}`}
+                            onClick={() => setExpandedFamilyId(isExpanded ? null : f.familyId)}
                           >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                            <td>
+                              <div className="flex items-center gap-2">
+                                <div className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                                  <ExpandMoreRounded fontSize="small" className="text-slate-400" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-800">{f.familyName}</div>
+                                  <div className="text-xs text-slate-500 truncate max-w-[150px]">{f.familyAddress}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td>{f.headName || '-'}</td>
+                            <td>{f.headEpicNo || '-'}</td>
+                            <td className="text-center">{f.memberCount || 0}</td>
+                            <td>
+                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
+                                f.economicStatus === 'Medium' ? 'bg-blue-100 text-blue-700' :
+                                  f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
+                                    'bg-slate-100 text-slate-600'
+                                }`}>
+                                {f.economicStatus}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="text-red-500 hover:text-red-700 font-bold text-[11px] uppercase tracking-wider"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFamily(f.familyId);
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-slate-50">
+                              <td colSpan={6} className="p-4">
+                                <div className="mobile-web-expanded-members">
+                                  <h4 className="font-bold text-slate-700 mb-3 text-xs uppercase tracking-wider">Family Members</h4>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {f.members && f.members.map((m) => (
+                                      <div key={m.memberId} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-1">
+                                        <div className="font-bold text-slate-800 flex items-center justify-between">
+                                          <span>{m.voterName}</span>
+                                          {m.head && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold uppercase text-[9px]">Head</span>}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                                          <span>{m.epicNo || '-'}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    {(!f.members || f.members.length === 0) && (
+                                      <div className="text-slate-400 text-xs italic">No member details available</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
+                <div ref={familiesSentinelRef} className="py-4 text-center text-xs text-slate-400">
+                  {familiesLoading ? 'Loading more families...' : hasMoreFamilies ? 'Scroll for more' : 'All families loaded'}
+                </div>
               </div>
             )}
           </div>
@@ -3917,8 +3965,19 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
     if (!selectedMeeting?.id) return;
     try {
       setAttendanceLoading(true);
-      await mobileApi.attendMeetingSelf(selectedMeeting.id);
+      setMeetingMessage('Capturing location...');
+      let lat = null;
+      let lng = null;
+      try {
+        const pos = await requestLocation({ allowCached: false });
+        lat = pos.latitude;
+        lng = pos.longitude;
+      } catch (err) {
+        console.warn('Location access denied or failed. Attendance will be recorded without distance.');
+      }
+      await mobileApi.attendMeetingSelf(selectedMeeting.id, lat, lng);
       setMeetingMessage('Success: You have marked your attendance.');
+      loadAttendance(selectedMeeting.id);
       setTimeout(() => setMeetingMessage(''), 3000);
     } catch (err) {
       setMeetingMessage('Failed to mark attendance.');
@@ -4101,9 +4160,6 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-meetings-shell">
-        <div className="mobile-web-meetings-header">
-          <h2>Meetings</h2>
-        </div>
         <div className="mobile-web-subtabs">
           {[
             { key: 'list', label: 'Meetings' },
@@ -4276,7 +4332,11 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
             </div>
           </div>
         ) : null}
-        <div className="mobile-web-meeting-detail">
+        {activeMeetingTab !== 'new' && meetingMessage && (
+          <div className="mobile-web-success" style={{ marginBottom: '16px' }}>{meetingMessage}</div>
+        )}
+        {activeMeetingTab === 'list' && (
+          <div className="mobile-web-meeting-detail">
           {selectedMeeting ? (
             <div className="mobile-web-meeting-detail-card" style={{ borderTop: '2px solid var(--accent-light)', paddingTop: '24px' }}>
               <div className="mobile-web-subtabs" style={{ marginBottom: '16px' }}>
@@ -4339,7 +4399,7 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
                     >
                       Record my Attendance
                     </button>
-                    {['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH'].includes(userRole) && (
+                    {isSuperAdmin && (
                       <button
                         className="mobile-web-secondary-btn flex-1"
                         type="button"
@@ -4360,13 +4420,37 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
                   ) : (
                     <div className="mobile-web-analysis-table-wrap">
                       <table className="mobile-web-analysis-table">
-                        <thead><tr><th>Name</th><th>EPIC</th><th>Phone</th><th>Distance (m)</th></tr></thead>
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Distance</th>
+                            <th>Marked At</th>
+                          </tr>
+                        </thead>
                         <tbody>
-                          {attendanceList.map((a) => (
-                            <tr key={a.id}>
-                              <td>{a.name}</td><td>{a.epic}</td><td>{a.phone}</td><td>{a.distance?.toFixed(1)}</td>
-                            </tr>
-                          ))}
+                          {attendanceList.map((a) => {
+                            const dateObj = a.at ? new Date(a.at) : null;
+                            const timeStr = dateObj ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+                            const dateStr = dateObj ? dateObj.toLocaleDateString([], { day: '2-digit', month: '2-digit' }) : '';
+                            return (
+                              <tr key={a.id}>
+                                <td className="font-medium text-slate-800">{a.name}</td>
+                                <td className="text-slate-600">{a.phone || '-'}</td>
+                                <td className="text-slate-500 italic">
+                                  {a.distance !== null && a.distance !== undefined ? (
+                                    <span className="text-blue-600 font-bold not-italic">{a.distance.toFixed(1)} m</span>
+                                  ) : (
+                                    'No GPS'
+                                  )}
+                                </td>
+                                <td className="text-[10px] text-slate-500">
+                                  <div className="font-bold text-slate-700">{timeStr}</div>
+                                  <div>{dateStr}</div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -4376,12 +4460,13 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
             </div>
           ) : null}
         </div>
+        )}
       </section>
     </ScreenFrame>
   );
 }
 
-function PollDayScreen({ assemblyCodeProp }) {
+function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
   const [tab, setTab] = useState('ALL');
   const [natureFilter, setNatureFilter] = useState('');
   const [pollQuery, setPollQuery] = useState('');
@@ -4391,7 +4476,46 @@ function PollDayScreen({ assemblyCodeProp }) {
   const [showPollSuggestions, setShowPollSuggestions] = useState(false);
   const [pollVoters, setPollVoters] = useState([]);
   const [pollError, setPollError] = useState('');
+  const [pollDayEnabled, setPollDayEnabled] = useState(false);
+  const [globalPollDayEnabled, setGlobalPollDayEnabled] = useState(false);
   const pollSearchTimerRef = useRef(null);
+
+  useEffect(() => {
+    const checkActivation = async () => {
+      try {
+        const globalConfig = await mobileApi.fetchPollDayConfig(null, null);
+        setGlobalPollDayEnabled(globalConfig.enabled);
+
+        const config = await mobileApi.fetchPollDayConfig(assemblyCodeProp);
+        setPollDayEnabled(config.enabled);
+      } catch (err) {
+        setPollDayEnabled(false);
+        setGlobalPollDayEnabled(false);
+      }
+    };
+    checkActivation();
+  }, [assemblyCodeProp]);
+
+  const handleToggleActivation = async (val) => {
+    try {
+      await mobileApi.updatePollDayConfig(assemblyCodeProp, null, val);
+      setPollDayEnabled(val);
+    } catch (err) {
+      setPollError('Failed to update activation.');
+    }
+  };
+
+  const handleToggleGlobalActivation = async (val) => {
+    try {
+      await mobileApi.updatePollDayConfig(null, null, val);
+      setGlobalPollDayEnabled(val);
+      // Sync the assembly-specific toggle as well
+      await mobileApi.updatePollDayConfig(assemblyCodeProp, null, val);
+      setPollDayEnabled(val);
+    } catch (err) {
+      setPollError('Failed to update global activation.');
+    }
+  };
 
   const buildPollDisplay = (item) => {
     const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
@@ -4405,8 +4529,24 @@ function PollDayScreen({ assemblyCodeProp }) {
       houseNo: item.houseNoEn || item.houseNoLocal || '',
       natureOfVoter: item.natureOfVoter || item.nature || '',
       boothNo: item.boothNo || item.boothNumber || item.booth || '',
+      wardCode: item.wardCode || '',
       votedStatus: normalizedStatus || '',
     };
+  };
+
+  const handleToggleVoted = async (voter, newStatus) => {
+    if (!pollDayEnabled && !globalPollDayEnabled) {
+      setPollError('Poll Day is currently not active. Please enable activation using the checkbox above.');
+      return;
+    }
+    try {
+      await mobileApi.updateVoterStatus(voter.epic, newStatus, voter.wardCode, voter.boothNo);
+      setPollVoters((prev) =>
+        prev.map((v) => (v.id === voter.id ? { ...v, votedStatus: newStatus } : v))
+      );
+    } catch (err) {
+      setPollError('Failed to update status.');
+    }
   };
 
   const fetchPollVoters = async (queryValue = '') => {
@@ -4484,9 +4624,12 @@ function PollDayScreen({ assemblyCodeProp }) {
       list = list.filter((v) => String(v.natureOfVoter || '').toUpperCase() === natureFilter);
     }
     if (tab === 'VOTED') {
-      list = list.filter((v) => String(v.votedStatus).includes('VOTED'));
+      list = list.filter((v) => {
+        const s = String(v.votedStatus).toUpperCase();
+        return s.includes('VOTED') && !s.includes('NOT');
+      });
     } else if (tab === 'NOT VOTED') {
-      list = list.filter((v) => String(v.votedStatus).includes('NOT'));
+      list = list.filter((v) => String(v.votedStatus).toUpperCase().includes('NOT'));
     }
     return list;
   }, [pollVoters, natureFilter, tab]);
@@ -4507,7 +4650,40 @@ function PollDayScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-pollday-shell">
-        <MobileHeader title="Poll Day — Voters" subtitle="Ward: All · Booth: All" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+        
+        {isSuperAdmin && (
+          <div className="mobile-web-action-row" style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: '12px', borderBottom: '1px solid var(--accent-light)', marginBottom: '24px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', width: 'fit-content' }}>
+              <input 
+                type="checkbox" 
+                style={{ width: '20px', height: '20px', cursor: 'pointer', margin: 0 }}
+                checked={globalPollDayEnabled} 
+                onChange={(e) => handleToggleGlobalActivation(e.target.checked)}
+              />
+              <span style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--accent-dark)', whiteSpace: 'nowrap' }}>
+                Enable Poll Day Globally (All Constituencies)
+              </span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', width: 'fit-content' }}>
+              <input 
+                type="checkbox" 
+                style={{ width: '20px', height: '20px', cursor: 'pointer', margin: 0 }}
+                checked={pollDayEnabled} 
+                onChange={(e) => handleToggleActivation(e.target.checked)}
+              />
+              <span style={{ fontSize: '15px', fontWeight: '500', color: '#374151', whiteSpace: 'nowrap' }}>
+                Enable Poll Day for this Assembly only
+              </span>
+            </label>
+          </div>
+        )}
+
+        {(!pollDayEnabled && !globalPollDayEnabled) && (
+          <div className="mobile-web-info-pill" style={{ margin: '0 24px 20px', background: '#fffbeb', color: '#92400e', border: '1px solid #fef3c7', borderRadius: '8px', padding: '12px', fontSize: '13px' }}>
+            Poll Day is currently not active. Please contact Admin for activation.
+          </div>
+        )}
+
         <div className="mobile-web-pollday-top">
           <div className="mobile-web-search-input-wrap mobile-web-member-search">
             <SearchRounded className="mobile-web-search-icon" />
@@ -4564,16 +4740,29 @@ function PollDayScreen({ assemblyCodeProp }) {
         <div className="mobile-web-pollday-grid">
           <div className="mobile-web-pollday-left">
             <div className="mobile-web-tabs">
-              {['ALL', 'VOTED', 'NOT VOTED'].map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={`mobile-web-tab-pill ${tab === item ? 'active' : ''}`}
-                  onClick={() => setTab(item)}
-                >
-                  {item}
-                </button>
-              ))}
+              {['ALL', 'VOTED', 'NOT VOTED'].map((item) => {
+                let count = 0;
+                if (item === 'ALL') {
+                  count = pollVoters.length;
+                } else if (item === 'VOTED') {
+                  count = pollVoters.filter((v) => {
+                    const s = String(v.votedStatus).toUpperCase();
+                    return s.includes('VOTED') && !s.includes('NOT');
+                  }).length;
+                } else if (item === 'NOT VOTED') {
+                  count = pollVoters.filter((v) => String(v.votedStatus).toUpperCase().includes('NOT')).length;
+                }
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`mobile-web-tab-pill ${tab === item ? 'active' : ''}`}
+                    onClick={() => setTab(item)}
+                  >
+                    {item} {count > 0 ? `(${count})` : '(0)'}
+                  </button>
+                );
+              })}
               <div
                 className="mobile-web-select-wrap mobile-web-nature-select"
                 ref={dropdownRef}
@@ -4668,8 +4857,20 @@ function PollDayScreen({ assemblyCodeProp }) {
                     </div>
                     <div className="mobile-web-pollday-card-actions">
                       <div className="mobile-web-pollday-status">
-                        <button className={`mobile-web-pill ${isVoted ? 'success' : ''}`} type="button">VOTED</button>
-                        <button className={`mobile-web-pill ${isNotVoted ? 'danger' : ''}`} type="button">NOT VOTED</button>
+                        <button 
+                          className={`mobile-web-pill ${isVoted ? 'success' : ''} ${(!pollDayEnabled && !globalPollDayEnabled && !isSuperAdmin) ? 'disabled' : ''}`} 
+                          type="button"
+                          onClick={() => handleToggleVoted(voter, 'VOTED')}
+                        >
+                          VOTED
+                        </button>
+                        <button 
+                          className={`mobile-web-pill ${isNotVoted ? 'danger' : ''} ${(!pollDayEnabled && !globalPollDayEnabled && !isSuperAdmin) ? 'disabled' : ''}`} 
+                          type="button"
+                          onClick={() => handleToggleVoted(voter, 'NOT VOTED')}
+                        >
+                          NOT VOTED
+                        </button>
                       </div>
                       <a
                         className={`mobile-web-call-btn ${phoneValue ? '' : 'disabled'}`}
@@ -4806,7 +5007,6 @@ function ExtractScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-extract-shell">
-        <MobileHeader title="Extract" subtitle="Upload voter list PDFs and export structured Excel sheets." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-stack">
           <div className="mobile-web-field">
             <label>PDF File</label>
@@ -4910,7 +5110,6 @@ function PrintScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-print-shell">
-        <MobileHeader title="Printer" onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
         <div className="mobile-web-printer-status">
           <div>
             <div className="mobile-web-status-title">{connectedPrinter ? 'Connected' : 'Not Connected'}</div>
@@ -5484,7 +5683,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       const bounds = new google.maps.LatLngBounds();
       validPoints.forEach((point) => {
         const gender = String(point.gender || '').toUpperCase();
-        const color = gender.startsWith('M') ? '#2563eb' : gender.startsWith('F') ? '#db2777' : '#64748b';
+        const color = gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b';
         const marker = new google.maps.Marker({
           position: { lat: point.latitude, lng: point.longitude },
           map: mapInstanceRef.current,
@@ -5497,6 +5696,37 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             strokeWeight: 1,
           },
         });
+
+        const infoWindow = new google.maps.InfoWindow({
+          content: `
+            <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
+              <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
+              <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="color: #64748b; font-weight: 500;">Relation:</span>
+                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.relationName || '-'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="color: #64748b; font-weight: 500;">EPIC:</span>
+                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.epic || '-'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="color: #64748b; font-weight: 500;">Mobile:</span>
+                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.mobile || '-'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="color: #64748b; font-weight: 500;">Gender:</span>
+                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.gender || '-'}</span>
+                </div>
+              </div>
+            </div>
+          `
+        });
+
+        marker.addListener('click', () => {
+          infoWindow.open(mapInstanceRef.current, marker);
+        });
+
         mapMarkersRef.current.push(marker);
         bounds.extend(marker.getPosition());
       });
@@ -5527,6 +5757,10 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           latitude: Number(item.latitude),
           longitude: Number(item.longitude),
           gender: item.gender || item.sex || '',
+          name: item.name || '',
+          epic: item.epic || '',
+          relationName: item.relationName || '',
+          mobile: item.mobile || '',
         }))
         .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
       setMapPoints(normalized);
@@ -5626,7 +5860,6 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     return (
       <ScreenFrame accent="light">
         <section className="mobile-web-card mobile-web-volunteer-shell">
-          <MobileHeader title="Volunteer Analysis" subtitle="Access restricted for booth users." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
           <div className="mobile-web-empty">This section is available for Assembly and Ward roles only.</div>
         </section>
       </ScreenFrame>
@@ -5636,7 +5869,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-volunteer-shell">
-        <MobileHeader title="Volunteer Analysis" subtitle="Data collection coverage by volunteer." onBack={() => { if (typeof window !== 'undefined') window.history.back(); }} />
+        <div className="mobile-web-stack">
         {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access.</div> : null}
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
           {role === 'SUPER_ADMIN' && assemblies.length > 0 && (
@@ -5965,6 +6198,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             ) : null}
           </div>
         ) : null}
+        </div>
       </section>
     </ScreenFrame>
   );
@@ -5978,14 +6212,17 @@ export default function MobileDetailPage({ params }) {
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
 
   useEffect(() => {
+    // Aggressive scroll reset for mobile experience
+    if (typeof window !== 'undefined') {
+      window.scrollTo(0, 0);
+      const contentArea = document.querySelector('.content-area');
+      if (contentArea) contentArea.scrollTop = 0;
+    }
+
     const info = getUserInfoSafe();
     setUserRole(info?.role || '');
     const initialAsm = getAssemblyCode();
     setSelectedAssembly(initialAsm);
-
-    if (typeof window !== 'undefined') {
-      window.scrollTo(0, 0);
-    }
 
     if (info?.userName === 'admin@iswot.io' || info?.role === 'SUPER_ADMIN') {
       mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
@@ -6010,7 +6247,7 @@ export default function MobileDetailPage({ params }) {
         }
       }).catch(err => console.warn('Failed to refresh user profile:', err));
     }
-  }, [params.slug]);
+  }, [params.slug, userInfo?.token]);
 
   const handleAssemblyChange = (asmId) => {
     setSelectedAssembly(asmId);
@@ -6025,7 +6262,7 @@ export default function MobileDetailPage({ params }) {
   const isSuperAdmin = userInfo?.userName === 'admin@iswot.io' || userRole === 'SUPER_ADMIN';
 
   const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && (
-    <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-[100] shadow-sm">
+    <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3 max-w-lg mx-auto">
         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Context</label>
         <div className="flex-1">
@@ -6053,18 +6290,18 @@ export default function MobileDetailPage({ params }) {
   }
 
   const renderScreen = () => {
-    const props = { assemblyCodeProp: selectedAssembly, key: assemblyKey };
-    if (slug === 'search-voter') return <SearchVoterScreen {...props} />;
-    if (slug === 'search-booth') return <SearchBoothScreen {...props} />;
-    if (slug === 'voters-family') return <VotersFamilyScreen {...props} />;
-    if (slug === 'meetings') return <MeetingsScreen userRole={userRole} {...props} />;
-    if (slug === 'poll-day') return <PollDayScreen {...props} />;
-    if (slug === 'print') return <PrintScreen {...props} />;
-    if (slug === 'extract') return <ExtractScreen {...props} />;
-    if (slug === 'add-volunteer') return <AddVolunteerScreen {...props} />;
-    if (slug === 'my-volunteers') return <MyVolunteersScreen {...props} />;
-    if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen {...props} />;
-    if (slug === 'promotions') return <PromotionsScreen {...props} />;
+    const commonProps = { assemblyCodeProp: selectedAssembly };
+    if (slug === 'search-voter') return <SearchVoterScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'search-booth') return <SearchBoothScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'voters-family') return <VotersFamilyScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'meetings') return <MeetingsScreen key={assemblyKey} userRole={userRole} {...commonProps} />;
+    if (slug === 'poll-day') return <PollDayScreen key={assemblyKey} isSuperAdmin={isSuperAdmin} {...commonProps} />;
+    if (slug === 'print') return <PrintScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'extract') return <ExtractScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'add-volunteer') return <AddVolunteerScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'my-volunteers') return <MyVolunteersScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'promotions') return <PromotionsScreen key={assemblyKey} {...commonProps} />;
     return (
       <section className="mobile-web-card">
         <p className="text-slate-600">{screen.description}</p>
