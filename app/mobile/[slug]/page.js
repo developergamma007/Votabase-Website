@@ -94,6 +94,74 @@ function ScreenFrame({ children, accent = 'blue' }) { return <div className={`mo
 function useInfiniteTrigger(enabled, onLoadMore) { const sentinelRef = useRef(null); useEffect(() => { if (!enabled || !sentinelRef.current) return undefined; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onLoadMore(); }, { rootMargin: '240px 0px' }); observer.observe(sentinelRef.current); return () => observer.disconnect(); }, [enabled, onLoadMore]); return sentinelRef; }
 function boothStats(booth) { const stats = booth?.voterStats || {}; const voters = booth?.voters || []; return { total: Number.isFinite(stats.total) ? stats.total : voters.length, male: Number.isFinite(stats.male) ? stats.male : voters.filter((v) => (v.gender || '').toUpperCase().startsWith('M')).length, female: Number.isFinite(stats.female) ? stats.female : voters.filter((v) => (v.gender || '').toUpperCase().startsWith('F')).length }; }
 function normalizeVoter(voter, fallbackBooth) { const boothInfo = voter?.boothInfo || {}; const gender = voter?.gender || voter?.sex || '-'; const genderUpper = String(gender).toUpperCase(); return { ...voter, voterId: voter?.voterId ?? voter?.id ?? voter?.epicNo, serialNo: voter?.sl ?? voter?.srNo ?? voter?.serialNo ?? voter?.slNo ?? '-', epicNo: voter?.epicNo ?? voter?.epic ?? '-', name: voter?.firstMiddleNameEn || voter?.name || voter?.voterName || '-', relationLabel: voter?.relationType || voter?.rel_type || 'Father', relationName: voter?.relationFirstMiddleNameEn || voter?.relationNameEn || voter?.fatherName || voter?.motherName || voter?.relation_name_en || '', houseNo: voter?.houseNoEn ?? voter?.house ?? voter?.house_no_en ?? '-', age: voter?.age ?? '-', gender, genderClass: genderUpper.startsWith('M') ? 'male' : genderUpper.startsWith('F') ? 'female' : 'other', boothLabel: fallbackBooth?.boothLabel || boothInfo?.boothNameEn || voter?.boothNameEn || '', boothId: fallbackBooth?.boothId || boothInfo?.boothId || voter?.boothId || '', boothNo: voter?.boothNo || boothInfo?.boothNo || '', wardCode: (voter?.wardCode ?? fallbackBooth?.wardCode) || boothInfo?.wardCode || '' }; }
+
+function triggerVoterSlipPrint(voter, booth, template) {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(`
+    <html>
+      <head>
+        <title>Print Voter Slip - ${voter.epicNo}</title>
+        <style>
+          @page { margin: 0; size: 80mm auto; }
+          body { margin: 0; padding: 10px; font-family: sans-serif; width: 80mm; }
+          .slip { width: 100%; border: 1px dashed #ccc; padding: 10px; box-sizing: border-box; }
+          .header { text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 5px; }
+          .title { text-align: center; font-size: 14px; margin-bottom: 10px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+          .row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
+          .label { font-weight: bold; }
+          .info-block { margin-top: 10px; font-size: 12px; }
+          .cut { text-align: center; margin-top: 15px; font-size: 10px; color: #666; border-top: 1px dashed #999; padding-top: 5px; }
+          .candidate { text-align: center; margin-top: 10px; font-weight: bold; border: 1px solid #000; padding: 5px; }
+          .valuable-vote { text-align: center; font-size: 11px; margin-top: 5px; color: #444; }
+        </style>
+      </head>
+      <body>
+        <div class="slip">
+          <div class="header">${template?.electionName || 'Election-2026'}</div>
+          <div class="title">VOTER SLIP</div>
+          <div class="row"><span class="label">Name:</span> <span>${voter.firstMiddleNameEn || voter.name}</span></div>
+          <div class="row"><span class="label">${voter.relationLabel || 'Father'}:</span> <span>${voter.relationName}</span></div>
+          <div class="row"><span class="label">EPIC ID:</span> <span>${voter.epicNo}</span></div>
+          <div class="row"><span class="label">Booth#:</span> <span>${voter.boothNo || booth?.boothNo || '-'}</span></div>
+          <div class="row"><span class="label">Sl#:</span> <span>${voter.serialNo || '-'}</span></div>
+          <div class="info-block">
+            <div class="label">Poll Booth:</div>
+            <div>${booth?.boothNameEn || voter.boothLabel || '-'}</div>
+            <div style="font-size: 10px; color: #444;">${booth?.address || ''}</div>
+          </div>
+          <div class="info-block">
+            <div class="row"><span class="label">Vote On:</span> <span>${template?.voteDate || '13-MAY-2024'}</span></div>
+            <div class="row"><span class="label">Time:</span> <span>${template?.voteTime || '7.00AM-6.00PM'}</span></div>
+          </div>
+          <div class="valuable-vote">Kindly Cast Your Valuable Vote for ${template?.candidateParty || '-'}</div>
+          <div class="candidate">
+            <div style="font-size: 11px; opacity: 0.8;">${template?.candidateParty || '-'} CANDIDATE</div>
+            <div style="font-size: 14px;">${template?.candidateName || '-'}</div>
+            <div style="font-size: 10px; font-weight: normal;">${template?.candidateWardLabel || template?.wardLabel || ''}</div>
+          </div>
+          <div class="cut">------- Please cut here -------</div>
+        </div>
+        <script>
+          setTimeout(() => {
+            window.print();
+            setTimeout(() => { window.frameElement.remove(); }, 1000);
+          }, 500);
+        </script>
+      </body>
+    </html>
+  `);
+  doc.close();
+}
 function normalizeMobileValue(value) { return String(value || '').replace(/\D/g, '').slice(0, 10); }
 function maskTrailingValue(value) { const raw = String(value || ''); return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw; }
 const LOCATION_CACHE_KEY = 'lastKnownLocation';
@@ -267,7 +335,8 @@ function buildWhatsAppMessage(voter, booth, template) {
     candidateName,
     candidateParty,
     candidateWard,
-    socialLink,
+    socialLink ? `Follow us: ${socialLink}` : '',
+    template?.bannerUrl ? `View Image: ${template.bannerUrl}` : '',
   ];
   return lines.filter((item) => item !== '').join('\n').trim();
 }
@@ -364,6 +433,68 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
     {filteredOptions.length === 0 ? <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No matches found</div> : null}
     {filteredOptions.map((option) => { const checked = option === 'Others' ? showOther : value.includes(option); return <label key={option} className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}><input type="checkbox" checked={checked} onChange={() => onToggle(option)} /><span>{option}</span></label>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>;
 }
+function PrintableVoterSlip({ voter, booth, template, isPreview = false }) {
+  const election = template?.electionName || 'Election-2024';
+  const voterName = voter?.name || '-';
+  const relationLabel = voter?.relationLabel || voter?.relationType || 'Relation';
+  const relationName = voter?.relationName || '-';
+  const epic = voter?.epicNo || '-';
+  const boothNo = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '-';
+  const serial = voter?.serialNo || voter?.sl || voter?.srNo || '-';
+  const boothName = booth?.boothNameEn || booth?.boothLabel || voter?.boothLabel || '-';
+  const boothAddress = booth?.address || booth?.boothAddress || '';
+  const voteDate = template?.voteDate || '';
+  const voteTime = template?.voteTime || '';
+  const printedOn = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+  return (
+    <div className={`printable-voter-slip-container ${isPreview ? 'is-preview' : ''}`}>
+      <div className="voter-slip-header">{election}</div>
+      <div className="voter-slip-title">VOTER-SLIP</div>
+      <div className="voter-slip-body">
+        <p><strong>Name:</strong> {voterName}</p>
+        <p><strong>{relationLabel}:</strong> {relationName}</p>
+        <p><strong>EPIC ID:</strong> {epic}</p>
+        
+        <div className="booth-serial-row">
+          <div className="booth-cell">Booth#: {boothNo}</div>
+          <div className="serial-cell">Sl#: {serial}</div>
+        </div>
+
+        <div className="booth-info-block">
+          <p><strong>Poll Booth:</strong> {boothName}</p>
+          <p className="indent">{boothAddress}</p>
+        </div>
+
+        <div className="vote-time-block">
+          <p><strong>Vote On:</strong> {voteDate}</p>
+          <p className="time-only">{voteTime}</p>
+        </div>
+
+        <div className="printed-on">Printed On: {printedOn}</div>
+      </div>
+      
+      <div className="cut-line">*******Please cut here*******</div>
+      
+      {template?.showLogo && template?.bannerUrl && (
+        <div className="logo-section">
+          <img src={template.bannerUrl} alt="Candidate Logo" className="voter-slip-logo" />
+        </div>
+      )}
+      
+      <div className="voter-slip-footer">
+        <p className="valuable-vote">Kindly do Cast Your Valuable<br/>Vote for {template?.candidateParty || 'BJP'}</p>
+        
+        <div className="candidate-info">
+          <div className="candidate-name">{template?.candidateName || 'KONDA VISHWESHWAR REDDY'}</div>
+          <div className="candidate-party">{template?.candidateParty || 'BJP'} CANDIDATE</div>
+          <div className="candidate-ward">{template?.candidateWardLabel || 'CHEVALLA PARLIAMENTARY'}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [activeTab, setActiveTab] = useState('PRIMARY');
   const [form, setForm] = useState(() => getDefaultVoterForm(voter));
@@ -684,6 +815,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setActiveTab(tab);
   };
 
+  const [printTemplate, setPrintTemplate] = useState(null);
   useEffect(() => {
     let active = true;
     const toDraft = (tpl) => ({
@@ -700,9 +832,9 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       boothLocationLink: tpl?.boothLocationLink || '',
       enabled: tpl?.enabled || false,
       bannerUrl: tpl?.bannerUrl || '',
+      showLogo: tpl?.showLogo !== undefined ? tpl.showLogo : true,
     });
     const fetchChannel = async (channel) => {
-      // Robust ward ID resolution
       const effectiveWardId = wardId || voter?.wardId || voter?.ward_id || voter?.wardNo || '';
       const voterEpic = voter?.epicNo || voter?.epic || voter?.voterId;
       const wardRes = await mobileApi.fetchMessageTemplate(effectiveWardId || null, channel, voterEpic);
@@ -715,11 +847,16 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     const loadTemplate = async () => {
       setTemplateStatus({ loading: true, error: '', success: '' });
       try {
-        const [waTpl, smsTpl] = await Promise.all([fetchChannel('WHATSAPP'), fetchChannel('SMS')]);
+        const [waTpl, smsTpl, prnTpl] = await Promise.all([
+          fetchChannel('WHATSAPP'),
+          fetchChannel('SMS'),
+          fetchChannel('PRINT')
+        ]);
         if (!active) return;
         setWhatsAppTemplate(waTpl);
         setSmsTemplate(smsTpl);
-        setTemplateDraft(toDraft(templateChannel === 'SMS' ? smsTpl : waTpl));
+        setPrintTemplate(prnTpl);
+        setTemplateDraft(toDraft(templateChannel === 'SMS' ? smsTpl : (templateChannel === 'PRINT' ? prnTpl : waTpl)));
       } catch (error) {
         if (!active) return;
         setTemplateStatus({ loading: false, error: error?.message || 'Unable to load message template.', success: '' });
@@ -753,11 +890,13 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
         socialLink: templateDraft.socialLink,
         boothLocationLink: templateDraft.boothLocationLink,
         bannerUrl: templateDraft.bannerUrl,
+        showLogo: templateDraft.showLogo,
         enabled: templateDraft.enabled,
       };
       const res = await mobileApi.saveMessageTemplate(payload);
       const tpl = res?.data?.result || null;
       if (templateChannel === 'SMS') setSmsTemplate(tpl);
+      else if (templateChannel === 'PRINT') setPrintTemplate(tpl);
       else setWhatsAppTemplate(tpl);
       setTemplateStatus({ loading: false, error: '', success: 'Template saved.' });
     } catch (error) {
@@ -772,7 +911,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       const res = await mobileApi.uploadMessageTemplateBanner({ wardId, channel: 'WHATSAPP', file });
       const tpl = res?.data?.result || null;
       setWhatsAppTemplate(tpl);
-      setTemplateDraft((prev) => ({ ...prev, bannerUrl: tpl?.bannerUrl || prev.bannerUrl }));
+      setTemplateDraft((prev) => ({
+        ...prev,
+        bannerUrl: tpl?.bannerUrl || prev.bannerUrl,
+        showLogo: tpl?.showLogo !== undefined ? tpl.showLogo : prev.showLogo
+      }));
       setBannerUpload({ loading: false, error: '' });
     } catch (error) {
       setBannerUpload({ loading: false, error: error?.message || 'Unable to upload banner.' });
@@ -953,6 +1096,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           Voter Slip Print
         </button>
       </section>
+      <PrintableVoterSlip
+        voter={{ ...voter, ...currentPayload }}
+        booth={booth}
+        template={printTemplate || whatsAppTemplate}
+      />
     </div>
   );
 }
@@ -1022,6 +1170,22 @@ function VoterListScreen({
     else if (hasMore && onLoadMore) onLoadMore();
   });
 
+  const handlePrint = async (voter) => {
+    const wardId = voter.wardId || booth?.wardId || voter.wardCode;
+    if (!wardId) {
+      triggerVoterSlipPrint(voter, booth, {});
+      return;
+    }
+    try {
+      const res = await mobileApi.fetchMessageTemplate(wardId, 'PRINT');
+      const template = res?.data?.result || res?.result || res?.data || res || {};
+      triggerVoterSlipPrint(voter, booth, template);
+    } catch (err) {
+      console.error('Failed to fetch print template:', err);
+      triggerVoterSlipPrint(voter, booth, {});
+    }
+  };
+
   const headerTitle =
     booth?.boothNo || booth?.boothId ? `${booth?.boothNo ?? booth?.boothId} - ${booth?.boothLabel || ''}` : heading;
 
@@ -1080,8 +1244,21 @@ function VoterListScreen({
             onClick={() => onSelectVoter?.(voter, booth)}
           >
             <div className="mobile-web-voter-card-head">
-              <span>{voter.serialNo ?? '-'}</span>
-              <strong>{voter.epicNo}</strong>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{voter.serialNo ?? '-'}</span>
+                <strong>{voter.epicNo}</strong>
+              </div>
+              <button 
+                type="button" 
+                className="mobile-web-secondary-btn"
+                style={{ padding: '4px 8px', fontSize: '0.75rem', height: 'auto', minWidth: 'auto' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrint(voter);
+                }}
+              >
+                🖨️ Print
+              </button>
             </div>
             <div className="mobile-web-voter-grid">
               <div className="mobile-web-voter-row">
@@ -2251,13 +2428,29 @@ function PromotionsScreen({ assemblyCodeProp }) {
                     <button type="button" onClick={() => setShowPreviewModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
                   </div>
                   <div className="p-4 bg-white overflow-y-auto" style={{ maxHeight: '60vh' }}>
-                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm whitespace-pre-wrap font-mono text-slate-600 shadow-inner">
-                      {buildWhatsAppMessage(
-                        { firstMiddleNameEn: 'Suresh Kumar', epicNo: 'EPIC123456', serialNo: '42' },
-                        { boothNo: '154', boothNameEn: 'Govt Higher Primary School', address: 'Main Road, Sample Layout' },
-                        form
-                      )}
-                    </div>
+                    {form.channel === 'PRINT' ? (
+                      <PrintableVoterSlip
+                        isPreview={true}
+                        voter={{ name: 'Suresh Kumar', epicNo: 'EPIC123456', serialNo: '42', relationLabel: 'Father', relationName: '-' }}
+                        booth={{ boothNo: '154', boothNameEn: 'Govt Higher Primary School', address: 'Main Road, Sample Layout' }}
+                        template={form}
+                      />
+                    ) : (
+                      <>
+                        {form.bannerUrl && (
+                          <div className="mb-4">
+                            <img src={form.bannerUrl} alt="Banner Preview" className="w-full h-auto rounded-lg border border-slate-200" />
+                          </div>
+                        )}
+                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm whitespace-pre-wrap font-mono text-slate-600 shadow-inner">
+                          {buildWhatsAppMessage(
+                            { firstMiddleNameEn: 'Suresh Kumar', epicNo: 'EPIC123456', serialNo: '42' },
+                            { boothNo: '154', boothNo: '154', boothNameEn: 'Govt Higher Primary School', address: 'Main Road, Sample Layout' },
+                            form
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div className="p-4 border-t border-slate-100 flex justify-end">
                     <button type="button" className="mobile-web-primary-btn" onClick={() => setShowPreviewModal(false)}>Close Preview</button>
@@ -2271,8 +2464,8 @@ function PromotionsScreen({ assemblyCodeProp }) {
               <div ref={mapRef} style={{ width: '100%', height: '240px', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
             </div>
 
-            <div className="my-6">
-              <label className="flex items-center gap-3 cursor-pointer">
+            <div className="my-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center gap-3 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <input
                   type="checkbox"
                   checked={form.enabled}
@@ -2280,7 +2473,17 @@ function PromotionsScreen({ assemblyCodeProp }) {
                   disabled={!isAdmin}
                   style={{ width: '20px', height: '20px' }}
                 />
-                <span className="text-sm font-bold text-slate-700">Enable {form.channel} for this ward (after latest data upload)</span>
+                <span className="text-sm font-bold text-slate-700">Enable {form.channel}</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <input
+                  type="checkbox"
+                  checked={form.showLogo}
+                  onChange={(e) => handleChange('showLogo', e.target.checked)}
+                  disabled={!isAdmin}
+                  style={{ width: '20px', height: '20px' }}
+                />
+                <span className="text-sm font-bold text-slate-700">Show Candidate Logo on Print</span>
               </label>
             </div>
 
@@ -5060,6 +5263,80 @@ function PrintScreen({ assemblyCodeProp }) {
   const [connectedPrinter, setConnectedPrinter] = useState(null);
   const [scanStatus, setScanStatus] = useState('');
   const [scanError, setScanError] = useState('');
+  const [writeChar, setWriteChar] = useState(null);
+
+  // Ward / Booth / Voter state
+  const [wards, setWards] = useState([]);
+  const [selectedWard, setSelectedWard] = useState('');
+  const [booths, setBooths] = useState([]);
+  const [selectedBooth, setSelectedBooth] = useState('');
+  const [voters, setVoters] = useState([]);
+  const [loadingVoters, setLoadingVoters] = useState(false);
+  const [printingIdx, setPrintingIdx] = useState(-1);
+  const [pHydrated, setPHydrated] = useState(false);
+  const [assemblySnapshot, setAssemblySnapshot] = useState(null);
+  const [printTemplate, setPrintTemplate] = useState(null);
+  const [templateLoading, setTemplateLoading] = useState(false);
+
+  useEffect(() => { setPHydrated(true); }, []);
+
+  // Load assembly data (same as BoothSearch)
+  useEffect(() => {
+    if (!pHydrated) return;
+    const assemblyId = assemblyCodeProp || getAssemblyCode();
+    if (!assemblyId) return;
+    (async () => {
+      try {
+        const response = await mobileApi.loadDataLite(assemblyId);
+        const snapshot = await resolveSnapshot(response);
+        setAssemblySnapshot(snapshot);
+        const wardList = (snapshot?.assembly?.wards || []).map(w => ({
+          label: w.wardNameEn || `Ward ${w.wardId}`,
+          value: String(w.wardId),
+        })).sort((a, b) => a.label.localeCompare(b.label));
+        setWards(wardList);
+      } catch (err) {
+        console.error('Failed to load assembly data for print:', err);
+      }
+    })();
+  }, [pHydrated, assemblyCodeProp]);
+
+  // Fetch print template when ward changes
+  useEffect(() => {
+    if (!selectedWard) { setPrintTemplate(null); return; }
+    try { localStorage.setItem('printWard', selectedWard); } catch {}
+    setTemplateLoading(true);
+    mobileApi.fetchMessageTemplate(selectedWard, 'PRINT').then((res) => {
+      const tpl = res?.data?.result || res?.result || res?.data || res || {};
+      setPrintTemplate(tpl);
+    }).catch(() => setPrintTemplate(null)).finally(() => setTemplateLoading(false));
+  }, [selectedWard]);
+
+  // Extract booths when ward changes
+  useEffect(() => {
+    if (!selectedWard || !assemblySnapshot) { setBooths([]); return; }
+    const ward = (assemblySnapshot?.assembly?.wards || []).find(w => String(w.wardId) === selectedWard);
+    if (!ward) { setBooths([]); return; }
+    const list = (ward.booths || []).map(b => {
+      const id = b.boothId ?? b.id ?? b.booth_id;
+      const no = b.boothNo ?? b.booth_no ?? id;
+      const name = b.boothNameEn ?? b.nameEn ?? b.booth_add_en ?? b.pollingStationAdrEn ?? `Booth ${no}`;
+      return { label: `#${no} - ${name}`, value: String(id), boothNo: String(no), boothNameEn: name, boothId: id, address: b.pollingStationAdrEn || b.boothNameEn || '', wardId: ward.wardId, wardNameEn: ward.wardNameEn };
+    });
+    setBooths(list);
+    setSelectedBooth('');
+    setVoters([]);
+  }, [selectedWard, assemblySnapshot]);
+
+  // Fetch voters when booth changes
+  useEffect(() => {
+    if (!selectedBooth) { setVoters([]); return; }
+    setLoadingVoters(true);
+    mobileApi.fetchBoothVoters(selectedBooth).then((res) => {
+      const data = res?.data?.result || res?.result || res?.data || {};
+      setVoters(data?.voters || []);
+    }).catch((err) => { console.error('fetchBoothVoters error:', err); setVoters([]); }).finally(() => setLoadingVoters(false));
+  }, [selectedBooth]);
 
   const addPrinter = (device) => {
     if (!device) return;
@@ -5068,6 +5345,36 @@ function PrintScreen({ assemblyCodeProp }) {
       return prev.concat([{ id: device.id, name: device.name || 'Thermal Printer', device }]);
     });
   };
+
+  // Known BLE printer service UUIDs
+  const PRINTER_SERVICES = [
+    '49535343-fe7d-4158-b296-146716be5a94',
+    'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+    '000018f0-0000-1000-8000-00805f9b34fb',
+    '0000ff00-0000-1000-8000-00805f9b34fb',
+    '0000ffe0-0000-1000-8000-00805f9b34fb',
+    '0000fff0-0000-1000-8000-00805f9b34fb',
+  ];
+
+  // Manual trigger to refresh paired devices list
+  const refreshPairedPrinters = async () => {
+    if (typeof navigator === 'undefined' || !navigator.bluetooth?.getDevices) return;
+    try {
+      const devices = await navigator.bluetooth.getDevices();
+      devices.forEach(d => addPrinter(d));
+      if (devices.length > 0) setScanStatus('Found ' + devices.length + ' previously paired printers.');
+      else setScanStatus('No previously paired printers found. Click Search Printers to add one.');
+    } catch (err) {
+      setScanError('Failed to load paired devices: ' + err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (!pHydrated) return;
+    const savedWard = localStorage.getItem('printWard');
+    if (savedWard) setSelectedWard(savedWard);
+    refreshPairedPrinters();
+  }, [pHydrated]);
 
   const handleScanPrinters = async () => {
     setScanError('');
@@ -5079,15 +5386,11 @@ function PrintScreen({ assemblyCodeProp }) {
     }
     try {
       const device = await navigator.bluetooth.requestDevice({
-        filters: [
-          { namePrefix: 'Thermal' },
-          { namePrefix: 'Printer' },
-          { namePrefix: 'BT' },
-        ],
-        optionalServices: [],
+        acceptAllDevices: true,
+        optionalServices: PRINTER_SERVICES,
       });
       addPrinter(device);
-      setScanStatus('Printer found. Select it to connect.');
+      setScanStatus('Printer found. Click Connect to set up printing.');
     } catch (error) {
       if (error?.name === 'NotFoundError') {
         setScanStatus('No printers selected.');
@@ -5098,13 +5401,267 @@ function PrintScreen({ assemblyCodeProp }) {
     }
   };
 
-  const handleConnect = (printer) => {
+  const handleConnect = async (printer) => {
     if (!printer) return;
     setConnectedPrinter(printer);
+    setWriteChar(null);
+    setScanError('');
+    setScanStatus('Connecting...');
+
+    try {
+      const device = printer.device;
+      const server = await device.gatt.connect();
+      await new Promise(r => setTimeout(r, 500));
+
+      setScanStatus('Finding print channel...');
+
+      // Try each known printer service specifically
+      let foundChar = null;
+      for (const svcUuid of PRINTER_SERVICES) {
+        try {
+          const service = await server.getPrimaryService(svcUuid);
+          const chars = await service.getCharacteristics();
+          // Find the TX/write characteristic
+          foundChar = chars.find(c => c.properties.writeWithoutResponse)
+                   || chars.find(c => c.properties.write);
+          if (foundChar) {
+            setScanStatus(`Connected! Print channel found (${svcUuid.substring(0, 8)}...)`);
+            break;
+          }
+        } catch { continue; }
+      }
+
+      if (foundChar) {
+        setWriteChar(foundChar);
+        try { localStorage.setItem('printerId', printer.id); } catch {}
+      } else {
+        setScanError('Could not find a print-data service on this device. It may only support Bluetooth Classic.');
+        setScanStatus('');
+      }
+    } catch (err) {
+      setScanError('Connection failed: ' + err.message);
+      setScanStatus('');
+    }
   };
 
   const handleDisconnect = () => {
+    if (connectedPrinter?.device?.gatt?.connected) {
+      try { connectedPrinter.device.gatt.disconnect(); } catch {}
+    }
     setConnectedPrinter(null);
+    setWriteChar(null);
+    setScanStatus('');
+    try { localStorage.removeItem('printerId'); } catch {}
+  };
+
+  // Format voter slip using Promotions Print template
+  const formatVoterSlip = (voter, boothInfo) => {
+    const tpl = printTemplate || {};
+    const now = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    const voterName = voter?.firstMiddleNameEn || voter?.name || voter?.nameEn || voter?.voterName || '-';
+    const boothNo = voter?.boothNo || boothInfo?.boothNo || '-';
+    const serial = voter?.serialNo || voter?.sl || voter?.srNo || '-';
+    const boothName = boothInfo?.boothNameEn || voter?.boothLabel || '-';
+    const boothAddr = boothInfo?.address || '';
+    const relLabel = voter?.relationType || 'Father';
+    const relName = voter?.relationFirstMiddleNameEn || voter?.relationNameEn || voter?.fatherName || voter?.husbandName || voter?.relationName || '-';
+    const election = tpl.electionName || 'Election-2026';
+    const voteDate = tpl.voteDate || '13-MAY-2026';
+    const voteTime = tpl.voteTime || '7.00AM-6.00PM';
+    const candidate = tpl.candidateName || '';
+    const party = tpl.candidateParty || '';
+    const wardLabel = tpl.candidateWardLabel || tpl.wardLabel || '';
+
+    let slip =
+      `${election}\n` +
+      '       VOTER-SLIP\n' +
+      `Name: ${voterName}\n` +
+      `${relLabel}: ${relName}\n` +
+      `EPIC ID: ${voter?.epicNo || voter?.epic || voter?.voterId || '-'}\n` +
+      `Booth#: ${boothNo}  Sl#: ${serial}\n` +
+      `Poll Booth: ${boothName}\n` +
+      (boothAddr ? `${boothAddr}\n` : '') +
+      `Vote On: ${voteDate}\n` +
+      `Voting Time: ${voteTime}\n` +
+      `Printed On: ${now}\n` +
+      '-----Please cut here------\n';
+
+    if (candidate || party) {
+      slip += `Vote for ${party}\n`;
+      slip += `${candidate}\n`;
+      if (wardLabel) slip += `${wardLabel}\n`;
+    }
+    slip += '\n\n\n';
+    return slip;
+  };
+
+  const sendToPrinter = async (text) => {
+    if (!writeChar) throw new Error('Printer not connected');
+
+    try {
+      if (connectedPrinter?.device?.gatt && !connectedPrinter.device.gatt.connected) {
+        await connectedPrinter.device.gatt.connect();
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      // ESC @ (Initialize printer)
+      const initCmd = new Uint8Array([0x1b, 0x40]);
+      if (writeChar.properties.writeWithoutResponse) {
+        await writeChar.writeValueWithoutResponse(initCmd);
+      } else {
+        await writeChar.writeValueWithResponse(initCmd);
+      }
+      await new Promise(r => setTimeout(r, 200));
+
+      const bytes = new TextEncoder().encode(text);
+      // Standard BLE MTU is usually 20 bytes. 
+      // Sending in 20-byte chunks is more efficient than 5.
+      for (let i = 0; i < bytes.length; i += 20) {
+        const chunk = bytes.slice(i, Math.min(i + 20, bytes.length));
+        if (writeChar.properties.writeWithoutResponse) {
+          await writeChar.writeValueWithoutResponse(chunk);
+        } else {
+          await writeChar.writeValueWithResponse(chunk);
+        }
+        // Small delay to allow printer to process
+        await new Promise(r => setTimeout(r, 100));
+      }
+      
+      // Feed some lines at the end
+      const feedCmd = new Uint8Array([0x0a, 0x0a, 0x0a]);
+      if (writeChar.properties.writeWithoutResponse) {
+        await writeChar.writeValueWithoutResponse(feedCmd);
+      } else {
+        await writeChar.writeValueWithResponse(feedCmd);
+      }
+    } catch (err) {
+      console.error('sendToPrinter error:', err);
+      throw err;
+    }
+  };
+
+  // End-to-end reliable print handler
+  const performFullPrint = async (device, text) => {
+    if (!device) throw new Error('No device selected');
+    
+    setScanStatus('Connecting...');
+    let server = await device.gatt.connect();
+    // 3s stabilization
+    await new Promise(r => setTimeout(r, 3000));
+
+    setScanStatus('Finding channel...');
+    let char = null;
+    // Only try known services to reduce scanning load
+    for (const svcUuid of PRINTER_SERVICES) {
+      try {
+        const service = await server.getPrimaryService(svcUuid);
+        // Delay after service discovery
+        await new Promise(r => setTimeout(r, 800));
+        const chars = await service.getCharacteristics();
+        char = chars.find(c => c.properties.write) || chars.find(c => c.properties.writeWithoutResponse);
+        if (char) break;
+      } catch { continue; }
+    }
+
+    if (!char) throw new Error('No print service found. Turn printer OFF/ON and try again.');
+
+    setScanStatus('Streaming (Super Safe Mode)...');
+    const bytes = new TextEncoder().encode(text + '\n\n\n\n');
+    
+    // 5 bytes per chunk with heavy 400ms delay
+    // This is to avoid overloading the printer's tiny buffer
+    for (let i = 0; i < bytes.length; i += 5) {
+      const chunk = bytes.slice(i, Math.min(i + 5, bytes.length));
+      try {
+        if (!server.connected) {
+          await server.connect();
+          await new Promise(r => setTimeout(r, 1500));
+        }
+
+        try {
+          if (char.properties.write) {
+            await char.writeValueWithResponse(chunk);
+          } else {
+            await char.writeValueWithoutResponse(chunk);
+          }
+        } catch (e) {
+          await char.writeValueWithoutResponse(chunk);
+        }
+
+        await new Promise(r => setTimeout(r, 400)); 
+      } catch (err) {
+        if (err.message.includes('disconnected')) {
+          throw new Error('Printer hardware rebooted due to buffer limit.');
+        }
+        throw err;
+      }
+    }
+    setScanStatus('Print complete!');
+  };
+
+  // Web Serial Print (Stable alternative for Bluetooth SPP)
+  const performSerialPrint = async (text) => {
+    if (typeof navigator === 'undefined' || !navigator.serial) {
+      throw new Error('Web Serial not supported in this browser. Use Chrome/Edge.');
+    }
+    try {
+      setScanStatus('Waiting for port selection...');
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+      setScanStatus('Sending to Serial port...');
+      const writer = port.writable.getWriter();
+      const bytes = new TextEncoder().encode(text + '\n\n\n\n');
+      await writer.write(bytes);
+      writer.releaseLock();
+      await port.close();
+      setScanStatus('Serial Print complete!');
+    } catch (err) {
+      setScanError('Serial failed: ' + err.message);
+      setScanStatus('');
+    }
+  };
+
+  const handlePrintVoter = async (voter, index) => {
+    const boothInfo = booths.find(b => String(b.value) === selectedBooth) || {};
+    setPrintingIdx(index);
+    setScanError('');
+    try {
+      // Use the slip text
+      const slip = formatVoterSlip(voter, boothInfo);
+      // Default to Serial for stability if possible
+      if (navigator.serial) {
+        await performSerialPrint(slip);
+      } else {
+        await performFullPrint(connectedPrinter.device, slip);
+      }
+      setPrintingIdx(-1);
+    } catch (err) {
+      setScanError('Print failed: ' + err.message);
+      setPrintingIdx(-1);
+      setScanStatus('');
+    }
+  };
+
+  const handlePrintAll = async () => {
+    if (!connectedPrinter) { setScanError('Select a printer first.'); return; }
+    if (voters.length === 0) { setScanError('No voters to print.'); return; }
+    const boothInfo = booths.find(b => String(b.value) === selectedBooth) || {};
+    setScanError('');
+    for (let i = 0; i < voters.length; i++) {
+      setPrintingIdx(i);
+      setScanStatus(`Printing ${i + 1} of ${voters.length}...`);
+      try {
+        await performFullPrint(connectedPrinter.device, formatVoterSlip(voters[i], boothInfo));
+        await new Promise(r => setTimeout(r, 1000));
+      } catch (err) {
+        setScanError(`Print failed at voter ${i + 1}: ${err.message}`);
+        setPrintingIdx(-1);
+        setScanStatus('');
+        return;
+      }
+    }
+    setPrintingIdx(-1);
+    setScanStatus(`All ${voters.length} voter slips printed!`);
   };
 
   return (
@@ -5112,45 +5669,127 @@ function PrintScreen({ assemblyCodeProp }) {
       <section className="mobile-web-card mobile-web-print-shell">
         <div className="mobile-web-printer-status">
           <div>
-            <div className="mobile-web-status-title">{connectedPrinter ? 'Connected' : 'Not Connected'}</div>
+            <div className="mobile-web-status-title">{writeChar ? 'Ready to Print' : connectedPrinter ? 'Connected' : 'Not Connected'}</div>
             <div className="mobile-web-muted">
-              {connectedPrinter ? connectedPrinter.name : 'Search for nearby thermal printers.'}
+              {writeChar ? connectedPrinter?.name + ' — print channel active' : connectedPrinter ? 'Setting up...' : 'Search for nearby thermal printers.'}
             </div>
           </div>
           <button className="mobile-web-gradient-btn" type="button" onClick={handleScanPrinters}>
             Search Printers
           </button>
         </div>
+
         {scanStatus ? <div className="mobile-web-info-pill">{scanStatus}</div> : null}
         {scanError ? <div className="mobile-web-error">{scanError}</div> : null}
         <div className="mobile-web-printer-card">
-          <h4>Available Thermal Printers</h4>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h4 style={{ margin: 0 }}>Available Thermal Printers</h4>
+            <button 
+              type="button" 
+              onClick={refreshPairedPrinters}
+              style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', padding: 4 }}
+            >
+              🔄 Refresh List
+            </button>
+          </div>
           {printers.length === 0 ? (
-            <div className="mobile-web-table-empty">No printers found yet.</div>
+            <div className="mobile-web-table-empty" style={{ fontSize: '0.8rem', color: '#64748b' }}>
+              No paired printers found.<br/>
+              Click <b>Search Printers</b> to pair a new one.
+            </div>
           ) : (
             printers.map((printer) => (
               <div key={printer.id} className="mobile-web-printer-row">
-                <div>
-                  <div className="mobile-web-printer-name">{printer.name}</div>
-                  <div className="mobile-web-muted">ID: {printer.id}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="mobile-web-printer-icon">🖨️</div>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{printer.name}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{printer.id}</div>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="mobile-web-secondary-btn"
-                  onClick={() => handleConnect(printer)}
-                >
-                  {connectedPrinter?.id === printer.id ? 'Connected' : 'Connect'}
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className={`mobile-web-connect-btn ${connectedPrinter?.id === printer.id ? 'connected' : ''}`}
+                    onClick={() => handleConnect(printer)}
+                  >
+                    {connectedPrinter?.id === printer.id ? 'Disconnect' : 'Connect'}
+                  </button>
+                </div>
               </div>
             ))
           )}
         </div>
-        <button className="mobile-web-gradient-btn full" type="button" onClick={handleDisconnect}>
-          Disconnect
-        </button>
-        <button className="mobile-web-gradient-btn subtle" type="button" disabled={!connectedPrinter}>
-          Print Sample
-        </button>
+
+        <div style={{ marginTop: 24, borderTop: '1px solid #e2e8f0', paddingTop: 20 }}>
+          <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem' }}>Ward / Election Template</h4>
+          <div className="mobile-web-form-group">
+            <select
+              className="mobile-web-input"
+              value={selectedWard}
+              onChange={(e) => setSelectedWard(e.target.value)}
+            >
+              <option value="">Select Ward...</option>
+              {wards.map((w) => (
+                <option key={w.value} value={w.value}>{w.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {templateLoading && <div className="mobile-web-muted">Loading template...</div>}
+          {printTemplate && (
+            <div style={{ padding: '8px', background: '#f0fdf4', borderRadius: '4px', fontSize: '0.75rem', color: '#166534', marginBottom: 16 }}>
+              ✓ <b>{printTemplate.electionName || 'Election'}</b> Template Loaded
+            </div>
+          )}
+        </div>
+
+        <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 12, fontStyle: 'italic' }}>
+          Note: BLE Print is experimental. If your printer reboots, use <b>System Print</b> instead (requires pairing printer in OS settings).
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+          <button
+            className="mobile-web-gradient-btn"
+            type="button"
+            disabled={!connectedPrinter}
+            style={{ flex: 1, padding: '12px 6px', fontSize: '0.85rem' }}
+            onClick={async () => {
+              if (!connectedPrinter) { setScanError('Select printer first.'); return; }
+              setScanError('');
+              try {
+                const slip = formatVoterSlip(
+                  { firstMiddleNameEn: 'Sample Voter', epicNo: 'TEST123456', serialNo: '1', relationType: 'Father', relationFirstMiddleNameEn: 'Sample Parent', boothNo: '1' },
+                  { boothNo: '1', boothNameEn: 'Sample Polling Station', address: 'Test Address' }
+                );
+                await performFullPrint(connectedPrinter.device, slip);
+              } catch (err) {
+                setScanError('Print failed: ' + err.message);
+                setScanStatus('');
+              }
+            }}
+          >
+            🖨️ BLE Print
+          </button>
+
+          <button
+            className="mobile-web-secondary-btn"
+            type="button"
+            disabled={!connectedPrinter}
+            style={{ flex: 1, padding: '12px 6px', fontSize: '0.85rem' }}
+            onClick={async () => {
+              if (!connectedPrinter) { setScanError('Select printer first.'); return; }
+              setScanError('');
+              try {
+                await performFullPrint(connectedPrinter.device, 'TEST PRINT SUCCESSFUL\n');
+              } catch (err) {
+                setScanError('Test failed: ' + err.message);
+                setScanStatus('');
+              }
+            }}
+          >
+            🧪 Test 1 Line
+          </button>
+        </div>
       </section>
     </ScreenFrame>
   );

@@ -107,7 +107,7 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
       items = items.filter(item => !['/mobile/voters-family', '/mobile/meetings'].includes(item.path));
     }
 
-    if (!printEnabled) {
+    if (!printEnabled && role !== 'SUPER_ADMIN') {
       items = items.filter(item => item.path !== '/mobile/print');
     }
     return items;
