@@ -430,6 +430,25 @@ export const mobileApi = {
       throw error;
     }
   },
+  fetchFamilyLocationPoints: async (wardId) => {
+    try {
+      const size = 500;
+      const res = await request(`/votebase/v1/api/family?page=0&size=${size}`);
+      const payload = res?.content || res?.data?.content || res?.data?.result || res?.result || res?.data || [];
+      const rows = Array.isArray(payload) ? payload : [];
+      const ward = wardId ? String(wardId) : '';
+      const filtered = ward
+        ? rows.filter((item) => {
+          const itemWard = String(item?.wardId ?? item?.wardCode ?? item?.ward_id ?? '').trim();
+          return itemWard === ward;
+        })
+        : rows;
+      return { data: { result: filtered } };
+    } catch (error) {
+      console.log('Error while fetching family map locations:', error);
+      throw error;
+    }
+  },
   fetchWards: async (assemblyId) => {
     const url = assemblyId ? `/votebase/v1/api/wards?assemblyId=${encodeURIComponent(assemblyId)}` : '/votebase/v1/api/wards';
     if (_apiCache[url]) return _apiCache[url];
@@ -515,9 +534,10 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchActivatedWards: async () => {
+  fetchActivatedWards: async (assemblyId) => {
     try {
-      return await request('/votebase/v1/api/message-template/activated-wards');
+      const query = assemblyId ? `?assemblyId=${encodeURIComponent(assemblyId)}` : '';
+      return await request(`/votebase/v1/api/message-template/activated-wards${query}`);
     } catch (error) {
       console.log('Error while fetching activated wards:', error);
       throw error;

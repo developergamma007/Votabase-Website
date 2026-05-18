@@ -21,6 +21,7 @@ import { getAssemblyCode, mobileApi } from '../../lib/mobileApi';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
+const GOOGLE_MAPS_API_KEY = 'AIzaSyDiHCsapzJETTnhBIC7hFhTwmlWJJfnEg0';
 
 const labels = {
   'search-voter': {
@@ -93,6 +94,15 @@ async function resolveSnapshot(payload) { const result = payload?.data?.result; 
 function ScreenFrame({ children, accent = 'blue' }) { return <div className={`mobile-web-screen mobile-web-screen-${accent}`}>{children}</div>; }
 function useInfiniteTrigger(enabled, onLoadMore) { const sentinelRef = useRef(null); useEffect(() => { if (!enabled || !sentinelRef.current) return undefined; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onLoadMore(); }, { rootMargin: '240px 0px' }); observer.observe(sentinelRef.current); return () => observer.disconnect(); }, [enabled, onLoadMore]); return sentinelRef; }
 function boothStats(booth) { const stats = booth?.voterStats || {}; const voters = booth?.voters || []; return { total: Number.isFinite(stats.total) ? stats.total : voters.length, male: Number.isFinite(stats.male) ? stats.male : voters.filter((v) => (v.gender || '').toUpperCase().startsWith('M')).length, female: Number.isFinite(stats.female) ? stats.female : voters.filter((v) => (v.gender || '').toUpperCase().startsWith('F')).length }; }
+function formatBoothTitle(no, label) {
+  const sNo = String(no || '').trim();
+  const sLabel = String(label || '').trim();
+  if (!sNo) return sLabel;
+  if (!sLabel || sLabel === '-') return sNo;
+  const prefixPatterns = [`${sNo} -`, `${sNo}-`, `${sNo} `];
+  if (prefixPatterns.some(p => sLabel.startsWith(p))) return sLabel;
+  return `${sNo} - ${sLabel}`;
+}
 function normalizeVoter(voter, fallbackBooth) { const boothInfo = voter?.boothInfo || {}; const gender = voter?.gender || voter?.sex || '-'; const genderUpper = String(gender).toUpperCase(); return { ...voter, voterId: voter?.voterId ?? voter?.id ?? voter?.epicNo, serialNo: voter?.sl ?? voter?.srNo ?? voter?.serialNo ?? voter?.slNo ?? '-', epicNo: voter?.epicNo ?? voter?.epic ?? '-', name: voter?.firstMiddleNameEn || voter?.name || voter?.voterName || '-', relationLabel: voter?.relationType || voter?.rel_type || 'Father', relationName: voter?.relationFirstMiddleNameEn || voter?.relationNameEn || voter?.fatherName || voter?.motherName || voter?.relation_name_en || '', houseNo: voter?.houseNoEn ?? voter?.house ?? voter?.house_no_en ?? '-', age: voter?.age ?? '-', gender, genderClass: genderUpper.startsWith('M') ? 'male' : genderUpper.startsWith('F') ? 'female' : 'other', boothLabel: fallbackBooth?.boothLabel || boothInfo?.boothNameEn || voter?.boothNameEn || '', boothId: fallbackBooth?.boothId || boothInfo?.boothId || voter?.boothId || '', boothNo: voter?.boothNo || boothInfo?.boothNo || '', wardCode: (voter?.wardCode ?? fallbackBooth?.wardCode) || boothInfo?.wardCode || '' }; }
 
 function triggerVoterSlipPrint(voter, booth, template) {
@@ -336,7 +346,7 @@ function buildWhatsAppMessage(voter, booth, template) {
     candidateParty,
     candidateWard,
     socialLink ? `Follow us: ${socialLink}` : '',
-    template?.bannerUrl ? `View Image: ${template.bannerUrl}` : '',
+    template?.bannerUrl && template.bannerUrl.startsWith('http') ? `Banner: ${template.bannerUrl}` : '',
   ];
   return lines.filter((item) => item !== '').join('\n').trim();
 }
@@ -386,6 +396,7 @@ function buildSMSMessage(voter, booth, template) {
     candidateParty,
     candidateWard,
     socialLink,
+    template?.bannerUrl && template.bannerUrl.startsWith('http') ? `Banner: ${template.bannerUrl}` : '',
   ];
   return lines.filter((item) => item !== '').join('\n').trim();
 }
@@ -486,9 +497,9 @@ function PrintableVoterSlip({ voter, booth, template, isPreview = false }) {
         <p className="valuable-vote">Kindly do Cast Your Valuable<br/>Vote for {template?.candidateParty || 'BJP'}</p>
         
         <div className="candidate-info">
-          <div className="candidate-name">{template?.candidateName || 'KONDA VISHWESHWAR REDDY'}</div>
-          <div className="candidate-party">{template?.candidateParty || 'BJP'} CANDIDATE</div>
-          <div className="candidate-ward">{template?.candidateWardLabel || 'CHEVALLA PARLIAMENTARY'}</div>
+          <div className="candidate-name">{template?.candidateName}</div>
+          <div className="candidate-party">{template?.candidateParty} CANDIDATE</div>
+          <div className="candidate-ward">{template?.candidateWardLabel}</div>
         </div>
       </div>
     </div>
@@ -569,7 +580,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   }, [voter]);
 
   const boothNumber = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '';
-  const boothTitle = `${boothNumber}${booth?.boothLabel || voter?.boothLabel ? ' - ' : ''}${booth?.boothLabel || voter?.boothLabel || ''}`;
+  const boothTitle = formatBoothTitle(boothNumber, booth?.boothLabel || voter?.boothLabel);
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
   const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || voter?.wardCode || '';
@@ -1170,24 +1181,8 @@ function VoterListScreen({
     else if (hasMore && onLoadMore) onLoadMore();
   });
 
-  const handlePrint = async (voter) => {
-    const wardId = voter.wardId || booth?.wardId || voter.wardCode;
-    if (!wardId) {
-      triggerVoterSlipPrint(voter, booth, {});
-      return;
-    }
-    try {
-      const res = await mobileApi.fetchMessageTemplate(wardId, 'PRINT');
-      const template = res?.data?.result || res?.result || res?.data || res || {};
-      triggerVoterSlipPrint(voter, booth, template);
-    } catch (err) {
-      console.error('Failed to fetch print template:', err);
-      triggerVoterSlipPrint(voter, booth, {});
-    }
-  };
-
   const headerTitle =
-    booth?.boothNo || booth?.boothId ? `${booth?.boothNo ?? booth?.boothId} - ${booth?.boothLabel || ''}` : heading;
+    booth?.boothNo || booth?.boothId ? formatBoothTitle(booth?.boothNo ?? booth?.boothId, booth?.boothLabel) : heading;
 
   const headerSubtitle = (
     <>
@@ -1248,17 +1243,6 @@ function VoterListScreen({
                 <span>{voter.serialNo ?? '-'}</span>
                 <strong>{voter.epicNo}</strong>
               </div>
-              <button 
-                type="button" 
-                className="mobile-web-secondary-btn"
-                style={{ padding: '4px 8px', fontSize: '0.75rem', height: 'auto', minWidth: 'auto' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePrint(voter);
-                }}
-              >
-                🖨️ Print
-              </button>
             </div>
             <div className="mobile-web-voter-grid">
               <div className="mobile-web-voter-row">
@@ -1286,8 +1270,7 @@ function VoterListScreen({
               <div className="mobile-web-voter-row">
                 <span className="mobile-web-voter-label">Booth</span>
                 <span className="mobile-web-voter-value">
-                  {voter.boothNo ? `${voter.boothNo} - ` : voter.boothId ? `${voter.boothId} - ` : ''}
-                  {voter.boothLabel || '-'}
+                  {formatBoothTitle(voter.boothNo || voter.boothId, voter.boothLabel)}
                 </span>
               </div>
             </div>
@@ -1893,7 +1876,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
             const stats = boothStats(booth);
             return (
               <button key={String(booth.boothId)} className="mobile-web-booth-card mobile-web-booth-button" onClick={() => openBooth(booth)} type="button">
-                <h3>{booth.boothNo ?? booth.boothId} - {booth.boothNameEn}</h3>
+                <h3>{formatBoothTitle(booth.boothNo ?? booth.boothId, booth.boothNameEn)}</h3>
                 <div className="mobile-web-stats">
                   <span className="mobile-web-stat-pill total">Total Voters <strong>{stats.total}</strong></span>
                   <span className="mobile-web-stat-pill male">Male <strong>{stats.male}</strong></span>
@@ -1916,7 +1899,7 @@ function PromotionsScreen({ assemblyCodeProp }) {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [activatedWards, setActivatedWards] = useState([]);
-  const [mapsKey, setMapsKey] = useState('');
+  const mapsKey = GOOGLE_MAPS_API_KEY;
   const [form, setForm] = useState({
     authorityName: '',
     electionName: '',
@@ -1957,13 +1940,6 @@ function PromotionsScreen({ assemblyCodeProp }) {
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
 
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
-    const storedKey = localStorage.getItem('gmapsKey') || '';
-    setMapsKey(envKey || storedKey);
-  }, []);
 
   const loadGoogleMaps = () => new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
@@ -2104,10 +2080,14 @@ function PromotionsScreen({ assemblyCodeProp }) {
     }
   };
 
+  // Load activated wards for the selected assembly, filtering out any entries that lack a label (dummy/irrelevant wards)
   const loadActivatedWards = async () => {
     try {
-      const res = await mobileApi.fetchActivatedWards();
-      setActivatedWards(res?.data?.result || []);
+      const res = await mobileApi.fetchActivatedWards(form.assemblyId);
+      const raw = res?.data?.result || [];
+      // Keep only entries that have a valid wardLabel (non‑empty string)
+      const filtered = raw.filter((w) => w.wardLabel && String(w.wardLabel).trim() !== "");
+      setActivatedWards(filtered);
     } catch (err) {
       console.error('Failed to load activated wards');
     }
@@ -2508,6 +2488,12 @@ function PromotionsScreen({ assemblyCodeProp }) {
                         ✕
                       </button>
                     </div>
+                  )}
+                  {form.bannerUrl && form.bannerUrl.startsWith('data:') && (
+                    <p className="text-[10px] text-amber-600 font-medium leading-tight">
+                      Note: Image is stored in Base64 format. It will NOT be attached automatically to WhatsApp/SMS messages. 
+                      You must manually attach the photo in WhatsApp after the text is pre-filled.
+                    </p>
                   )}
                 </div>
               </div>
@@ -4090,8 +4076,7 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
       return true;
     });
   }, [meetings, role, isAdmin]);
-  const [mapsKey, setMapsKey] = useState('');
-  const [mapsKeyInput, setMapsKeyInput] = useState('');
+  const mapsKey = GOOGLE_MAPS_API_KEY;
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
@@ -4102,12 +4087,6 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
 
   useEffect(() => {
     setMounted(true);
-    if (typeof window === 'undefined') return;
-    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
-    const storedKey = localStorage.getItem('gmapsKey') || '';
-    const resolved = envKey || storedKey;
-    setMapsKey(resolved);
-    setMapsKeyInput(resolved);
     fetchMeetingsList();
   }, []);
 
@@ -4202,18 +4181,6 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
     }
   };
 
-  const saveMapsKey = () => {
-    if (typeof window === 'undefined') return;
-    const nextKey = String(mapsKeyInput || '').trim();
-    if (!nextKey) {
-      localStorage.removeItem('gmapsKey');
-      setMapsKey('');
-      return;
-    }
-    localStorage.setItem('gmapsKey', nextKey);
-    setMapsKey(nextKey);
-  };
-
   const loadGoogleMaps = () => new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Maps not available.'));
@@ -4274,13 +4241,13 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
         map: mapInstanceRef.current,
       });
     } catch {
-      // ignore map errors here; UI will show key input
+      // ignore map errors
     }
   };
 
   useEffect(() => {
     if (selectedMeeting) syncMap(selectedMeeting);
-  }, [selectedMeeting, mapsKey]);
+  }, [selectedMeeting]);
 
   const syncNewMeetingMap = async () => {
     if (!newMapRef.current) return;
@@ -4325,9 +4292,8 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (!mapsKey) return;
     syncNewMeetingMap();
-  }, [mapsKey, newMeeting.latitude, newMeeting.longitude]);
+  }, [newMeeting.latitude, newMeeting.longitude]);
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) return;
@@ -4508,20 +4474,6 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
                   ))}
                 </div>
               </div>
-              {!mapsKey ? (
-                <div className="mobile-web-map-key">
-                  <label>Google Maps API Key</label>
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Paste API key"
-                    value={mapsKeyInput}
-                    onChange={(e) => setMapsKeyInput(e.target.value)}
-                  />
-                  <button type="button" className="mobile-web-secondary-btn" onClick={saveMapsKey}>
-                    Save Key
-                  </button>
-                </div>
-              ) : null}
               <div className="mobile-web-meeting-map" ref={newMapRef} />
               <div className="mobile-web-meeting-footer">
                 <button type="button" className="mobile-web-secondary-btn" onClick={handleUseMyLocation}>
@@ -4578,20 +4530,6 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
                   <p className="mobile-web-muted">
                     Location: {(selectedMeeting.latitude || 0).toFixed(4)}, {(selectedMeeting.longitude || 0).toFixed(4)} · Radius: {selectedMeeting.radius} m
                   </p>
-                  {!mapsKey ? (
-                    <div className="mobile-web-map-key mb-4">
-                      <label>Google Maps API Key</label>
-                      <input
-                        className="mobile-web-input"
-                        placeholder="Paste API key"
-                        value={mapsKeyInput}
-                        onChange={(e) => setMapsKeyInput(e.target.value)}
-                      />
-                      <button type="button" className="mobile-web-secondary-btn mt-2" onClick={saveMapsKey}>
-                        Save Key
-                      </button>
-                    </div>
-                  ) : null}
                   <div className="mobile-web-meeting-map" ref={mapRef} style={{ height: '200px', margin: '16px 0', borderRadius: '12px', background: '#f8fafc' }} />
                   <div className="mt-4 flex flex-col sm:flex-row gap-3">
                     <button
@@ -5814,10 +5752,10 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [detailFrom, setDetailFrom] = useState('');
   const [detailTo, setDetailTo] = useState('');
   const [mapPoints, setMapPoints] = useState([]);
+  const [mapDataMode, setMapDataMode] = useState('volunteers');
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState('');
-  const [mapsKey, setMapsKey] = useState('');
-  const [mapsKeyInput, setMapsKeyInput] = useState('');
+  const mapsKey = GOOGLE_MAPS_API_KEY;
   const [masterUploadLoading, setMasterUploadLoading] = useState(false);
   const [masterUploadProgress, setMasterUploadProgress] = useState(0);
   const [masterUploadFeedback, setMasterUploadFeedback] = useState({ error: '', success: '' });
@@ -6248,29 +6186,6 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     loadAnalysis();
   }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const envKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || '';
-    const storedKey = localStorage.getItem('gmapsKey') || '';
-    const resolved = envKey || storedKey;
-    setMapsKey(resolved);
-    setMapsKeyInput(resolved);
-  }, []);
-
-  const saveMapsKey = () => {
-    if (typeof window === 'undefined') return;
-    const nextKey = String(mapsKeyInput || '').trim();
-    if (!nextKey) {
-      localStorage.removeItem('gmapsKey');
-      setMapsKey('');
-      setMapError('Google Maps key not configured.');
-      return;
-    }
-    localStorage.setItem('gmapsKey', nextKey);
-    setMapsKey(nextKey);
-    setMapError('');
-  };
-
   const loadGoogleMaps = () => new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Maps are not available on the server.'));
@@ -6322,7 +6237,9 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       const bounds = new google.maps.LatLngBounds();
       validPoints.forEach((point) => {
         const gender = String(point.gender || '').toUpperCase();
-        const color = gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b';
+        const color = mapDataMode === 'families'
+          ? '#2563eb'
+          : (gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b');
         const marker = new google.maps.Marker({
           position: { lat: point.latitude, lng: point.longitude },
           map: mapInstanceRef.current,
@@ -6337,7 +6254,17 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         });
 
         const infoWindow = new google.maps.InfoWindow({
-          content: `
+          content: mapDataMode === 'families' ? `
+            <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 240px;">
+              <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.familyName || 'Family Details'}</h3>
+              <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
+                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Address:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.familyAddress || '-'}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Head:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.headOfFamily || '-'}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Phone:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.phone || '-'}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Members:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.membersCount ?? '-'}</span></div>
+              </div>
+            </div>
+          ` : `
             <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
               <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
               <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
@@ -6362,6 +6289,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           `
         });
 
+        marker.addListener('mouseover', () => {
+          infoWindow.open(mapInstanceRef.current, marker);
+        });
+        marker.addListener('mouseout', () => {
+          infoWindow.close();
+        });
         marker.addListener('click', () => {
           infoWindow.open(mapInstanceRef.current, marker);
         });
@@ -6383,12 +6316,9 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setMapLoading(true);
     setMapError('');
     try {
-      if (!mapsKey) {
-        setMapError('Google Maps key not configured.');
-        setMapPoints([]);
-        return;
-      }
-      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
+      const res = mapDataMode === 'families'
+        ? await mobileApi.fetchFamilyLocationPoints(effectiveWard || undefined)
+        : await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
       const payload = res?.data?.result || res?.result || [];
       const points = Array.isArray(payload) ? payload : [];
       const normalized = points
@@ -6400,6 +6330,11 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           epic: item.epic || '',
           relationName: item.relationName || '',
           mobile: item.mobile || '',
+          familyName: item.familyName || item.name || '',
+          familyAddress: item.familyAddress || item.addressEn || item.address || '',
+          headOfFamily: item.headOfFamily || item.headName || '',
+          phone: item.phone || item.mobile || '',
+          membersCount: item.membersCount ?? item.members?.length ?? item.memberCount ?? '-',
         }))
         .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
       setMapPoints(normalized);
@@ -6415,7 +6350,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   useEffect(() => {
     if (activeTab !== 'map') return;
     loadMapPoints();
-  }, [activeTab, effectiveWard]);
+  }, [activeTab, effectiveWard, mapDataMode]);
 
   const detailColumns = useMemo(() => {
     if (!detailRows.length) return [];
@@ -6606,9 +6541,27 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
               )}
             </>
           ) : (
-            <button type="button" className="mobile-web-primary-btn" onClick={loadMapPoints} disabled={mapLoading}>
-              {mapLoading ? 'Loading Map...' : 'Refresh Map'}
-            </button>
+            <div className="mobile-web-map-controls">
+              <div className="mobile-web-tab-strip mobile-web-map-mode-tabs">
+                <button
+                  type="button"
+                  className={`mobile-web-tab-btn ${mapDataMode === 'volunteers' ? 'active' : ''}`}
+                  onClick={() => setMapDataMode('volunteers')}
+                >
+                  Volunteers
+                </button>
+                <button
+                  type="button"
+                  className={`mobile-web-tab-btn ${mapDataMode === 'families' ? 'active' : ''}`}
+                  onClick={() => setMapDataMode('families')}
+                >
+                  Families
+                </button>
+              </div>
+              <button type="button" className="mobile-web-primary-btn mobile-web-map-refresh-btn" onClick={loadMapPoints} disabled={mapLoading}>
+                {mapLoading ? 'Loading Map...' : `Refresh ${mapDataMode === 'families' ? 'Families' : 'Map'}`}
+              </button>
+            </div>
           )}
         </div>
         {activeTab === 'table' ? (
@@ -6734,26 +6687,18 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         ) : (
           <div className="mobile-web-map-shell">
             {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
-            {!mapsKey ? (
-              <div className="mobile-web-map-key">
-                <label>Google Maps API Key</label>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Paste API key"
-                  value={mapsKeyInput}
-                  onChange={(e) => setMapsKeyInput(e.target.value)}
-                />
-                <button type="button" className="mobile-web-secondary-btn" onClick={saveMapsKey}>
-                  Save Key
-                </button>
-              </div>
-            ) : null}
             {mapLoading ? <div className="mobile-web-empty">Loading map points...</div> : null}
             {!mapLoading && mapPoints.length === 0 ? <div className="mobile-web-empty">No captured locations found.</div> : null}
             <div className="mobile-web-map-legend">
-              <span><i className="legend-dot male" /> Male</span>
-              <span><i className="legend-dot female" /> Female</span>
-              <span><i className="legend-dot unknown" /> Other</span>
+              {mapDataMode === 'families' ? (
+                <span><i className="legend-dot unknown" style={{ background: '#2563eb' }} /> Family Location</span>
+              ) : (
+                <>
+                  <span><i className="legend-dot male" /> Male</span>
+                  <span><i className="legend-dot female" /> Female</span>
+                  <span><i className="legend-dot unknown" /> Other</span>
+                </>
+              )}
             </div>
             <div className="mobile-web-map-container" ref={mapRef} />
           </div>

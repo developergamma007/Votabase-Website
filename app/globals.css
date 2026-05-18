@@ -2964,6 +2964,36 @@ textarea {
   gap: 12px;
 }
 
+.mobile-web-map-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  max-width: 620px;
+}
+
+.mobile-web-map-mode-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1;
+  margin: 0;
+  border-radius: 20px;
+}
+
+.mobile-web-map-mode-tabs .mobile-web-tab-btn {
+  min-height: 44px;
+  font-size: 0.95rem;
+  border-radius: 14px;
+}
+
+.mobile-web-map-refresh-btn {
+  min-width: 186px;
+  min-height: 60px;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  box-shadow: none;
+}
+
 .mobile-web-map-key {
   display: grid;
   gap: 8px;
@@ -3243,6 +3273,19 @@ textarea {
 @media (max-width: 1100px) {
   .mobile-web-contact-btn span {
     display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .mobile-web-map-controls {
+    flex-direction: column;
+    max-width: none;
+  }
+
+  .mobile-web-map-refresh-btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 46px;
   }
 }
 
