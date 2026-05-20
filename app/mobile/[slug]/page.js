@@ -18,6 +18,7 @@ import {
   WhatsApp,
 } from '@mui/icons-material';
 import { getAssemblyCode, mobileApi } from '../../lib/mobileApi';
+import { FAMILY_AVAILABILITY_OPTIONS, FAMILY_POINT_OPTIONS, getNextFamilyNumber, hasHouseMarkingFields, buildFamilyMapTooltipHtml, sortFamiliesByNumber, getVoterRelationDisplay, getVoterPhoneDisplay, getVoterHouseDisplay } from '../../lib/familyFormHelpers';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
@@ -1730,11 +1731,17 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   );
 
   const openBooth = async (booth) => {
+    if ((booth?.voters || []).length > 0) {
+      setSelectedBooth(booth);
+      setSelectedBoothPayload(booth);
+      return;
+    }
     setBoothLoading(true);
     setBoothError('');
     setSelectedBooth(booth);
     try {
-      const response = await mobileApi.fetchBoothVoters(booth.boothId);
+      const boothNo = booth.boothNo ?? (booth.boothId >= 10000 ? booth.boothId % 10000 : undefined);
+      const response = await mobileApi.fetchBoothVoters(booth.boothId, booth.wardId, boothNo);
       setSelectedBoothPayload(response?.data?.result || { ...booth, voters: [] });
     } catch (error) {
       setSelectedBoothPayload({ ...booth, voters: booth.voters || [] });
@@ -3384,6 +3391,13 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
 function VotersFamilyScreen({ assemblyCodeProp }) {
   const [familyName, setFamilyName] = useState('');
   const [familyAddress, setFamilyAddress] = useState('');
+  const [roadName, setRoadName] = useState('');
+  const [buildingNumber, setBuildingNumber] = useState('');
+  const [buildingName, setBuildingName] = useState('');
+  const [flatNumber, setFlatNumber] = useState('');
+  const [familyNumber, setFamilyNumber] = useState('');
+  const [tagLeader, setTagLeader] = useState('');
+  const [familyAvailability, setFamilyAvailability] = useState('Available');
   const [memberQuery, setMemberQuery] = useState('');
   const [relationQuery, setRelationQuery] = useState('');
   const [members, setMembers] = useState([]);
@@ -3395,15 +3409,18 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [headPhone, setHeadPhone] = useState('');
   const [familyNature, setFamilyNature] = useState('NA');
   const [familyPoints, setFamilyPoints] = useState('5');
-  const [showBuildingTag, setShowBuildingTag] = useState(false);
-  const [buildingName, setBuildingName] = useState('');
   const [buildingAddress, setBuildingAddress] = useState('');
   const [hasAssociation, setHasAssociation] = useState(false);
   const [associationName, setAssociationName] = useState('');
   const [associationHeadName, setAssociationHeadName] = useState('');
   const [associationHeadPhone, setAssociationHeadPhone] = useState('');
+  const [roadSuggestions, setRoadSuggestions] = useState([]);
+  const [leaderSuggestions, setLeaderSuggestions] = useState([]);
   const [buildingSuggestions, setBuildingSuggestions] = useState([]);
   const [associationSuggestions, setAssociationSuggestions] = useState([]);
+  const [selectedVoter, setSelectedVoter] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const lastMemberSelectionRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -3428,59 +3445,147 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const loadSuggestions = async () => {
     try {
-      const [bRes, aRes] = await Promise.all([
+      const [roadRes, leaderRes, bRes, aRes] = await Promise.all([
+        mobileApi.fetchFamilySuggestions('road').catch(() => ({ data: { result: [] } })),
+        mobileApi.fetchFamilySuggestions('leader').catch(() => ({ data: { result: [] } })),
         mobileApi.fetchFamilySuggestions('building').catch(() => ({ data: { result: [] } })),
         mobileApi.fetchFamilySuggestions('association').catch(() => ({ data: { result: [] } })),
       ]);
+      setRoadSuggestions(roadRes?.data?.result || []);
+      setLeaderSuggestions(leaderRes?.data?.result || []);
       setBuildingSuggestions(bRes?.data?.result || []);
       setAssociationSuggestions(aRes?.data?.result || []);
     } catch {
+      setRoadSuggestions([]);
+      setLeaderSuggestions([]);
       setBuildingSuggestions([]);
       setAssociationSuggestions([]);
     }
   };
 
   useEffect(() => {
+    if (hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
+      setFamilyNumber(String(getNextFamilyNumber(families)));
+    } else {
+      setFamilyNumber('');
+    }
+  }, [buildingNumber, buildingName, flatNumber, families]);
+
+  useEffect(() => {
     setMounted(true);
     loadSuggestions();
+    mobileApi.fetchAllFamilies(undefined, undefined)
+      .then((all) => setFamilies(sortFamiliesByNumber(all)))
+      .catch(() => {});
     if (typeof window !== 'undefined') {
       window.scrollTo(0, 0);
     }
   }, []);
 
-  const loadFamiliesList = async (page = 0, refresh = false) => {
+  const loadFamiliesList = async () => {
     if (familiesLoading) return;
     setFamiliesLoading(true);
     try {
-      const size = 50;
-      const res = await mobileApi.fetchFamilies(undefined, page, size, undefined);
-      const payload =
-        res?.content ||
-        res?.data?.content ||
-        res?.data?.result ||
-        res?.result ||
-        res?.data ||
-        [];
-      const newList = Array.isArray(payload) ? payload : [];
-      setFamilies((prev) => (refresh ? newList : [...prev, ...newList]));
-      setHasMoreFamilies(newList.length === size);
-      setFamiliesPage(page);
+      const all = await mobileApi.fetchAllFamilies(undefined, undefined);
+      setFamilies(sortFamiliesByNumber(all));
+      setHasMoreFamilies(false);
+      setFamiliesPage(0);
     } catch (err) {
       console.error('Failed to load families:', err);
+      setFamilies([]);
     } finally {
       setFamiliesLoading(false);
     }
   };
 
+  const downloadFamiliesExcel = () => {
+    if (!families.length) return;
+    const headers = [
+      'Family Name',
+      'Road Name',
+      'Family Number',
+      'Flat No',
+      'Building Number',
+      'Building Name',
+      'Head of Family',
+      'Head EPIC',
+      'Member Count',
+      'Family Availability',
+      'Economic Status',
+      'Points',
+      'Tag Leader',
+      'Address',
+      'Members (Name | Relation | EPIC)',
+    ];
+    const dataRows = families.map((f) => {
+      const memberText = (f.members || [])
+        .map((m, index) => `${index + 1}. ${m.voterName || '-'} | ${m.relationName || '-'} | ${m.epicNo || '-'}`)
+        .join(' ; ');
+      return [
+        f.familyName || '',
+        f.roadName || '',
+        f.familyNumber || '',
+        f.flatNumber || '',
+        f.buildingNumber || '',
+        f.buildingName || '',
+        f.headName || '',
+        f.headEpicNo || '',
+        f.memberCount ?? (f.members?.length ?? 0),
+        f.familyAvailability || '',
+        f.economicStatus || '',
+        f.points ?? '',
+        f.tagLeader || '',
+        f.familyAddress || '',
+        memberText,
+      ];
+    });
+    const tableRows = [headers, ...dataRows]
+      .map((r) => `<tr>${r.map((v) => `<td>${String(v).replace(/</g, '&lt;')}</td>`).join('')}</tr>`)
+      .join('');
+    const html = `<table>${tableRows}</table>`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'families-export.xls';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const resetNewFamilyForm = () => {
+    setFamilyName('');
+    setFamilyAddress('');
+    setRoadName('');
+    setBuildingNumber('');
+    setBuildingName('');
+    setFlatNumber('');
+    setFamilyNumber('');
+    setTagLeader('');
+    setFamilyAvailability('Available');
+    setMembers([]);
+    setHeadOfFamily('');
+    setHeadPhone('');
+    setEconomicStatus('NA');
+    setFamilyNature('NA');
+    setFamilyPoints('5');
+    setBuildingAddress('');
+    setHasAssociation(false);
+    setAssociationName('');
+    setAssociationHeadName('');
+    setAssociationHeadPhone('');
+    setLocation(null);
+    setMemberQuery('');
+    setRelationQuery('');
+    setMemberSuggestions([]);
+    setShowSuggestions(false);
+    setError('');
+    setSuccess('');
+  };
+
   useEffect(() => {
     if (activeTab === 'LIST') {
-      loadFamiliesList(0, true);
+      loadFamiliesList();
     }
   }, [activeTab]);
-
-  const familiesSentinelRef = useInfiniteTrigger(activeTab === 'LIST' && hasMoreFamilies && !familiesLoading, () => {
-    loadFamiliesList(familiesPage + 1);
-  });
 
   const handleDeleteFamily = async (id) => {
     if (!window.confirm('Are you sure you want to delete this family?')) return;
@@ -3517,16 +3622,57 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       id: `${suggestion.epicNo || name}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       name: name || suggestion.epicNo || 'Unknown',
       epic: suggestion.epicNo || '',
-      relation: suggestion.relationNameEn || suggestion.relationNameLocal || '',
-      phone: suggestion.mobile || '',
-      houseNo: suggestion.houseNoEn || suggestion.houseNoLocal || '',
+      relation: getVoterRelationDisplay(suggestion),
+      phone: getVoterPhoneDisplay(suggestion),
+      houseNo: getVoterHouseDisplay(suggestion),
       boothId: suggestion.boothInfo?.boothId || suggestion.boothId || suggestion.booth_id || '',
+      rawVoter: suggestion,
     };
     setMembers((current) => current.concat(newMember));
     setMemberQuery('');
     setRelationQuery('');
     setMemberSuggestions([]);
     setShowSuggestions(false);
+  };
+
+  const openMemberVoterInfo = async (member) => {
+    if (!member?.rawVoter) return;
+    lastMemberSelectionRef.current = { member };
+    setIsLocating(true);
+    setError('');
+    try {
+      const loc = await requestLocation({ allowCached: true });
+      setSelectedVoter({
+        ...member.rawVoter,
+        epicNo: member.rawVoter.epicNo || member.epic,
+        boothId: member.boothId || member.rawVoter.boothId,
+        ...loc,
+      });
+    } catch (err) {
+      setError(err?.message || 'Location is required to view voter info.');
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  const handleSaveVoter = (updatedVoter) => {
+    setSelectedVoter(updatedVoter);
+    setMembers((current) =>
+      current.map((member) => {
+        const epic = member.rawVoter?.epicNo || member.epic;
+        const updatedEpic = updatedVoter?.epicNo || updatedVoter?.epic;
+        if (epic !== updatedEpic) return member;
+        const name = [updatedVoter.firstMiddleNameEn, updatedVoter.lastNameEn].filter(Boolean).join(' ').trim();
+        return {
+          ...member,
+          name: name || member.name,
+          phone: getVoterPhoneDisplay(updatedVoter) || member.phone,
+          relation: getVoterRelationDisplay(updatedVoter) || member.relation,
+          houseNo: getVoterHouseDisplay(updatedVoter) || member.houseNo,
+          rawVoter: { ...member.rawVoter, ...updatedVoter },
+        };
+      })
+    );
   };
 
   useEffect(() => {
@@ -3582,6 +3728,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     try {
       if (!location?.latitude || !location?.longitude) throw new Error('Location is required. Please capture location before updating.');
       if (!familyName.trim()) throw new Error('Family name is required');
+      if (!roadName.trim()) throw new Error('Road name is required');
       if (members.length === 0) throw new Error('At least one family member is required');
       if (!headOfFamily) throw new Error('Please pick a head of family');
 
@@ -3591,21 +3738,32 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       const boothIdMember = members.find((m) => m.boothId);
       if (!boothIdMember) throw new Error('Member booth information missing. Please add members again.');
 
+      if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
+        throw new Error('Building Number, Building Name, and Flat Number are required');
+      }
+      const generatedFamilyNumber = String(getNextFamilyNumber(families));
+
       const payload = {
         familyName,
         familyAddress,
-        buildingName: showBuildingTag ? buildingName : null,
-        buildingAddress: showBuildingTag ? buildingAddress : null,
-        hasAssociation: showBuildingTag ? hasAssociation : false,
-        associationName: (showBuildingTag && hasAssociation) ? associationName : null,
-        associationHeadName: (showBuildingTag && hasAssociation) ? associationHeadName : null,
-        associationHeadPhone: (showBuildingTag && hasAssociation) ? associationHeadPhone : null,
+        roadName: roadName.trim(),
+        buildingNumber: buildingNumber.trim() || null,
+        buildingName: buildingName.trim() || null,
+        flatNumber: flatNumber.trim() || null,
+        familyNumber: generatedFamilyNumber || null,
+        tagLeader: tagLeader.trim() || null,
+        familyAvailability,
+        buildingAddress: buildingAddress.trim() || null,
+        hasAssociation,
+        associationName: hasAssociation ? associationName.trim() || null : null,
+        associationHeadName: hasAssociation ? associationHeadName.trim() || null : null,
+        associationHeadPhone: hasAssociation ? associationHeadPhone.trim() || null : null,
         phone: headPhone || headMember.phone,
-        points: parseInt(familyPoints) || 0,
+        points: parseInt(familyPoints, 10) || 0,
         pointsProvided: 0,
         latitude: location?.latitude || 0,
         longitude: location?.longitude || 0,
-        boothId: parseInt(boothIdMember.boothId),
+        boothId: parseInt(boothIdMember.boothId, 10),
         headEpicNo: headMember.epic,
         memberEpicNos: members.map((m) => m.epic).filter(Boolean),
         economicStatus,
@@ -3614,32 +3772,29 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
       await mobileApi.createFamily(payload);
       setSuccess('Family saved successfully!');
-
-      // Refresh suggestions for the next entry
       loadSuggestions();
-
-      // Reset form if success
-      setTimeout(() => {
-        setFamilyName('');
-        setFamilyAddress('');
-        setMembers([]);
-        setHeadOfFamily('');
-        setHeadPhone('');
-        setBuildingName('');
-        setBuildingAddress('');
-        setAssociationName('');
-        setAssociationHeadName('');
-        setAssociationHeadPhone('');
-        setShowBuildingTag(false);
-        setLocation(null);
-        setSuccess('');
-      }, 2000);
+      const all = await mobileApi.fetchAllFamilies(undefined, undefined);
+      setFamilies(sortFamiliesByNumber(all));
+      resetNewFamilyForm();
     } catch (err) {
       setError(err?.message || 'Failed to save family');
     } finally {
       setSaving(false);
     }
   };
+
+  if (selectedVoter) {
+    return (
+      <ScreenFrame accent="blue">
+        <VoterInfoScreen
+          voter={selectedVoter}
+          booth={{ boothId: selectedVoter.boothId, boothLabel: selectedVoter.boothLabel }}
+          onBack={() => setSelectedVoter(null)}
+          onSave={handleSaveVoter}
+        />
+      </ScreenFrame>
+    );
+  }
 
   return (
     <ScreenFrame accent="light">
@@ -3673,6 +3828,93 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               <label className="mobile-web-field">
                 <span>Family Address</span>
                 <input className="mobile-web-input" placeholder="Family Address" value={familyAddress} onChange={(e) => setFamilyAddress(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="mobile-web-family-grid mt-3">
+              <label className="mobile-web-field">
+                <span>Road Name (Mandatory)</span>
+                <div className="mobile-web-member-row">
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Road name"
+                    value={roadName}
+                    onChange={(e) => setRoadName(e.target.value)}
+                    list="road-suggestions"
+                  />
+                  <datalist id="road-suggestions">
+                    {roadSuggestions.map((item) => (
+                      <option key={item} value={item} />
+                    ))}
+                  </datalist>
+                  <button
+                    className="mobile-web-primary-btn"
+                    type="button"
+                    onClick={() => {
+                      if (!roadName.trim()) {
+                        setError('Road name is required.');
+                        return;
+                      }
+                      setError('');
+                      setSuccess('Road name added for house marking.');
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            <div className="mobile-web-family-grid mt-3">
+              <label className="mobile-web-field">
+                <span>Building Number</span>
+                <input className="mobile-web-input" placeholder="Building Number" value={buildingNumber} onChange={(e) => setBuildingNumber(e.target.value)} />
+              </label>
+              <label className="mobile-web-field">
+                <span>Building Name</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Building Name"
+                  value={buildingName}
+                  onChange={(e) => setBuildingName(e.target.value)}
+                  list="building-suggestions"
+                />
+                <datalist id="building-suggestions">
+                  {buildingSuggestions.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="mobile-web-field">
+                <span>Flat Number</span>
+                <input className="mobile-web-input" placeholder="Flat Number" value={flatNumber} onChange={(e) => setFlatNumber(e.target.value)} />
+              </label>
+              <label className="mobile-web-field">
+                <span>Family Number</span>
+                <input className="mobile-web-input" placeholder="Auto (1, 2, 3…)" value={familyNumber} readOnly />
+              </label>
+              <label className="mobile-web-field">
+                <span>Tag a Leader</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Leader name"
+                  value={tagLeader}
+                  onChange={(e) => setTagLeader(e.target.value)}
+                  list="leader-suggestions"
+                />
+                <datalist id="leader-suggestions">
+                  {leaderSuggestions.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="mobile-web-field">
+                <span>Family Availability</span>
+                <select className="mobile-web-input" value={familyAvailability} onChange={(e) => setFamilyAvailability(e.target.value)}>
+                  {FAMILY_AVAILABILITY_OPTIONS.map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
               </label>
             </div>
 
@@ -3736,7 +3978,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                                 <div>
                                   <div className="mobile-web-suggestion-name">{name || item.epicNo || 'Unknown'}</div>
                                   <div className="mobile-web-suggestion-meta">
-                                    {item.epicNo || '-'} · {item.houseNoEn || item.houseNoLocal || 'House -'} · {item.mobile || 'No phone'}
+                                    {item.epicNo || '-'} · {getVoterRelationDisplay(item) || 'Relation -'} · {getVoterPhoneDisplay(item) || 'No phone'}
                                   </div>
                                 </div>
                                 <span className="mobile-web-suggestion-action">Add</span>
@@ -3764,12 +4006,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 ) : (
                   members.map((member) => (
                     <div key={member.id} className="mobile-web-table-row">
-                      <span>{member.name}</span>
-                      <span>{member.epic}</span>
+                      <button type="button" className="mobile-web-link-btn" onClick={() => openMemberVoterInfo(member)}>{member.name}</button>
+                      <button type="button" className="mobile-web-link-btn" onClick={() => openMemberVoterInfo(member)}>{member.epic}</button>
                       <span>{member.relation || '-'}</span>
                       <span>{member.phone}</span>
                       <span>{member.houseNo}</span>
                       <span className="mobile-web-row-actions">
+                        <button type="button" className="mobile-web-secondary-btn" onClick={() => openMemberVoterInfo(member)}>View</button>
                         <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
                       </span>
                     </div>
@@ -3816,97 +4059,73 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               <label className="mobile-web-field">
                 <span>Points to the family</span>
                 <select className="mobile-web-input" value={familyPoints} onChange={(e) => setFamilyPoints(e.target.value)}>
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].map((item) => (
+                  {FAMILY_POINT_OPTIONS.map((item) => (
                     <option key={item} value={item}>{item}</option>
                   ))}
                 </select>
               </label>
             </div>
-            <button
-              type="button"
-              className="mobile-web-primary-btn mobile-web-tag-btn"
-              onClick={() => setShowBuildingTag((prev) => !prev)}
-            >
-              Tag Building/ Apartment
-            </button>
-            {showBuildingTag ? (
-              <div className="mobile-web-family-grid mobile-web-tag-grid">
-                <label className="mobile-web-field">
-                  <span>Building/ Apartment Name</span>
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Name"
-                    value={buildingName}
-                    onChange={(e) => setBuildingName(e.target.value)}
-                    list="building-suggestions"
-                  />
-                  <datalist id="building-suggestions">
-                    {buildingSuggestions.map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                  </datalist>
-                </label>
-                <label className="mobile-web-field">
-                  <span>Address</span>
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Building Address"
-                    value={buildingAddress}
-                    onChange={(e) => setBuildingAddress(e.target.value)}
-                  />
-                </label>
+            <div className="mobile-web-family-grid mobile-web-tag-grid">
+              <label className="mobile-web-field">
+                <span>Association / Building Address</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Building Address"
+                  value={buildingAddress}
+                  onChange={(e) => setBuildingAddress(e.target.value)}
+                />
+              </label>
 
-                <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
-                  <input
-                    type="checkbox"
-                    id="has-association-check"
-                    className="mobile-web-checkbox-large"
-                    checked={hasAssociation}
-                    onChange={(e) => setHasAssociation(e.target.checked)}
-                  />
-                  <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
-                </div>
-
-                {hasAssociation && (
-                  <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
-                    <label className="mobile-web-field">
-                      <span>Association Name</span>
-                      <input
-                        className="mobile-web-input"
-                        placeholder="Association Name"
-                        value={associationName}
-                        onChange={(e) => setAssociationName(e.target.value)}
-                        list="association-suggestions"
-                      />
-                      <datalist id="association-suggestions">
-                        {associationSuggestions.map((item) => (
-                          <option key={item} value={item} />
-                        ))}
-                      </datalist>
-                    </label>
-                    <label className="mobile-web-field">
-                      <span>Association Head Name</span>
-                      <input
-                        className="mobile-web-input"
-                        placeholder="Association Head Name"
-                        value={associationHeadName}
-                        onChange={(e) => setAssociationHeadName(e.target.value)}
-                      />
-                    </label>
-                    <label className="mobile-web-field">
-                      <span>Association Head Phone number (10 digits)</span>
-                      <input
-                        className="mobile-web-input"
-                        placeholder="Phone number"
-                        value={associationHeadPhone}
-                        onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                        inputMode="numeric"
-                      />
-                    </label>
-                  </div>
-                )}
+              <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
+                <input
+                  type="checkbox"
+                  id="has-association-check"
+                  className="mobile-web-checkbox-large"
+                  checked={hasAssociation}
+                  onChange={(e) => setHasAssociation(e.target.checked)}
+                />
+                <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
               </div>
-            ) : null}
+
+              {hasAssociation ? (
+                <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
+                  <label className="mobile-web-field">
+                    <span>Association Name</span>
+                    <input
+                      className="mobile-web-input"
+                      placeholder="Association Name"
+                      value={associationName}
+                      onChange={(e) => setAssociationName(e.target.value)}
+                      list="association-suggestions"
+                    />
+                    <datalist id="association-suggestions">
+                      {associationSuggestions.map((item) => (
+                        <option key={item} value={item} />
+                      ))}
+                    </datalist>
+                  </label>
+                  <label className="mobile-web-field">
+                    <span>Association Head Name</span>
+                    <input
+                      className="mobile-web-input"
+                      placeholder="Association Head Name"
+                      value={associationHeadName}
+                      onChange={(e) => setAssociationHeadName(e.target.value)}
+                    />
+                  </label>
+                  <label className="mobile-web-field">
+                    <span>Association Head Phone number (10 digits)</span>
+                    <input
+                      className="mobile-web-input"
+                      placeholder="Phone number"
+                      value={associationHeadPhone}
+                      onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      inputMode="numeric"
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
             {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
             {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
             <div className="mobile-web-actions">
@@ -3918,18 +4137,28 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
           </>
         ) : (
           <div className="mobile-web-families-list">
+            {isSuperAdmin ? (
+              <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
+                <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamiliesExcel} disabled={!families.length || familiesLoading}>
+                  Download Excel (All Families)
+                </button>
+              </div>
+            ) : null}
             {familiesLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
             {!familiesLoading && families.length === 0 ? <div className="mobile-web-empty">No families found.</div> : null}
-            {!familiesLoading && families.length > 0 && (
+            {!familiesLoading && families.length > 0 ? (
               <div className="mobile-web-table-wrap">
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
                       <th>Family Name</th>
+                      <th>Road</th>
+                      <th>Family No</th>
+                      <th>Flat</th>
                       <th>Head of Family</th>
                       <th>EPIC</th>
                       <th>Members</th>
-                      <th>Status</th>
+                      <th>Availability</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -3949,22 +4178,17 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                                 </div>
                                 <div>
                                   <div className="font-bold text-slate-800">{f.familyName}</div>
-                                  <div className="text-xs text-slate-500 truncate max-w-[150px]">{f.familyAddress}</div>
+                                  <div className="text-xs text-slate-500 truncate max-w-[180px]">{f.familyAddress || '-'}</div>
                                 </div>
                               </div>
                             </td>
+                            <td>{f.roadName || '-'}</td>
+                            <td>{f.familyNumber || '-'}</td>
+                            <td>{f.flatNumber || '-'}</td>
                             <td>{f.headName || '-'}</td>
                             <td>{f.headEpicNo || '-'}</td>
-                            <td className="text-center">{f.memberCount || 0}</td>
-                            <td>
-                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${f.economicStatus === 'High' ? 'bg-green-100 text-green-700' :
-                                f.economicStatus === 'Medium' ? 'bg-blue-100 text-blue-700' :
-                                  f.economicStatus === 'Low' ? 'bg-amber-100 text-amber-700' :
-                                    'bg-slate-100 text-slate-600'
-                                }`}>
-                                {f.economicStatus}
-                              </span>
-                            </td>
+                            <td className="text-center">{f.memberCount || f.members?.length || 0}</td>
+                            <td>{f.familyAvailability || f.economicStatus || '-'}</td>
                             <td>
                               <button
                                 type="button"
@@ -3980,20 +4204,45 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                           </tr>
                           {isExpanded && (
                             <tr className="bg-slate-50">
-                              <td colSpan={6} className="p-4">
+                              <td colSpan={9} className="p-4">
                                 <div className="mobile-web-expanded-members">
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-xs text-slate-600">
+                                    <div><strong>Building No:</strong> {f.buildingNumber || '-'}</div>
+                                    <div><strong>Building Name:</strong> {f.buildingName || '-'}</div>
+                                    <div><strong>Tag Leader:</strong> {f.tagLeader || '-'}</div>
+                                    <div><strong>Points:</strong> {f.points ?? '-'}</div>
+                                  </div>
                                   <h4 className="font-bold text-slate-700 mb-3 text-xs uppercase tracking-wider">Family Members</h4>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {f.members && f.members.map((m) => (
-                                      <div key={m.memberId} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-1">
-                                        <div className="font-bold text-slate-800 flex items-center justify-between">
-                                          <span>{m.voterName}</span>
-                                          {m.head && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold uppercase text-[9px]">Head</span>}
-                                        </div>
-                                        <div className="text-[11px] text-slate-500 flex items-center justify-between">
-                                          <span>{m.epicNo || '-'}</span>
-                                        </div>
-                                      </div>
+                                  <div className="mb-3 text-xs font-semibold text-slate-500 grid grid-cols-[1.4fr_1fr_1fr] gap-2 px-1">
+                                    <span>Voter Name</span>
+                                    <span>Relation</span>
+                                    <span>EPIC</span>
+                                  </div>
+                                  <div className="grid grid-cols-1 gap-2">
+                                    {f.members && f.members.map((m, memberIndex) => (
+                                      <button
+                                        key={m.memberId || `${f.familyId}-${memberIndex}`}
+                                        type="button"
+                                        className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left grid grid-cols-[1.4fr_1fr_1fr_auto] gap-2 items-center"
+                                        onClick={async () => {
+                                          try {
+                                            const loc = await requestLocation({ allowCached: true });
+                                            setSelectedVoter({
+                                              epicNo: m.epicNo,
+                                              firstMiddleNameEn: m.voterName,
+                                              boothId: f.boothId,
+                                              ...loc,
+                                            });
+                                          } catch (err) {
+                                            setError(err?.message || 'Unable to open voter info.');
+                                          }
+                                        }}
+                                      >
+                                        <span className="font-bold text-slate-800">{memberIndex + 1}. {m.voterName}</span>
+                                        <span className="text-slate-600">{m.relationName || '-'}</span>
+                                        <span className="text-slate-600">{m.epicNo || '-'}</span>
+                                        <span className="text-blue-600 font-semibold text-xs">View Info</span>
+                                      </button>
                                     ))}
                                     {(!f.members || f.members.length === 0) && (
                                       <div className="text-slate-400 text-xs italic">No member details available</div>
@@ -4008,11 +4257,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                     })}
                   </tbody>
                 </table>
-                <div ref={familiesSentinelRef} className="py-4 text-center text-xs text-slate-400">
-                  {familiesLoading ? 'Loading more families...' : hasMoreFamilies ? 'Scroll for more' : 'All families loaded'}
+                <div className="py-4 text-center text-xs text-slate-400">
+                  {families.length} families loaded (sorted by family number)
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </section>
@@ -4607,6 +4856,17 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
   );
 }
 
+const POLL_PAGE_SIZE = 100;
+
+function isPollVotedStatus(status) {
+  const s = String(status || '').toUpperCase();
+  return s.includes('VOTED') && !s.includes('NOT');
+}
+
+function isPollNotVotedStatus(status) {
+  return String(status || '').toUpperCase().includes('NOT');
+}
+
 function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
   const [tab, setTab] = useState('ALL');
   const [natureFilter, setNatureFilter] = useState('');
@@ -4614,8 +4874,12 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
   const [pollRelationQuery, setPollRelationQuery] = useState('');
   const [pollSuggestions, setPollSuggestions] = useState([]);
   const [pollLoading, setPollLoading] = useState(false);
+  const [pollLoadingMore, setPollLoadingMore] = useState(false);
   const [showPollSuggestions, setShowPollSuggestions] = useState(false);
   const [pollVoters, setPollVoters] = useState([]);
+  const [pollPage, setPollPage] = useState(0);
+  const [pollHasMore, setPollHasMore] = useState(false);
+  const [pollMeta, setPollMeta] = useState(null);
   const [pollError, setPollError] = useState('');
   const [pollDayEnabled, setPollDayEnabled] = useState(false);
   const [globalPollDayEnabled, setGlobalPollDayEnabled] = useState(false);
@@ -4690,59 +4954,93 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
     }
   };
 
-  const fetchPollVoters = async (queryValue = '') => {
-    setPollLoading(true);
+  const parsePollSearchResponse = (res) => {
+    const result = res?.data?.result || res?.result || [];
+    const meta = res?.data?.meta || res?.meta || {};
+    const list = Array.isArray(result) ? result : (Array.isArray(res?.data) ? res.data : []);
+    return { list, meta };
+  };
+
+  const runPollVoterFetch = async (nextPage = 0, queryValue = pollQuery, append = false) => {
+    const isFirstPage = nextPage === 0 && !append;
+    if (isFirstPage) {
+      setPollLoading(true);
+    } else {
+      setPollLoadingMore(true);
+    }
     setPollError('');
     try {
       const res = await mobileApi.searchVoters({
         assemblyCode: assemblyCodeProp,
         searchQuery: queryValue.trim() || undefined,
         relationName: pollRelationQuery.trim() || undefined,
-        size: 200,
+        page: nextPage,
+        size: POLL_PAGE_SIZE,
       });
-      const payload = res?.data?.result || res?.result || res?.data || [];
-      const list = Array.isArray(payload) ? payload : [];
-      setPollVoters(list.map(buildPollDisplay));
+      const { list, meta } = parsePollSearchResponse(res);
+      setPollMeta(meta);
+      setPollHasMore(Boolean(meta?.hasMore));
+      setPollPage(nextPage);
+      const mapped = list.map(buildPollDisplay);
+      setPollVoters((prev) => {
+        if (!append) return mapped;
+        const seen = new Set(prev.map((v) => v.id));
+        return [...prev, ...mapped.filter((v) => !seen.has(v.id))];
+      });
       return list;
     } catch (error) {
-      setPollError('Unable to load voters. Please try again.');
-      setPollVoters([]);
+      if (!append) {
+        setPollError('Unable to load voters. Please try again.');
+        setPollVoters([]);
+        setPollMeta(null);
+        setPollHasMore(false);
+      }
       return [];
     } finally {
-      setPollLoading(false);
+      if (isFirstPage) setPollLoading(false);
+      else setPollLoadingMore(false);
     }
+  };
+
+  const fetchPollSuggestions = async (queryValue) => {
+    if (!queryValue.trim()) {
+      setPollSuggestions([]);
+      return;
+    }
+    try {
+      const res = await mobileApi.searchVoters({
+        assemblyCode: assemblyCodeProp,
+        searchQuery: queryValue.trim(),
+        relationName: pollRelationQuery.trim() || undefined,
+        page: 0,
+        size: 20,
+      });
+      const { list } = parsePollSearchResponse(res);
+      setPollSuggestions(list);
+    } catch (error) {
+      setPollSuggestions([]);
+    }
+  };
+
+  const loadMorePollVoters = async () => {
+    if (pollLoading || pollLoadingMore || !pollHasMore) return;
+    await runPollVoterFetch(pollPage + 1, pollQuery, true);
   };
 
   useEffect(() => {
     if (pollSearchTimerRef.current) {
       clearTimeout(pollSearchTimerRef.current);
     }
-    const query = pollQuery.trim();
-    if (!query) {
-      setPollSuggestions([]);
-      setShowPollSuggestions(false);
-      fetchPollVoters('');
-      return undefined;
-    }
-    setShowPollSuggestions(true);
-    setPollLoading(true);
-    pollSearchTimerRef.current = setTimeout(async () => {
-      try {
-        const res = await mobileApi.searchVoters({
-          assemblyCode: assemblyCodeProp,
-          searchQuery: query,
-          relationName: pollRelationQuery.trim() || undefined,
-          size: 20,
-        });
-        const payload = res?.data?.result || res?.result || res?.data || [];
-        const list = Array.isArray(payload) ? payload : [];
-        setPollSuggestions(list);
-        setPollVoters(list.map(buildPollDisplay));
-      } catch (error) {
+    pollSearchTimerRef.current = setTimeout(() => {
+      const query = pollQuery.trim();
+      if (query) {
+        setShowPollSuggestions(true);
+        fetchPollSuggestions(query);
+      } else {
         setPollSuggestions([]);
-      } finally {
-        setPollLoading(false);
+        setShowPollSuggestions(false);
       }
+      runPollVoterFetch(0, pollQuery, false);
     }, 400);
     return () => {
       if (pollSearchTimerRef.current) {
@@ -4751,12 +5049,20 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
     };
   }, [pollQuery, pollRelationQuery, assemblyCodeProp]);
 
+  const pollTabCounts = useMemo(() => {
+    const all = Number(pollMeta?.total ?? pollVoters.length) || 0;
+    const voted = pollVoters.filter((v) => isPollVotedStatus(v.votedStatus)).length;
+    const notVoted = pollVoters.filter((v) => isPollNotVotedStatus(v.votedStatus)).length;
+    return { all, voted, notVoted };
+  }, [pollVoters, pollMeta]);
+
+  const pollSentinelRef = useInfiniteTrigger(Boolean(pollHasMore) && !pollLoading && !pollLoadingMore, loadMorePollVoters);
+
   const handlePollSuggestion = (item) => {
-    const display = buildPollDisplay(item);
-    setPollQuery(display.name);
+    const name = [item.firstMiddleNameEn, item.lastNameEn].filter(Boolean).join(' ').trim();
+    setPollQuery(name || item.epicNo || '');
     setShowPollSuggestions(false);
     setPollSuggestions([]);
-    setPollVoters([display]);
   };
 
   const filteredPollVoters = useMemo(() => {
@@ -4765,12 +5071,9 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
       list = list.filter((v) => String(v.natureOfVoter || '').toUpperCase() === natureFilter);
     }
     if (tab === 'VOTED') {
-      list = list.filter((v) => {
-        const s = String(v.votedStatus).toUpperCase();
-        return s.includes('VOTED') && !s.includes('NOT');
-      });
+      list = list.filter((v) => isPollVotedStatus(v.votedStatus));
     } else if (tab === 'NOT VOTED') {
-      list = list.filter((v) => String(v.votedStatus).toUpperCase().includes('NOT'));
+      list = list.filter((v) => isPollNotVotedStatus(v.votedStatus));
     }
     return list;
   }, [pollVoters, natureFilter, tab]);
@@ -4882,17 +5185,10 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
           <div className="mobile-web-pollday-left">
             <div className="mobile-web-tabs">
               {['ALL', 'VOTED', 'NOT VOTED'].map((item) => {
-                let count = 0;
-                if (item === 'ALL') {
-                  count = pollVoters.length;
-                } else if (item === 'VOTED') {
-                  count = pollVoters.filter((v) => {
-                    const s = String(v.votedStatus).toUpperCase();
-                    return s.includes('VOTED') && !s.includes('NOT');
-                  }).length;
-                } else if (item === 'NOT VOTED') {
-                  count = pollVoters.filter((v) => String(v.votedStatus).toUpperCase().includes('NOT')).length;
-                }
+                const count =
+                  item === 'ALL' ? pollTabCounts.all :
+                  item === 'VOTED' ? pollTabCounts.voted :
+                  pollTabCounts.notVoted;
                 return (
                   <button
                     key={item}
@@ -4900,7 +5196,7 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
                     className={`mobile-web-tab-pill ${tab === item ? 'active' : ''}`}
                     onClick={() => setTab(item)}
                   >
-                    {item} {count > 0 ? `(${count})` : '(0)'}
+                    {item} ({count})
                   </button>
                 );
               })}
@@ -4977,11 +5273,17 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
               {!pollLoading && filteredPollVoters.length === 0 ? (
                 <div className="mobile-web-table-empty">No voters found.</div>
               ) : null}
+              {!pollLoading && pollVoters.length > 0 && pollMeta?.total ? (
+                <div className="mobile-web-table-empty" style={{ gridColumn: '1 / -1', fontSize: '0.8rem', color: '#64748b' }}>
+                  Showing {pollVoters.length} of {pollMeta.total} voters
+                  {pollHasMore ? ' — scroll for more' : ''}
+                </div>
+              ) : null}
               {filteredPollVoters.map((voter) => {
                 const phoneValue = normalizeMobileValue(voter.phone);
                 const statusRaw = String(voter.votedStatus || '');
-                const isVoted = statusRaw.includes('VOTED') && !statusRaw.includes('NOT');
-                const isNotVoted = statusRaw.includes('NOT');
+                const isVoted = isPollVotedStatus(statusRaw);
+                const isNotVoted = isPollNotVotedStatus(statusRaw);
                 return (
                   <div key={voter.id} className="mobile-web-pollday-card">
                     <div className="mobile-web-avatar-circle">{(voter.name || 'V')[0]}</div>
@@ -5027,6 +5329,11 @@ function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
                   </div>
                 );
               })}
+              {pollHasMore ? (
+                <div ref={pollSentinelRef} className="mobile-web-table-empty" style={{ gridColumn: '1 / -1' }}>
+                  {pollLoadingMore ? 'Loading more voters...' : 'Scroll to load more'}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -6254,17 +6561,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         });
 
         const infoWindow = new google.maps.InfoWindow({
-          content: mapDataMode === 'families' ? `
-            <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 240px;">
-              <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.familyName || 'Family Details'}</h3>
-              <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
-                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Address:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.familyAddress || '-'}</span></div>
-                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Head:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.headOfFamily || '-'}</span></div>
-                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Phone:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.phone || '-'}</span></div>
-                <div style="display: flex; justify-content: space-between;"><span style="color: #64748b; font-weight: 500;">Members:</span><span style="color: #334155; font-weight: 600; text-align: right;">${point.membersCount ?? '-'}</span></div>
-              </div>
-            </div>
-          ` : `
+          content: mapDataMode === 'families' ? buildFamilyMapTooltipHtml(point) : `
             <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
               <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
               <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
@@ -6289,15 +6586,10 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           `
         });
 
-        marker.addListener('mouseover', () => {
-          infoWindow.open(mapInstanceRef.current, marker);
-        });
-        marker.addListener('mouseout', () => {
-          infoWindow.close();
-        });
-        marker.addListener('click', () => {
-          infoWindow.open(mapInstanceRef.current, marker);
-        });
+        const openInfo = () => infoWindow.open(mapInstanceRef.current, marker);
+        marker.addListener('mouseover', openInfo);
+        marker.addListener('mouseout', () => infoWindow.close());
+        marker.addListener('click', openInfo);
 
         mapMarkersRef.current.push(marker);
         bounds.extend(marker.getPosition());
@@ -6332,8 +6624,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           mobile: item.mobile || '',
           familyName: item.familyName || item.name || '',
           familyAddress: item.familyAddress || item.addressEn || item.address || '',
+          roadName: item.roadName || '',
+          familyNumber: item.familyNumber || '',
+          flatNumber: item.flatNumber || '',
           headOfFamily: item.headOfFamily || item.headName || '',
           phone: item.phone || item.mobile || '',
+          members: item.members || [],
           membersCount: item.membersCount ?? item.members?.length ?? item.memberCount ?? '-',
         }))
         .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
@@ -6430,21 +6726,15 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     return { headers, dataRows };
   };
 
-  if (role === 'BOOTH') {
-    return (
-      <ScreenFrame accent="light">
-        <section className="mobile-web-card mobile-web-volunteer-shell">
-          <div className="mobile-web-empty">This section is available for Assembly and Ward roles only.</div>
-        </section>
-      </ScreenFrame>
-    );
-  }
+  const hideFamilyLabelsOnMap = ['WARD', 'BOOTH', 'USER'].includes(role);
 
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-volunteer-shell">
         <div className="mobile-web-stack">
-        {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access.</div> : null}
+        {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access. Hover map markers for family details.</div> : null}
+        {hydrated && role === 'BOOTH' ? <div className="mobile-web-info-pill">Map view enabled. Hover family markers to see household details.</div> : null}
+        {hydrated && role === 'ASSEMBLY' ? <div className="mobile-web-info-pill">Assembly map access enabled for volunteers and families.</div> : null}
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
           {role === 'SUPER_ADMIN' && assemblies.length > 0 && (
             <div className="mobile-web-field">
@@ -6691,7 +6981,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             {!mapLoading && mapPoints.length === 0 ? <div className="mobile-web-empty">No captured locations found.</div> : null}
             <div className="mobile-web-map-legend">
               {mapDataMode === 'families' ? (
-                <span><i className="legend-dot unknown" style={{ background: '#2563eb' }} /> Family Location</span>
+                <span><i className="legend-dot unknown" style={{ background: '#2563eb' }} /> Family Location {hideFamilyLabelsOnMap ? '(hover marker for details)' : ''}</span>
               ) : (
                 <>
                   <span><i className="legend-dot male" /> Male</span>

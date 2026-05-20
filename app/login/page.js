@@ -4,6 +4,53 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { mobileApi } from '../lib/mobileApi';
 
+function ShieldIcon() {
+  return (
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"
+        stroke="#38BDF8"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 12l2 2 4-4"
+        stroke="#38BDF8"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PersonIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="8" r="4" stroke="#38BDF8" strokeWidth="1.5" />
+      <path d="M5 20c0-4 3.5-6 7-6s7 2 7 6" stroke="#38BDF8" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="7" y="3" width="10" height="18" rx="2" stroke="#38BDF8" strokeWidth="1.5" />
+      <path d="M11 18h2" stroke="#38BDF8" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="#FCA5A5" strokeWidth="1.5" />
+      <path d="M12 8v5M12 16h.01" stroke="#FCA5A5" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const [formData, setFormData] = useState({ firstName: '', phone: '' });
   const [loading, setLoading] = useState(false);
@@ -14,14 +61,13 @@ export default function LoginPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const msg = params.get('error');
-      if (msg) {
-        setError(msg);
-      }
+      if (msg) setError(msg);
     }
   }, []);
 
   const handleChange = (e) => {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    if (error) setError('');
   };
 
   const handleSubmit = async (e) => {
@@ -54,7 +100,10 @@ export default function LoginPage() {
       localStorage.setItem('token', result.token);
       localStorage.setItem('X_INIT_TOKEN', result.token);
       localStorage.setItem('role', result.role || '');
-      localStorage.setItem('userName', result.userName || result.firstName || formData.firstName.trim());
+      localStorage.setItem(
+        'userName',
+        result.userName || result.firstName || formData.firstName.trim()
+      );
       localStorage.setItem('tenantId', result.tenantId || '');
       localStorage.setItem('userInfo', JSON.stringify(result));
       document.cookie = `token=${result.token}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
@@ -68,48 +117,108 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[linear-gradient(160deg,#0C7BB3_0%,#0796A1_100%)] px-6">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-[380px] rounded-[24px] bg-[#4fa3c7] px-6 py-6 shadow-2xl"
-      >
-        <h1 className="mb-8 text-center text-3xl font-bold text-white">Votabase</h1>
+    <div className="login-screen">
+      <div className="login-screen__glow login-screen__glow--left" aria-hidden="true" />
+      <div className="login-screen__glow login-screen__glow--right" aria-hidden="true" />
 
-        <label className="mb-1 block text-sm text-white">First Name</label>
-        <input
-          type="text"
-          name="firstName"
-          value={formData.firstName}
-          onChange={handleChange}
-          placeholder="First Name"
-          className="mb-5 h-[38px] border-0 bg-[#6bb6d6] px-4 text-white placeholder:text-[#d0e7f2] focus:ring-2 focus:ring-white/40"
-        />
+      <div className="login-screen__inner">
+        <header className="login-brand">
+          <div className="login-brand__icon">
+            <ShieldIcon />
+          </div>
+          <h1 className="login-brand__title">Votabase</h1>
+          <p className="login-brand__tagline">Secure Voter Management Portal</p>
+        </header>
 
-        <label className="mb-1 block text-sm text-white">Mobile Number</label>
-        <input
-          type="tel"
-          name="phone"
-          value={formData.phone}
-          onChange={handleChange}
-          placeholder="Mobile Number"
-          maxLength={10}
-          className="mb-6 h-[38px] border-0 bg-[#6bb6d6] px-4 text-white placeholder:text-[#d0e7f2] focus:ring-2 focus:ring-white/40"
-        />
+        <form onSubmit={handleSubmit} className="login-card">
+          <div className="login-card__head">
+            <h2 className="login-card__title">Welcome !</h2>
+            <p className="login-card__sub">Please enter your credentials to sign in</p>
+          </div>
 
-        {error && <p className="mb-3 text-center text-sm font-medium text-white bg-red-600 p-1 rounded ">{error}</p>}
+          <div className="login-field">
+            <label className="login-field__label" htmlFor="firstName">
+              First name
+            </label>
+            <div className="login-field__wrap">
+              <span className="login-field__icon">
+                <PersonIcon />
+              </span>
+              <input
+                id="firstName"
+                type="text"
+                name="firstName"
+                value={formData.firstName}
+                onChange={handleChange}
+                placeholder="Enter your first name"
+                className="login-field__input"
+                autoComplete="username"
+              />
+            </div>
+          </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="mb-5 w-full rounded-lg bg-blue-600 py-3 text-base font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {loading ? 'Please wait...' : 'Login'}
-        </button>
+          <div className="login-field">
+            <label className="login-field__label" htmlFor="phone">
+              Mobile number
+            </label>
+            <div className="login-field__wrap">
+              <span className="login-field__icon">
+                <PhoneIcon />
+              </span>
+              <input
+                id="phone"
+                type="tel"
+                name="phone"
+                value={formData.phone}
+                onChange={handleChange}
+                placeholder="10 digit mobile number"
+                maxLength={10}
+                className="login-field__input"
+                autoComplete="tel-national"
+              />
+            </div>
+          </div>
 
-        <p className="text-center text-xs text-[#e0f1f8]">
-          By continuing you agree to our <span className="underline">Terms &amp; Privacy</span>
-        </p>
-      </form>
+          {error ? (
+            <div className="login-error" role="alert">
+              <AlertIcon />
+              <span>{error}</span>
+            </div>
+          ) : null}
+
+          <button type="submit" disabled={loading} className="login-btn">
+            {loading ? (
+              <span className="login-btn__spinner" aria-hidden="true" />
+            ) : (
+              <>
+                <span>Login</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M5 12h14M13 6l6 6-6 6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </>
+            )}
+          </button>
+
+          <p className="login-legal">
+            By continuing you agree to our{' '}
+            <a href="#" className="login-legal__link">
+              Terms of Service
+            </a>{' '}
+            &{' '}
+            <a href="#" className="login-legal__link">
+              Privacy Policy
+            </a>
+          </p>
+        </form>
+
+        <footer className="login-footer">© {new Date().getFullYear()} Votabase. All rights reserved.</footer>
+      </div>
     </div>
   );
 }

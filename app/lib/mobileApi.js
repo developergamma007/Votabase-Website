@@ -190,9 +190,12 @@ export const mobileApi = {
     }
   },
 
-  fetchBoothVoters: async (boothId) => {
+  fetchBoothVoters: async (boothId, wardId = null, boothNo = null) => {
     try {
-      return await request(`/votebase/v1/api/voters/by-booth?boothId=${encodeURIComponent(boothId)}`);
+      const params = new URLSearchParams({ boothId: String(boothId) });
+      if (wardId != null && wardId !== '') params.set('wardId', String(wardId));
+      if (boothNo != null && boothNo !== '') params.set('boothNo', String(boothNo));
+      return await request(`/votebase/v1/api/voters/by-booth?${params.toString()}`);
     } catch (error) {
       console.log('Fetch booth voters API Error:', error);
       throw error;
@@ -247,9 +250,16 @@ export const mobileApi = {
 
   updateUserProfile: async (jsonReq) => {
     try {
+      const payload = {
+        firstName: jsonReq?.firstName,
+        phone: jsonReq?.phone,
+      };
+      if (jsonReq?.profilePicUrl) payload.profilePicUrl = jsonReq.profilePicUrl;
+      if (jsonReq?.tenantId != null) payload.tenantId = jsonReq.tenantId;
+      if (jsonReq?.role) payload.role = jsonReq.role;
       return await request('/votebase/v1/api/user/profile', {
         method: 'PUT',
-        body: JSON.stringify(jsonReq),
+        body: JSON.stringify(payload),
       });
     } catch (error) {
       console.log('Error while updating profile info:', error);
@@ -432,10 +442,7 @@ export const mobileApi = {
   },
   fetchFamilyLocationPoints: async (wardId) => {
     try {
-      const size = 500;
-      const res = await request(`/votebase/v1/api/family?page=0&size=${size}`);
-      const payload = res?.content || res?.data?.content || res?.data?.result || res?.result || res?.data || [];
-      const rows = Array.isArray(payload) ? payload : [];
+      const rows = await mobileApi.fetchAllFamilies(undefined, undefined);
       const ward = wardId ? String(wardId) : '';
       const filtered = ward
         ? rows.filter((item) => {
@@ -504,6 +511,26 @@ export const mobileApi = {
       console.log('Error while fetching families:', error);
       throw error;
     }
+  },
+  fetchAllFamilies: async (hasAssociation, boothId) => {
+    const size = 200;
+    let page = 0;
+    let all = [];
+    while (page < 100) {
+      const res = await mobileApi.fetchFamilies(hasAssociation, page, size, boothId);
+      const chunk =
+        res?.content ||
+        res?.data?.content ||
+        res?.data?.result ||
+        res?.result ||
+        res?.data ||
+        [];
+      const list = Array.isArray(chunk) ? chunk : [];
+      all = all.concat(list);
+      if (list.length < size) break;
+      page += 1;
+    }
+    return all;
   },
   fetchFamilySuggestions: async (type) => {
     try {
