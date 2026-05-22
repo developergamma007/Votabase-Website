@@ -6,6 +6,147 @@ export const FAMILY_AVAILABILITY_OPTIONS = [
   'Door Closed',
 ];
 
+/** Map marker colours by family availability status */
+export const FAMILY_AVAILABILITY_MAP_COLORS = {
+  Available: '#2563eb',
+  'Not Available': '#f97316',
+  'Entry Denied': '#eab308',
+  'Data not Given': '#9333ea',
+  'Door Closed': '#ef4444',
+};
+
+export const FAMILY_MAP_AVAILABILITY_LEGEND = FAMILY_AVAILABILITY_OPTIONS.map((label) => ({
+  label,
+  color: FAMILY_AVAILABILITY_MAP_COLORS[label] || '#64748b',
+}));
+
+export const getFamilyAvailabilityMapColor = (availability) =>
+  FAMILY_AVAILABILITY_MAP_COLORS[String(availability || '').trim()] || '#64748b';
+
+/** Relation person name for a family member (map tooltip / tables). */
+export const getFamilyMemberRelationName = (member = {}) => {
+  const fromParts = [member.relationFirstMiddleNameEn, member.relationLastNameEn]
+    .filter((p) => p != null && String(p).trim() !== '')
+    .join(' ')
+    .trim();
+  const fromLocal = [member.relationFirstMiddleNameLocal, member.relationLastNameLocal]
+    .filter((p) => p != null && String(p).trim() !== '')
+    .join(' ')
+    .trim();
+  const name = String(
+    member.relationName
+    || member.relation_name
+    || fromParts
+    || fromLocal
+    || member.relationNameEn
+    || member.relation_name_en
+    || member.rel_eng
+    || member.relEng
+    || member.fatherName
+    || member.husbandName
+    || member.motherName
+    || ''
+  ).trim();
+  return name || '-';
+};
+
+export const normalizeFamilyMapMember = (member = {}) => ({
+  ...member,
+  voterName: member.voterName || member.name || '',
+  epicNo: member.epicNo || member.epic || '',
+  relationName: getFamilyMemberRelationName(member),
+  relationType: String(member.relationType || member.relation_type || '').trim() || '-',
+});
+
+export const formatFamilyMapMemberLine = (member = {}, index = 0) => {
+  const normalized = normalizeFamilyMapMember(member);
+  const name = normalized.voterName || '-';
+  const epic = normalized.epicNo || '-';
+  const relationName = normalized.relationName || '-';
+  const relationType = normalized.relationType || '-';
+  return `${index + 1}. ${name} | ${epic} | ${relationName} | ${relationType}`;
+};
+
+export const normalizeFamilyMapPoint = (item = {}) => ({
+  familyId: item.familyId,
+  latitude: Number(item.latitude),
+  longitude: Number(item.longitude),
+  familyName: item.familyName || '',
+  familyAvailability: item.familyAvailability || 'Available',
+  roadName: item.roadName || '',
+  buildingNumber: item.buildingNumber || '',
+  buildingName: item.buildingName || '',
+  familyNumber: item.familyNumber || '',
+  flatNumber: item.flatNumber || '',
+  boothNo: item.boothNo || '',
+  wardId: item.wardId,
+  wardCode: item.wardCode,
+  members: (Array.isArray(item.members) ? item.members : []).map(normalizeFamilyMapMember),
+});
+
+export const buildFamilyMapTooltipLimitedHtml = (point = {}) => {
+  const status = point.familyAvailability || 'Available';
+  return `
+    <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 260px; max-width: 320px;">
+      <div style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #0f172a;">${status}</div>
+      <div style="font-size: 13px; line-height: 1.55;">
+        <div><strong>Road name:</strong> ${point.roadName || '-'}</div>
+        <div><strong>Building/Apartment Number:</strong> ${point.buildingNumber || '-'}</div>
+        <div><strong>Building/Apartment Name:</strong> ${point.buildingName || '-'}</div>
+        <div><strong>Family number:</strong> ${point.familyNumber || '-'}</div>
+        <div><strong>Family Name:</strong> ${point.familyName || '-'}</div>
+        <div><strong>Flat No:</strong> ${point.flatNumber || '-'}</div>
+      </div>
+    </div>
+  `;
+};
+
+export const buildFamilyMapTooltipHtml = (point = {}, options = {}) => {
+  const full = options.full !== false;
+  if (!full) return buildFamilyMapTooltipLimitedHtml(point);
+
+  const members = Array.isArray(point.members) ? point.members : [];
+  const memberLines = members.length
+    ? members.map((m, index) => `<div style="margin: 4px 0;">${formatFamilyMapMemberLine(m, index)}</div>`).join('')
+    : '<div style="margin: 4px 0;">No members listed</div>';
+
+  const status = point.familyAvailability || 'Available';
+
+  return `
+    <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 300px; max-width: 400px;">
+      <div style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #0f172a;">${status}</div>
+      <div style="font-size: 13px; line-height: 1.5;">
+        <div><strong>Road name:</strong> ${point.roadName || '-'}</div>
+        <div><strong>Building/Apartment Number:</strong> ${point.buildingNumber || '-'}</div>
+        <div><strong>Building/Apartment Name:</strong> ${point.buildingName || '-'}</div>
+        <div><strong>Family number:</strong> ${point.familyNumber || '-'}</div>
+        <div><strong>Family Name:</strong> ${point.familyName || '-'}</div>
+        <div><strong>Flat No:</strong> ${point.flatNumber || '-'}</div>
+        <div style="margin-top: 8px; font-weight: 700;">Family members details:</div>
+        ${memberLines}
+      </div>
+    </div>
+  `;
+};
+
+export const FAMILY_ANALYSIS_AVAILABILITY_KEYS = [
+  { key: 'available', label: 'Available' },
+  { key: 'notAvailable', label: 'Not Available' },
+  { key: 'entryDenied', label: 'Entry Denied' },
+  { key: 'dataNotGiven', label: 'Data not Given' },
+  { key: 'doorClosed', label: 'Door Closed' },
+];
+
+export const formatFamilyDateTime = (value) => {
+  if (!value) return '-';
+  const raw = typeof value === 'string' ? value.trim() : value;
+  const needsTz = typeof raw === 'string' && raw !== '' && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw);
+  const normalized = needsTz ? `${raw}Z` : raw;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+};
+
 export const FAMILY_POINT_OPTIONS = Array.from({ length: 100 }, (_, index) => String(index + 1));
 
 export const parseFamilyNumber = (value) => {
@@ -13,13 +154,75 @@ export const parseFamilyNumber = (value) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-export const getNextFamilyNumber = (families = []) => {
+/** Ward code from API row or label like "27 - Vibhootipura" (never the DB ward id). */
+export const parseWardCodeFromWardRecord = (ward = {}) => {
+  const name = String(
+    ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.ward_name ?? ward?.name_en ?? ward?.name ?? ward?.label ?? ''
+  ).trim();
+  const nameMatch = name.match(/^(\d+)\s*[-–]/);
+  if (nameMatch) return nameMatch[1];
+  const code = String(ward?.wardCode ?? ward?.ward_code ?? ward?.ward_no ?? ward?.code ?? '').trim();
+  const id = String(ward?.wardId ?? ward?.ward_id ?? ward?.id ?? ward?.value ?? '').trim();
+  if (code && (!id || code !== id)) return code.replace(/\s+/g, '');
+  return '';
+};
+
+/** Assembly segment for family numbers, e.g. "000000000151" → "151". */
+export const normalizeAssemblyCodeForFamily = (assemblyCode) => {
+  const raw = String(assemblyCode ?? '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? String(n) : raw;
+  }
+  return raw.replace(/\s+/g, '');
+};
+
+/** Prefix for new family numbers: assembly-ward, e.g. "151-27" → next "151-27-2". */
+export const getFamilyNumberPrefix = (ward = {}, assemblyCode = '') => {
+  const wardPart = parseWardCodeFromWardRecord(ward);
+  const asmPart = normalizeAssemblyCodeForFamily(assemblyCode);
+  if (asmPart && wardPart) return `${asmPart}-${wardPart}`;
+  return wardPart || asmPart || '';
+};
+
+/** @deprecated Use getFamilyNumberPrefix — ward-only prefix */
+export const getWardFamilyNumberPrefix = (ward = {}) => parseWardCodeFromWardRecord(ward);
+
+export const parseFamilyNumberSeq = (value, wardPrefix = '') => {
+  const raw = String(value ?? '').trim();
+  const prefix = String(wardPrefix ?? '').trim();
+  if (!prefix) return parseFamilyNumber(raw);
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = raw.match(new RegExp(`^${escaped}-(\\d+)$`, 'i'));
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+export const familyBelongsToWard = (family, wardId, wardCode) => {
+  if (!wardId && !wardCode) return true;
+  if (wardId != null && String(wardId).trim() !== '' && String(family?.wardId) === String(wardId)) return true;
+  if (wardCode && String(family?.wardCode ?? '').trim() === String(wardCode).trim()) return true;
+  return false;
+};
+
+export const getNextFamilyNumber = (families = [], wardPrefix = '') => {
+  const prefix = String(wardPrefix ?? '').trim();
+  if (!prefix) {
+    let max = 0;
+    (families || []).forEach((family) => {
+      const n = parseFamilyNumber(family?.familyNumber);
+      if (n != null && n > max) max = n;
+    });
+    return String(max + 1);
+  }
   let max = 0;
   (families || []).forEach((family) => {
-    const n = parseFamilyNumber(family?.familyNumber);
+    const n = parseFamilyNumberSeq(family?.familyNumber, prefix);
     if (n != null && n > max) max = n;
   });
-  return max + 1;
+  return `${prefix}-${max + 1}`;
 };
 
 export const hasHouseMarkingFields = (buildingNumber, buildingName, flatNumber) =>
@@ -58,38 +261,25 @@ export const getVoterHouseDisplay = (voter = {}) => {
   return s;
 };
 
-export const buildFamilyMapTooltipHtml = (point = {}) => {
-  const members = Array.isArray(point.members) ? point.members : [];
-  const memberLines = members.length
-    ? members.map((m, index) => {
-      const name = m.voterName || m.name || '-';
-      const relation = m.relationName || m.relation || '-';
-      const epic = m.epicNo || m.epic || '-';
-      return `<div style="margin: 4px 0;">${index + 1}. ${name} | ${relation} | ${epic}</div>`;
-    }).join('')
-    : '<div style="margin: 4px 0;">No members listed</div>';
-
-  return `
-    <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 280px; max-width: 360px;">
-      <div style="font-size: 13px; line-height: 1.5;">
-        <div><strong>Road name:</strong> ${point.roadName || '-'}</div>
-        <div><strong>Family number:</strong> ${point.familyNumber || '-'}</div>
-        <div><strong>Family Name:</strong> ${point.familyName || '-'}</div>
-        <div><strong>Flat No:</strong> ${point.flatNumber || '-'}</div>
-        <div style="margin-top: 8px; font-weight: 700;">Family members details:</div>
-        ${memberLines}
-      </div>
-    </div>
-  `;
+const familyNumberSortKey = (family) => {
+  const raw = String(family?.familyNumber ?? '').trim();
+  const dash = raw.lastIndexOf('-');
+  if (dash > 0) {
+    const prefix = raw.slice(0, dash);
+    const seq = parseInt(raw.slice(dash + 1), 10);
+    return { prefix, seq: Number.isFinite(seq) ? seq : Number.MAX_SAFE_INTEGER, raw };
+  }
+  const n = parseFamilyNumber(raw);
+  return { prefix: '', seq: n != null ? n : Number.MAX_SAFE_INTEGER, raw };
 };
 
 export const sortFamiliesByNumber = (families = []) =>
   [...families].sort((a, b) => {
-    const aNum = parseFamilyNumber(a?.familyNumber);
-    const bNum = parseFamilyNumber(b?.familyNumber);
-    if (aNum != null && bNum != null && aNum !== bNum) return aNum - bNum;
-    if (aNum != null && bNum == null) return -1;
-    if (aNum == null && bNum != null) return 1;
+    const ak = familyNumberSortKey(a);
+    const bk = familyNumberSortKey(b);
+    const prefixCmp = ak.prefix.localeCompare(bk.prefix, 'en', { sensitivity: 'base' });
+    if (prefixCmp !== 0) return prefixCmp;
+    if (ak.seq !== bk.seq) return ak.seq - bk.seq;
     return String(a?.familyName || '').localeCompare(String(b?.familyName || ''), 'en', { sensitivity: 'base' });
   });
 

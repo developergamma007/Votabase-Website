@@ -18,11 +18,190 @@ import {
   WhatsApp,
 } from '@mui/icons-material';
 import { getAssemblyCode, mobileApi } from '../../lib/mobileApi';
-import { FAMILY_AVAILABILITY_OPTIONS, FAMILY_POINT_OPTIONS, getNextFamilyNumber, hasHouseMarkingFields, buildFamilyMapTooltipHtml, sortFamiliesByNumber, getVoterRelationDisplay, getVoterPhoneDisplay, getVoterHouseDisplay } from '../../lib/familyFormHelpers';
+import {
+  FAMILY_AVAILABILITY_OPTIONS,
+  FAMILY_POINT_OPTIONS,
+  FAMILY_ANALYSIS_AVAILABILITY_KEYS,
+  FAMILY_MAP_AVAILABILITY_LEGEND,
+  formatFamilyDateTime,
+  formatFamilyMapMemberLine,
+  getNextFamilyNumber,
+  getFamilyNumberPrefix,
+  parseWardCodeFromWardRecord,
+  familyBelongsToWard,
+  hasHouseMarkingFields,
+  buildFamilyMapTooltipHtml,
+  getFamilyAvailabilityMapColor,
+  normalizeFamilyMapPoint,
+  normalizeFamilyMapMember,
+  sortFamiliesByNumber,
+  getVoterRelationDisplay,
+  getVoterPhoneDisplay,
+  getVoterHouseDisplay,
+  getFamilyMemberRelationName,
+} from '../../lib/familyFormHelpers';
+import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
 const GOOGLE_MAPS_API_KEY = 'AIzaSyDiHCsapzJETTnhBIC7hFhTwmlWJJfnEg0';
+
+let googleMapsScriptPromise = null;
+
+function loadGoogleMapsScript() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Maps unavailable'));
+  if (window.google?.maps) return Promise.resolve(window.google);
+  if (!GOOGLE_MAPS_API_KEY) return Promise.reject(new Error('Google Maps API key is missing.'));
+  if (!googleMapsScriptPromise) {
+    googleMapsScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}`;
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve(window.google);
+      script.onerror = () => reject(new Error('Failed to load Google Maps.'));
+      document.body.appendChild(script);
+    });
+  }
+  return googleMapsScriptPromise;
+}
+
+function FamilyAvailabilityMapLegend({ compact = false }) {
+  return (
+    <div className={`mobile-web-map-legend mobile-web-family-map-legend ${compact ? 'compact' : ''}`}>
+      {FAMILY_MAP_AVAILABILITY_LEGEND.map((item) => (
+        <span key={item.label}>
+          <i className="legend-dot" style={{ background: item.color }} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function FamilyMapSection({
+  wardId,
+  wardCode,
+  boothId,
+  fullDetails = false,
+  mapHeight = '420px',
+  title = 'Family map',
+  showRefresh = true,
+}) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const mapMarkersRef = useRef([]);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapError, setMapError] = useState('');
+  const [pointCount, setPointCount] = useState(0);
+
+  const buildMap = async (points) => {
+    if (!mapRef.current) return;
+    const google = await loadGoogleMapsScript();
+    const validPoints = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+    const center = validPoints.length
+      ? { lat: validPoints[0].latitude, lng: validPoints[0].longitude }
+      : { lat: 12.9716, lng: 77.5946 };
+    if (!mapInstanceRef.current) {
+      mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+        center,
+        zoom: validPoints.length ? 13 : 11,
+        mapTypeId: 'roadmap',
+      });
+    } else {
+      mapInstanceRef.current.setCenter(center);
+    }
+    mapMarkersRef.current.forEach((marker) => marker.setMap(null));
+    mapMarkersRef.current = [];
+    const bounds = new google.maps.LatLngBounds();
+    validPoints.forEach((point) => {
+      const color = getFamilyAvailabilityMapColor(point.familyAvailability);
+      const marker = new google.maps.Marker({
+        position: { lat: point.latitude, lng: point.longitude },
+        map: mapInstanceRef.current,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 6,
+          fillColor: color,
+          fillOpacity: 0.92,
+          strokeColor: '#ffffff',
+          strokeWeight: 1.5,
+        },
+      });
+      const infoWindow = new google.maps.InfoWindow({
+        content: buildFamilyMapTooltipHtml(point, { full: fullDetails }),
+      });
+      const openInfo = () => infoWindow.open(mapInstanceRef.current, marker);
+      marker.addListener('mouseover', openInfo);
+      marker.addListener('mouseout', () => infoWindow.close());
+      marker.addListener('click', openInfo);
+      mapMarkersRef.current.push(marker);
+      bounds.extend(marker.getPosition());
+    });
+    if (validPoints.length >= 2) {
+      mapInstanceRef.current.fitBounds(bounds, 36);
+    } else if (validPoints.length === 1) {
+      mapInstanceRef.current.setZoom(15);
+    }
+  };
+
+  const loadMapPoints = async () => {
+    setMapLoading(true);
+    setMapError('');
+    try {
+      const res = await mobileApi.fetchFamilyLocationPoints(wardId || undefined, boothId || undefined, wardCode);
+      const payload = res?.data?.result || res?.result || [];
+      const points = (Array.isArray(payload) ? payload : [])
+        .map(normalizeFamilyMapPoint)
+        .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+      setPointCount(points.length);
+      await buildMap(points);
+    } catch (err) {
+      setMapError(err?.message || 'Unable to load family map.');
+      setPointCount(0);
+    } finally {
+      setMapLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadMapPoints();
+    return () => {
+      mapMarkersRef.current.forEach((marker) => marker.setMap(null));
+      mapMarkersRef.current = [];
+    };
+  }, [wardId, wardCode, boothId, fullDetails]);
+
+  return (
+    <div className="mobile-web-family-map-block">
+      <div className="mobile-web-family-map-block-head">
+        <span className="mobile-web-section-title">{title}</span>
+        {showRefresh ? (
+          <button type="button" className="mobile-web-secondary-btn" onClick={loadMapPoints} disabled={mapLoading}>
+            {mapLoading ? 'Loading...' : 'Refresh map'}
+          </button>
+        ) : null}
+      </div>
+      {fullDetails ? (
+        <p className="mobile-web-info-pill">
+          Assembly / Ward: road, building, family number, flat, family name, and member lines (voter name | EPIC | relation name | relation type) on marker hover.
+        </p>
+      ) : (
+        <p className="mobile-web-info-pill">Pending work map: status and address only (member details hidden).</p>
+      )}
+      <FamilyAvailabilityMapLegend compact={mapHeight !== '420px'} />
+      {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
+      {mapLoading ? <div className="mobile-web-empty">Loading map...</div> : null}
+      {!mapLoading && pointCount === 0 && !mapError ? <div className="mobile-web-empty">No family locations found for this ward.</div> : null}
+      <div className="mobile-web-map-container" ref={mapRef} style={{ height: mapHeight, minHeight: mapHeight }} />
+      {!mapLoading && pointCount > 0 ? (
+        <div className="mobile-web-muted" style={{ marginTop: '8px', fontSize: '0.85rem' }}>
+          {pointCount} families on map
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const labels = {
   'search-voter': {
@@ -34,7 +213,7 @@ const labels = {
     description: 'Browse booth-level voters and booth stats in a web-first layout.',
   },
   'voters-family': {
-    title: 'Voters Family',
+    title: "Voter's Family",
     description: 'Household-based view for outreach planning and relationship tracking.',
   },
   meetings: {
@@ -405,7 +584,56 @@ function getWardOptionsFromCache() { try { const raw = localStorage.getItem(BOOT
 function getBoothOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const booths = wards.flatMap((ward) => (ward.booths || []).map((booth) => booth.boothNameEn || booth.nameEn || booth.booth_add_en || `Booth ${booth.boothId ?? booth.id ?? booth.booth_no ?? ''}`)); const unique = Array.from(new Set(booths.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function MobileHeader({ title, subtitle, onBack, hideAvatar = false }) { return <div className={`mobile-web-list-topbar ${hideAvatar ? 'no-avatar' : ''}`}><button className="mobile-web-back-btn" onClick={onBack} type="button"><ArrowBackIosNewRounded fontSize="small" /></button><div className="mobile-web-header-copy"><h2>{title}</h2>{subtitle ? <div className="mobile-web-header-subtitle">{subtitle}</div> : null}</div>{hideAvatar ? <div /> : <div className="mobile-web-avatar"><PersonOutlineRounded /></div>}</div>; }
 function useDropdownDismiss(rootRef, onClose) { useEffect(() => { const handlePointerDown = (event) => { if (!rootRef.current?.contains(event.target)) onClose(); }; document.addEventListener('mousedown', handlePointerDown); return () => document.removeEventListener('mousedown', handlePointerDown); }, [rootRef, onClose]); }
-function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) { const [open, setOpen] = useState(false); const rootRef = useRef(null); useDropdownDismiss(rootRef, () => setOpen(false)); const optionSet = new Set(options); const isUnknown = !!value && value !== 'Others' && !optionSet.has(value); const showOther = value === 'Others' || isUnknown || !!customValue; const summaryValue = showOther ? 'Others' : value; const otherValue = customValue || (isUnknown ? value : ''); return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel">{options.map((option) => { const checked = option === 'Others' ? showOther : value === option; return <button key={option} type="button" className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`} onClick={() => { onSelect(option); setOpen(false); }}><span>{option}</span></button>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; }
+function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) { const [open, setOpen] = useState(false); const rootRef = useRef(null); useDropdownDismiss(rootRef, () => setOpen(false)); const optionSet = new Set(options); const isUnknown = !!value && value !== 'Others' && !optionSet.has(value); const showOther = value === 'Others' || isUnknown || !!customValue; const summaryValue = showOther ? 'Others' : value; const otherValue = customValue || (isUnknown ? value : ''); return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel mobile-web-premium-select-panel">{options.map((option) => { const checked = option === 'Others' ? showOther : value === option; return <button key={option} type="button" className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`} onClick={() => { onSelect(option); setOpen(false); }}><span>{option}</span></button>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; }
+
+function PremiumSelect({ label, options = [], value, onChange, disabled = false, placeholder = '' }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useDropdownDismiss(rootRef, () => setOpen(false));
+  const normalized = options.map((option) => (
+    typeof option === 'string' ? { value: option, label: option } : option
+  ));
+  const selected = normalized.find((option) => String(option.value) === String(value));
+  const display = selected?.label || placeholder || `Select ${label}`;
+  return (
+    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+      <button
+        className="mobile-web-multiselect-trigger"
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((current) => !current);
+        }}
+      >
+        <span className={selected ? 'has-value' : 'is-placeholder'}>{display}</span>
+        <ExpandMoreRounded className="mobile-web-select-icon" />
+      </button>
+      {open ? (
+        <div className="mobile-web-multiselect-panel mobile-web-premium-select-panel" role="listbox">
+          {normalized.map((option) => {
+            const checked = String(option.value) === String(value);
+            return (
+              <button
+                key={`${option.value}-${option.label}`}
+                type="button"
+                role="option"
+                aria-selected={checked}
+                className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onCustomValueChange, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -3390,7 +3618,6 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
 
 function VotersFamilyScreen({ assemblyCodeProp }) {
   const [familyName, setFamilyName] = useState('');
-  const [familyAddress, setFamilyAddress] = useState('');
   const [roadName, setRoadName] = useState('');
   const [buildingNumber, setBuildingNumber] = useState('');
   const [buildingName, setBuildingName] = useState('');
@@ -3425,23 +3652,99 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [location, setLocation] = useState(null);
-  const [activeTab, setActiveTab] = useState('NEW'); // NEW or LIST
+  const [activeTab, setActiveTab] = useState('NEW'); // NEW | PENDING_MAP | LIST | MAP
   const [families, setFamilies] = useState([]);
-  const [familiesLoading, setFamiliesLoading] = useState(false);
   const searchTimerRef = useRef(null);
-  const [expandedFamilyId, setExpandedFamilyId] = useState(null);
-  const [familiesPage, setFamiliesPage] = useState(0);
-  const [hasMoreFamilies, setHasMoreFamilies] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const [wardItems, setWardItems] = useState([]);
+  const [selectedWardId, setSelectedWardId] = useState('');
+  const [boothItems, setBoothItems] = useState([]);
+  const [selectedBoothId, setSelectedBoothId] = useState('');
+  const [analysisRows, setAnalysisRows] = useState([]);
+  const [analysisFields, setAnalysisFields] = useState(FAMILY_ANALYSIS_AVAILABILITY_KEYS);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisViewMode, setAnalysisViewMode] = useState('agent');
+  const [analysisSortMode, setAnalysisSortMode] = useState('name-asc');
+  const [expandedDetailFamilyId, setExpandedDetailFamilyId] = useState(null);
+  const [familyDetailRows, setFamilyDetailRows] = useState([]);
+  const [familyDetailFields, setFamilyDetailFields] = useState([]);
+  const [familyDetailLoading, setFamilyDetailLoading] = useState(false);
+  const [familyDetailError, setFamilyDetailError] = useState('');
+  const [familyDetailFrom, setFamilyDetailFrom] = useState('');
+  const [familyDetailTo, setFamilyDetailTo] = useState('');
+  const userInfo = useMemo(() => (mounted ? getUserInfoSafe() : {}), [mounted]);
 
-  const role = useMemo(() => {
-    if (!mounted) return '';
-    const info = getUserInfoSafe();
-    return String(info?.role || '').replace('ROLE_', '').toUpperCase();
-  }, [mounted]);
+  const accessWardIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
+    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
+    if (userInfo?.wardId) ids.push(userInfo.wardId);
+    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
+
+  const role = useMemo(() => String(userInfo?.role || '').replace('ROLE_', '').toUpperCase(), [userInfo]);
 
   const isSuperAdmin = role === 'SUPER_ADMIN';
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(role);
+  const canViewFamiliesList = ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD'].includes(role);
+  // Assembly / Ward volunteers; admins with assembly context in premium console can view maps too.
+  const canViewFamilyMapTab =
+    ['ASSEMBLY', 'WARD'].includes(role) ||
+    (Boolean(assemblyCodeProp) && isAdminUser);
+
+  const familySectionTabs = useMemo(() => {
+    const tabs = [
+      { id: 'NEW', label: 'New Family' },
+      { id: 'PENDING_MAP', label: 'Pending Family' },
+    ];
+    if (canViewFamiliesList) tabs.push({ id: 'LIST', label: 'Family Analysis - Table' });
+    if (canViewFamilyMapTab) tabs.push({ id: 'MAP', label: 'Family Analysis - Map' });
+    return tabs;
+  }, [canViewFamiliesList, canViewFamilyMapTab]);
+
+  const selectedWard = useMemo(
+    () => wardItems.find((w) => String(w.value) === String(selectedWardId)) || wardItems[0] || null,
+    [wardItems, selectedWardId]
+  );
+
+  const assemblyCodeForFamily = useMemo(
+    () => assemblyCodeProp || (mounted ? getAssemblyCode() : ''),
+    [assemblyCodeProp, mounted]
+  );
+
+  const wardNumberPrefix = useMemo(
+    () => getFamilyNumberPrefix(selectedWard, assemblyCodeForFamily),
+    [selectedWard, assemblyCodeForFamily]
+  );
+
+  const wardFamilies = useMemo(
+    () => families.filter((f) => familyBelongsToWard(f, selectedWard?.value, selectedWard?.wardCode)),
+    [families, selectedWard]
+  );
+
+  const headOfFamilyOptions = useMemo(
+    () => [
+      { value: '', label: 'Pick head of family' },
+      ...members.map((member) => ({
+        value: member.id,
+        label: member.name || member.epic || 'Member',
+      })),
+    ],
+    [members]
+  );
+
+  const familyPointSelectOptions = useMemo(
+    () => FAMILY_POINT_OPTIONS.map((item) => ({ value: item, label: item })),
+    []
+  );
 
   const loadSuggestions = async () => {
     try {
@@ -3464,96 +3767,74 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
-      setFamilyNumber(String(getNextFamilyNumber(families)));
+    if (hasHouseMarkingFields(buildingNumber, buildingName, flatNumber) && wardNumberPrefix) {
+      setFamilyNumber(getNextFamilyNumber(wardFamilies, wardNumberPrefix));
     } else {
       setFamilyNumber('');
     }
-  }, [buildingNumber, buildingName, flatNumber, families]);
+  }, [buildingNumber, buildingName, flatNumber, wardFamilies, wardNumberPrefix]);
+
+  useEffect(() => {
+    if (!mounted || !assemblyCodeProp) return undefined;
+    let active = true;
+    mobileApi.fetchWards(assemblyCodeProp).then((res) => {
+      if (!active) return;
+      const wards = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.data?.result)
+          ? res.data.result
+          : Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.result)
+              ? res.result
+              : [];
+      const list = (wards || [])
+        .map((ward, index) => {
+          const id = ward?.wardId ?? ward?.ward_id ?? ward?.id ?? index + 1;
+          const name = ward?.wardNameEn ?? ward?.ward_name_en ?? ward?.name_en ?? ward?.name ?? '';
+          const wardCode = parseWardCodeFromWardRecord({ ...ward, label: name });
+          return {
+            value: String(id),
+            label: name || `Ward ${wardCode || id}`,
+            wardCode,
+          };
+        })
+        .filter((item) => item.value);
+      const filtered = accessWardIds.length
+        ? list.filter((item) => accessWardIds.includes(item.value))
+        : list;
+      setWardItems(filtered);
+      if (filtered.length && !selectedWardId) {
+        setSelectedWardId(filtered[0].value);
+      }
+    }).catch(() => {
+      if (active) setWardItems([]);
+    });
+    return () => { active = false; };
+  }, [mounted, assemblyCodeProp, accessWardIds.length]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const wardId = selectedWardId || wardItems[0]?.value;
+    if (!wardId) {
+      setFamilies([]);
+      return;
+    }
+    mobileApi.fetchAllFamilies(undefined, undefined, wardId)
+      .then((all) => setFamilies(sortFamiliesByNumber(all)))
+      .catch(() => setFamilies([]));
+  }, [mounted, selectedWardId, wardItems]);
 
   useEffect(() => {
     setMounted(true);
     loadSuggestions();
-    mobileApi.fetchAllFamilies(undefined, undefined)
-      .then((all) => setFamilies(sortFamiliesByNumber(all)))
-      .catch(() => {});
     if (typeof window !== 'undefined') {
       window.scrollTo(0, 0);
     }
   }, []);
 
-  const loadFamiliesList = async () => {
-    if (familiesLoading) return;
-    setFamiliesLoading(true);
-    try {
-      const all = await mobileApi.fetchAllFamilies(undefined, undefined);
-      setFamilies(sortFamiliesByNumber(all));
-      setHasMoreFamilies(false);
-      setFamiliesPage(0);
-    } catch (err) {
-      console.error('Failed to load families:', err);
-      setFamilies([]);
-    } finally {
-      setFamiliesLoading(false);
-    }
-  };
-
-  const downloadFamiliesExcel = () => {
-    if (!families.length) return;
-    const headers = [
-      'Family Name',
-      'Road Name',
-      'Family Number',
-      'Flat No',
-      'Building Number',
-      'Building Name',
-      'Head of Family',
-      'Head EPIC',
-      'Member Count',
-      'Family Availability',
-      'Economic Status',
-      'Points',
-      'Tag Leader',
-      'Address',
-      'Members (Name | Relation | EPIC)',
-    ];
-    const dataRows = families.map((f) => {
-      const memberText = (f.members || [])
-        .map((m, index) => `${index + 1}. ${m.voterName || '-'} | ${m.relationName || '-'} | ${m.epicNo || '-'}`)
-        .join(' ; ');
-      return [
-        f.familyName || '',
-        f.roadName || '',
-        f.familyNumber || '',
-        f.flatNumber || '',
-        f.buildingNumber || '',
-        f.buildingName || '',
-        f.headName || '',
-        f.headEpicNo || '',
-        f.memberCount ?? (f.members?.length ?? 0),
-        f.familyAvailability || '',
-        f.economicStatus || '',
-        f.points ?? '',
-        f.tagLeader || '',
-        f.familyAddress || '',
-        memberText,
-      ];
-    });
-    const tableRows = [headers, ...dataRows]
-      .map((r) => `<tr>${r.map((v) => `<td>${String(v).replace(/</g, '&lt;')}</td>`).join('')}</tr>`)
-      .join('');
-    const html = `<table>${tableRows}</table>`;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'families-export.xls';
-    link.click();
-    URL.revokeObjectURL(link.href);
-  };
-
   const resetNewFamilyForm = () => {
     setFamilyName('');
-    setFamilyAddress('');
     setRoadName('');
     setBuildingNumber('');
     setBuildingName('');
@@ -3582,20 +3863,337 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (activeTab === 'LIST') {
-      loadFamiliesList();
+    if (!mounted || !assemblyCodeProp || !['LIST', 'MAP'].includes(activeTab)) return undefined;
+    const wardId = selectedWardId || wardItems[0]?.value;
+    if (!wardId) {
+      setBoothItems([]);
+      return undefined;
     }
-  }, [activeTab]);
+    let active = true;
+    mobileApi.fetchBooths(assemblyCodeProp, wardId).then((res) => {
+      if (!active) return;
+      const booths = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.booths || []);
+      const list = (booths || [])
+        .map((booth) => ({
+          value: String(booth?.boothId ?? booth?.booth_id ?? booth?.id ?? ''),
+          label: booth?.boothNo ?? booth?.booth_no ?? booth?.label ?? `Booth ${booth?.boothId ?? booth?.id ?? ''}`,
+        }))
+        .filter((item) => item.value);
+      setBoothItems([{ value: '', label: 'All Booths' }, ...list]);
+      if (selectedBoothId && !list.some((item) => item.value === selectedBoothId)) {
+        setSelectedBoothId('');
+      }
+    }).catch(() => {
+      if (active) setBoothItems([{ value: '', label: 'All Booths' }]);
+    });
+    return () => { active = false; };
+  }, [mounted, assemblyCodeProp, selectedWardId, wardItems, activeTab]);
 
-  const handleDeleteFamily = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this family?')) return;
+  const loadFamilyAnalysis = async () => {
+    setAnalysisLoading(true);
+    setError('');
     try {
-      await mobileApi.deleteFamily(id);
-      setFamilies((prev) => prev.filter((f) => f.familyId !== id));
-      setSuccess('Family deleted successfully.');
+      const wardId = selectedWardId || wardItems[0]?.value;
+      const res = await mobileApi.fetchFamilyAnalysis(
+        wardId || undefined,
+        selectedBoothId || undefined,
+        analysisViewMode,
+        familyDetailFrom || undefined,
+        familyDetailTo || undefined,
+      );
+      const payload = res?.data?.result ?? res?.result ?? res;
+      setAnalysisFields(payload?.fields || FAMILY_ANALYSIS_AVAILABILITY_KEYS);
+      setAnalysisRows(Array.isArray(payload?.rows) ? payload.rows : []);
     } catch (err) {
-      setError('Failed to delete family.');
+      console.error('Failed to load family analysis:', err);
+      setAnalysisRows([]);
+      setError('Failed to load family analysis.');
+    } finally {
+      setAnalysisLoading(false);
     }
+  };
+
+  const FAMILY_DETAIL_SUMMARY_KEYS = [
+    'serialNumber',
+    'familyName',
+    'boothNo',
+    'roadName',
+    'familyNumber',
+    'flatNumber',
+    'headName',
+    'headEpicNo',
+    'memberCount',
+    'familyAvailability',
+  ];
+
+  const normalizeDetailMembers = (members) =>
+    (Array.isArray(members) ? members : []).map(normalizeFamilyMapMember);
+
+  const mapFamilyDtoToDetailRow = (family, index) => ({
+    familyId: family.familyId,
+    serialNumber: index + 1,
+    familyName: family.familyName,
+    members: normalizeDetailMembers(family.members),
+    boothNo: family.boothNo,
+    roadName: family.roadName,
+    familyNumber: family.familyNumber,
+    flatNumber: family.flatNumber,
+    buildingNumber: family.buildingNumber,
+    buildingName: family.buildingName,
+    buildingAddress: family.buildingAddress,
+    tagLeader: family.tagLeader,
+    familyAvailability: family.familyAvailability,
+    economicStatus: family.economicStatus,
+    familyNature: family.familyNature,
+    points: family.points,
+    phone: family.phone,
+    hasAssociation: family.hasAssociation,
+    associationName: family.associationName,
+    associationHeadName: family.associationHeadName,
+    associationHeadPhone: family.associationHeadPhone,
+    headName: family.headName,
+    headEpicNo: family.headEpicNo,
+    memberCount: family.memberCount ?? family.members?.length ?? 0,
+    latitude: family.latitude,
+    longitude: family.longitude,
+    lastUpdatedAt: family.lastUpdatedAt,
+  });
+
+  const loadFamilyDetails = async () => {
+    setFamilyDetailLoading(true);
+    setFamilyDetailError('');
+    try {
+      const wardId = selectedWardId || wardItems[0]?.value;
+      const boothId = selectedBoothId || undefined;
+      const all = await mobileApi.fetchAllFamilies(undefined, boothId, wardId);
+      const sorted = sortFamiliesByNumber(all);
+      setFamilyDetailFields([]);
+      setFamilyDetailRows(sorted.map(mapFamilyDtoToDetailRow));
+      try {
+        const res = await mobileApi.fetchFamilyDetails(
+          wardId || undefined,
+          boothId || undefined,
+          familyDetailFrom || undefined,
+          familyDetailTo || undefined,
+        );
+        const payload = res?.data?.result ?? res?.result ?? res;
+        if (Array.isArray(payload?.fields) && payload.fields.length) {
+          setFamilyDetailFields(payload.fields);
+        }
+        const apiRows = Array.isArray(payload?.rows) ? payload.rows : [];
+        if (apiRows.length) {
+          const byFamilyId = new Map(sorted.map((f) => [String(f.familyId), f]));
+          setFamilyDetailRows(
+            apiRows.map((row, index) => {
+              const source = byFamilyId.get(String(row.familyId)) || sorted[index];
+              const members = row.members?.length ? row.members : source?.members;
+              return source
+                ? {
+                    ...mapFamilyDtoToDetailRow(source, index),
+                    ...row,
+                    members: normalizeDetailMembers(members),
+                  }
+                : { ...row, serialNumber: index + 1, members: normalizeDetailMembers(row.members) };
+            })
+          );
+        }
+      } catch (apiErr) {
+        console.warn('Family details API fallback to list data.', apiErr);
+      }
+    } catch (err) {
+      console.error('Failed to load family details:', err);
+      setFamilyDetailRows([]);
+      setFamilyDetailError('Failed to load families.');
+    } finally {
+      setFamilyDetailLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'LIST' && mounted) {
+      loadFamilyAnalysis();
+      loadFamilyDetails();
+    }
+  }, [activeTab, mounted, selectedWardId, selectedBoothId, analysisViewMode, familyDetailFrom, familyDetailTo]);
+
+  const analysisViewOptions = [
+    { label: 'Agent wise', value: 'agent' },
+    { label: 'Date wise', value: 'date' },
+    { label: 'Ward wise', value: 'ward' },
+    { label: 'Booth wise', value: 'booth' },
+  ];
+  const analysisSortOptions = [
+    { label: 'Name A-Z', value: 'name-asc' },
+    { label: 'Name Z-A', value: 'name-desc' },
+    { label: 'Latest Updated', value: 'latest' },
+    { label: 'Oldest Updated', value: 'oldest' },
+  ];
+
+  const sortedAnalysisRows = useMemo(() => {
+    const items = [...analysisRows];
+    if (analysisViewMode !== 'agent') {
+      return items.sort((a, b) => {
+        const aTime = new Date(a.lastUpdatedAt || 0).getTime();
+        const bTime = new Date(b.lastUpdatedAt || 0).getTime();
+        if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) return bTime - aTime;
+        return String(a.label || a.groupKey || '').localeCompare(String(b.label || b.groupKey || ''), 'en');
+      });
+    }
+    if (analysisSortMode === 'name-desc') {
+      return items.sort((a, b) => String(b.agentName || '').localeCompare(String(a.agentName || ''), 'en'));
+    }
+    if (analysisSortMode === 'latest') {
+      return items.sort((a, b) => new Date(b.lastUpdatedAt || 0).getTime() - new Date(a.lastUpdatedAt || 0).getTime());
+    }
+    if (analysisSortMode === 'oldest') {
+      return items.sort((a, b) => new Date(a.lastUpdatedAt || 0).getTime() - new Date(b.lastUpdatedAt || 0).getTime());
+    }
+    return items.sort((a, b) => String(a.agentName || '').localeCompare(String(b.agentName || ''), 'en'));
+  }, [analysisRows, analysisSortMode, analysisViewMode]);
+
+  const familyDetailColumns = useMemo(() => {
+    const keys = [...FAMILY_DETAIL_SUMMARY_KEYS];
+    (familyDetailFields || []).forEach((field) => {
+      if (field?.key && !keys.includes(field.key)) keys.push(field.key);
+    });
+    [
+      'buildingNumber',
+      'buildingName',
+      'buildingAddress',
+      'tagLeader',
+      'economicStatus',
+      'familyNature',
+      'points',
+      'phone',
+      'hasAssociation',
+      'associationName',
+      'associationHeadName',
+      'associationHeadPhone',
+      'latitude',
+      'longitude',
+      'lastUpdatedAt',
+    ].forEach((key) => {
+      if (!keys.includes(key)) keys.push(key);
+    });
+    return keys;
+  }, [familyDetailFields]);
+
+  const familyDetailLabel = (key) => ({
+    serialNumber: 'S No',
+    familyName: 'Family Name',
+    boothNo: 'Booth No',
+    latitude: 'Latitude',
+    longitude: 'Longitude',
+    lastUpdatedAt: 'Last Updated At',
+  }[key] || (familyDetailFields.find((f) => f.key === key)?.label) || key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()));
+
+  const buildFamilyAnalysisExport = () => {
+    const availabilityHeaders = (analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((f) => f.label);
+    if (analysisViewMode === 'agent') {
+      const headers = ['S No', 'Agent Name', 'Agent Mobile', 'Total Buildings visited', 'Total Families visited', ...availabilityHeaders, 'Last Updated At'];
+      const dataRows = sortedAnalysisRows.map((row, index) => [
+        index + 1,
+        row.agentName || '',
+        row.phone || '',
+        row.totalBuildings ?? 0,
+        row.totalFamilies ?? 0,
+        ...(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((f) => row.counts?.[f.key] ?? 0),
+        formatFamilyDateTime(row.lastUpdatedAt),
+      ]);
+      return { headers, dataRows };
+    }
+    if (analysisViewMode === 'date') {
+      const headers = ['S No', 'Date', 'Agents Worked', 'Booths Covered', 'Total Buildings visited', 'Total Families visited', ...availabilityHeaders, 'Last Updated At'];
+      const dataRows = sortedAnalysisRows.map((row, index) => [
+        index + 1,
+        row.label || row.groupKey || '',
+        row.agentsWorked ?? 0,
+        row.boothsCovered ?? 0,
+        row.totalBuildings ?? 0,
+        row.totalFamilies ?? 0,
+        ...(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((f) => row.counts?.[f.key] ?? 0),
+        formatFamilyDateTime(row.lastUpdatedAt),
+      ]);
+      return { headers, dataRows };
+    }
+    if (analysisViewMode === 'ward') {
+      const headers = ['S No', 'Ward', 'Agents', 'Booths', 'Total Buildings visited', 'Total Families visited', ...availabilityHeaders, 'Last Updated At'];
+      const dataRows = sortedAnalysisRows.map((row, index) => [
+        index + 1,
+        row.label || row.groupKey || '',
+        row.agentsWorked ?? 0,
+        row.boothsCovered ?? 0,
+        row.totalBuildings ?? 0,
+        row.totalFamilies ?? 0,
+        ...(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((f) => row.counts?.[f.key] ?? 0),
+        formatFamilyDateTime(row.lastUpdatedAt),
+      ]);
+      return { headers, dataRows };
+    }
+    const headers = ['S No', 'Booth No.', 'Agents', 'Total Buildings visited', 'Total Families visited', ...availabilityHeaders, 'Last Updated At'];
+    const dataRows = sortedAnalysisRows.map((row, index) => [
+      index + 1,
+      row.label || row.groupKey || '',
+      row.agentsWorked ?? 0,
+      row.totalBuildings ?? 0,
+      row.totalFamilies ?? 0,
+      ...(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((f) => row.counts?.[f.key] ?? 0),
+      formatFamilyDateTime(row.lastUpdatedAt),
+    ]);
+    return { headers, dataRows };
+  };
+
+  const formatMembersForExport = (members) => {
+    const list = Array.isArray(members) ? members : [];
+    if (!list.length) return '';
+    return list.map((member, index) => formatFamilyMapMemberLine(member, index)).join('; ');
+  };
+
+  const buildFamilyDetailExport = () => {
+    const headers = [...familyDetailColumns.map((key) => familyDetailLabel(key)), 'Family Members'];
+    const dataRows = familyDetailRows.map((row, index) => [
+      ...familyDetailColumns.map((key) => {
+        if (key === 'serialNumber') return index + 1;
+        if (key === 'lastUpdatedAt') return formatFamilyDateTime(row?.[key]);
+        if (typeof row?.[key] === 'boolean') return row[key] ? 'Yes' : 'No';
+        return row?.[key] ?? '';
+      }),
+      formatMembersForExport(row.members),
+    ]);
+    return { headers, dataRows };
+  };
+
+  const runFamilyExport = (buildExport, downloadFn, filename) => {
+    try {
+      const { headers, dataRows } = buildExport();
+      if (!dataRows.length) {
+        setError('No data to export. Click Get Latest Data first.');
+        return;
+      }
+      downloadFn(filename, headers, dataRows);
+      setSuccess(`Downloaded ${filename}`);
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError(err?.message || 'Export failed.');
+    }
+  };
+
+  const downloadFamilyAnalysisCsv = () =>
+    runFamilyExport(buildFamilyAnalysisExport, downloadCsvFile, 'families-analysis.csv');
+
+  const downloadFamilyAnalysisXls = () =>
+    runFamilyExport(buildFamilyAnalysisExport, downloadXlsFile, 'families-analysis.xls');
+
+  const downloadFamilyDetailCsv = () =>
+    runFamilyExport(buildFamilyDetailExport, downloadCsvFile, 'families-details.csv');
+
+  const downloadFamilyDetailXls = () =>
+    runFamilyExport(buildFamilyDetailExport, downloadXlsFile, 'families-details.xls');
+
+  const renderFamilyDetailValue = (row, key) => {
+    if (key === 'lastUpdatedAt') return formatFamilyDateTime(row?.[key]);
+    if (typeof row?.[key] === 'boolean') return row[key] ? 'Yes' : 'No';
+    return row?.[key] ?? '-';
   };
 
   const handleCaptureLocation = async () => {
@@ -3739,13 +4337,14 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       if (!boothIdMember) throw new Error('Member booth information missing. Please add members again.');
 
       if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
-        throw new Error('Building Number, Building Name, and Flat Number are required');
+        throw new Error('Building/Apartment Number, Building/Apartment Name, and Flat Number are required');
       }
-      const generatedFamilyNumber = String(getNextFamilyNumber(families));
+      if (!selectedWardId && wardItems.length > 1) throw new Error('Please select a ward.');
+      if (!wardNumberPrefix) throw new Error('Ward is required to generate a family number.');
+      const generatedFamilyNumber = getNextFamilyNumber(wardFamilies, wardNumberPrefix);
 
       const payload = {
         familyName,
-        familyAddress,
         roadName: roadName.trim(),
         buildingNumber: buildingNumber.trim() || null,
         buildingName: buildingName.trim() || null,
@@ -3773,7 +4372,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       await mobileApi.createFamily(payload);
       setSuccess('Family saved successfully!');
       loadSuggestions();
-      const all = await mobileApi.fetchAllFamilies(undefined, undefined);
+      const all = await mobileApi.fetchAllFamilies(undefined, undefined, selectedWardId);
       setFamilies(sortFamiliesByNumber(all));
       resetNewFamilyForm();
     } catch (err) {
@@ -3799,82 +4398,64 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-family-shell">
-        <div className="mobile-web-subtabs mb-6">
-          <button
-            type="button"
-            className={`mobile-web-subtab ${activeTab === 'NEW' ? 'active' : ''}`}
-            onClick={() => setActiveTab('NEW')}
-          >
-            New Family
-          </button>
-          {isSuperAdmin && (
+        <div className="mobile-web-subtabs mobile-web-family-subtabs mb-6" role="tablist" aria-label="Voters family sections">
+          {familySectionTabs.map((tab) => (
             <button
+              key={tab.id}
               type="button"
-              className={`mobile-web-subtab ${activeTab === 'LIST' ? 'active' : ''}`}
-              onClick={() => setActiveTab('LIST')}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={`mobile-web-subtab ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
             >
-              Families
+              {tab.label}
             </button>
-          )}
+          ))}
         </div>
 
         {activeTab === 'NEW' ? (
           <>
+            <div className="mobile-web-family-grid mt-3">
+              <label className="mobile-web-field">
+                <span>Ward</span>
+                {wardItems.length > 1 ? (
+                  <PremiumSelect
+                    label="Ward"
+                    options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                    value={selectedWardId}
+                    onChange={setSelectedWardId}
+                  />
+                ) : (
+                  <input
+                    className="mobile-web-input"
+                    value={selectedWard?.label || 'Ward'}
+                    readOnly
+                  />
+                )}
+              </label>
+            </div>
+
             <div className="mobile-web-family-grid">
               <label className="mobile-web-field">
                 <span>Enter family name</span>
                 <input className="mobile-web-input" placeholder="Family name" value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
               </label>
               <label className="mobile-web-field">
-                <span>Family Address</span>
-                <input className="mobile-web-input" placeholder="Family Address" value={familyAddress} onChange={(e) => setFamilyAddress(e.target.value)} />
+                <span>Family Number</span>
+                <input className="mobile-web-input" placeholder={wardNumberPrefix ? `${wardNumberPrefix}-1` : 'Ward required'} value={familyNumber} readOnly />
               </label>
             </div>
 
             <div className="mobile-web-family-grid mt-3">
               <label className="mobile-web-field">
-                <span>Road Name (Mandatory)</span>
-                <div className="mobile-web-member-row">
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Road name"
-                    value={roadName}
-                    onChange={(e) => setRoadName(e.target.value)}
-                    list="road-suggestions"
-                  />
-                  <datalist id="road-suggestions">
-                    {roadSuggestions.map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                  </datalist>
-                  <button
-                    className="mobile-web-primary-btn"
-                    type="button"
-                    onClick={() => {
-                      if (!roadName.trim()) {
-                        setError('Road name is required.');
-                        return;
-                      }
-                      setError('');
-                      setSuccess('Road name added for house marking.');
-                    }}
-                  >
-                    Add
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            <div className="mobile-web-family-grid mt-3">
-              <label className="mobile-web-field">
-                <span>Building Number</span>
-                <input className="mobile-web-input" placeholder="Building Number" value={buildingNumber} onChange={(e) => setBuildingNumber(e.target.value)} />
+                <span>Building/Apartment Number</span>
+                <input className="mobile-web-input" placeholder="Building/Apartment Number" value={buildingNumber} onChange={(e) => setBuildingNumber(e.target.value)} />
               </label>
               <label className="mobile-web-field">
-                <span>Building Name</span>
+                <span>Building/Apartment Name</span>
                 <input
                   className="mobile-web-input"
-                  placeholder="Building Name"
+                  placeholder="Building/Apartment Name"
                   value={buildingName}
                   onChange={(e) => setBuildingName(e.target.value)}
                   list="building-suggestions"
@@ -3889,10 +4470,85 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <span>Flat Number</span>
                 <input className="mobile-web-input" placeholder="Flat Number" value={flatNumber} onChange={(e) => setFlatNumber(e.target.value)} />
               </label>
+            </div>
+
+            <div className="mobile-web-family-grid mt-3">
               <label className="mobile-web-field">
-                <span>Family Number</span>
-                <input className="mobile-web-input" placeholder="Auto (1, 2, 3…)" value={familyNumber} readOnly />
+                <span>Building/Apartment Address</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Building/Apartment Address"
+                  value={buildingAddress}
+                  onChange={(e) => setBuildingAddress(e.target.value)}
+                />
               </label>
+              <label className="mobile-web-field">
+                <span>Road Name (Mandatory)</span>
+                <input
+                  className="mobile-web-input"
+                  placeholder="Road name"
+                  value={roadName}
+                  onChange={(e) => setRoadName(e.target.value)}
+                  list="road-suggestions"
+                />
+                <datalist id="road-suggestions">
+                  {roadSuggestions.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              </label>
+              <div className="mobile-web-field mobile-web-field-inline mobile-web-association-check">
+                <input
+                  type="checkbox"
+                  id="has-association-check"
+                  className="mobile-web-checkbox-large"
+                  checked={hasAssociation}
+                  onChange={(e) => setHasAssociation(e.target.checked)}
+                />
+                <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
+              </div>
+            </div>
+
+            {hasAssociation ? (
+              <div className="mobile-web-family-grid mobile-web-tag-grid mt-3">
+                <label className="mobile-web-field">
+                  <span>Association Name</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Association Name"
+                    value={associationName}
+                    onChange={(e) => setAssociationName(e.target.value)}
+                    list="association-suggestions"
+                  />
+                  <datalist id="association-suggestions">
+                    {associationSuggestions.map((item) => (
+                      <option key={item} value={item} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="mobile-web-field">
+                  <span>Association Head Name</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Association Head Name"
+                    value={associationHeadName}
+                    onChange={(e) => setAssociationHeadName(e.target.value)}
+                  />
+                </label>
+                <label className="mobile-web-field">
+                  <span>Association Head Phone number</span>
+                  <input
+                    className="mobile-web-input"
+                    placeholder="Phone number"
+                    value={associationHeadPhone}
+                    onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    inputMode="numeric"
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            <div className="mobile-web-family-grid mt-3">
               <label className="mobile-web-field">
                 <span>Tag a Leader</span>
                 <input
@@ -3910,11 +4566,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               </label>
               <label className="mobile-web-field">
                 <span>Family Availability</span>
-                <select className="mobile-web-input" value={familyAvailability} onChange={(e) => setFamilyAvailability(e.target.value)}>
-                  {FAMILY_AVAILABILITY_OPTIONS.map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  label="Family Availability"
+                  options={FAMILY_AVAILABILITY_OPTIONS}
+                  value={familyAvailability}
+                  onChange={setFamilyAvailability}
+                />
               </label>
             </div>
 
@@ -4023,23 +4680,25 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             <div className="mobile-web-family-grid">
               <label className="mobile-web-field">
                 <span>Economic status</span>
-                <select className="mobile-web-input" value={economicStatus} onChange={(e) => setEconomicStatus(e.target.value)}>
-                  {['NA', 'Low', 'Medium', 'High'].map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  label="Economic status"
+                  options={['NA', 'Low', 'Medium', 'High']}
+                  value={economicStatus}
+                  onChange={setEconomicStatus}
+                />
               </label>
               <label className="mobile-web-field">
                 <span>Head of Family</span>
-                <select className="mobile-web-input" value={headOfFamily} onChange={(e) => setHeadOfFamily(e.target.value)}>
-                  <option value="">Pick head of family</option>
-                  {members.map((member) => (
-                    <option key={member.id} value={member.id}>{member.name}</option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  label="Head of Family"
+                  options={headOfFamilyOptions}
+                  value={headOfFamily}
+                  onChange={setHeadOfFamily}
+                  placeholder="Pick head of family"
+                />
               </label>
               <label className="mobile-web-field">
-                <span>Family Head Phone Number (10 digits)</span>
+                <span>Family Head Phone Number</span>
                 <input
                   className="mobile-web-input"
                   placeholder="Phone number"
@@ -4050,81 +4709,22 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               </label>
               <label className="mobile-web-field">
                 <span>Family Nature</span>
-                <select className="mobile-web-input" value={familyNature} onChange={(e) => setFamilyNature(e.target.value)}>
-                  {['A', 'B', 'C', 'NA'].map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  label="Family Nature"
+                  options={['A', 'B', 'C', 'NA']}
+                  value={familyNature}
+                  onChange={setFamilyNature}
+                />
               </label>
               <label className="mobile-web-field">
                 <span>Points to the family</span>
-                <select className="mobile-web-input" value={familyPoints} onChange={(e) => setFamilyPoints(e.target.value)}>
-                  {FAMILY_POINT_OPTIONS.map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="mobile-web-family-grid mobile-web-tag-grid">
-              <label className="mobile-web-field">
-                <span>Association / Building Address</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Building Address"
-                  value={buildingAddress}
-                  onChange={(e) => setBuildingAddress(e.target.value)}
+                <PremiumSelect
+                  label="Points to the family"
+                  options={familyPointSelectOptions}
+                  value={familyPoints}
+                  onChange={setFamilyPoints}
                 />
               </label>
-
-              <div className="mobile-web-field-inline" style={{ gridColumn: '1 / -1' }}>
-                <input
-                  type="checkbox"
-                  id="has-association-check"
-                  className="mobile-web-checkbox-large"
-                  checked={hasAssociation}
-                  onChange={(e) => setHasAssociation(e.target.checked)}
-                />
-                <label htmlFor="has-association-check" style={{ marginBottom: 0, fontWeight: 500 }}>If have association</label>
-              </div>
-
-              {hasAssociation ? (
-                <div className="mobile-web-association-details" style={{ gridColumn: '1 / -1' }}>
-                  <label className="mobile-web-field">
-                    <span>Association Name</span>
-                    <input
-                      className="mobile-web-input"
-                      placeholder="Association Name"
-                      value={associationName}
-                      onChange={(e) => setAssociationName(e.target.value)}
-                      list="association-suggestions"
-                    />
-                    <datalist id="association-suggestions">
-                      {associationSuggestions.map((item) => (
-                        <option key={item} value={item} />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label className="mobile-web-field">
-                    <span>Association Head Name</span>
-                    <input
-                      className="mobile-web-input"
-                      placeholder="Association Head Name"
-                      value={associationHeadName}
-                      onChange={(e) => setAssociationHeadName(e.target.value)}
-                    />
-                  </label>
-                  <label className="mobile-web-field">
-                    <span>Association Head Phone number (10 digits)</span>
-                    <input
-                      className="mobile-web-input"
-                      placeholder="Phone number"
-                      value={associationHeadPhone}
-                      onChange={(e) => setAssociationHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                      inputMode="numeric"
-                    />
-                  </label>
-                </div>
-              ) : null}
             </div>
             {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
             {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
@@ -4135,133 +4735,330 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               </button>
             </div>
           </>
+        ) : activeTab === 'PENDING_MAP' ? (
+          <div className="mobile-web-family-pending-map-tab">
+            <div className="mobile-web-family-grid mt-3">
+              <label className="mobile-web-field">
+                <span>Ward</span>
+                {wardItems.length > 1 ? (
+                  <PremiumSelect
+                    label="Ward"
+                    options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                    value={selectedWardId}
+                    onChange={setSelectedWardId}
+                  />
+                ) : (
+                  <input className="mobile-web-input" value={selectedWard?.label || 'Ward'} readOnly />
+                )}
+              </label>
+            </div>
+            {selectedWardId ? (
+              <div className="mobile-web-family-pending-map mt-3">
+                <FamilyMapSection
+                  key={`pending-map-${selectedWardId}`}
+                  title="Pending work map"
+                  wardId={selectedWardId}
+                  wardCode={selectedWard?.wardCode}
+                  fullDetails={false}
+                  mapHeight="420px"
+                />
+              </div>
+            ) : (
+              <div className="mobile-web-empty mt-3">Select a ward to load the pending work map.</div>
+            )}
+          </div>
+        ) : activeTab === 'MAP' ? (
+          <div className="mobile-web-families-map-tab">
+            <div className="mobile-web-family-grid mt-3">
+              <label className="mobile-web-field">
+                <span>Ward</span>
+                <PremiumSelect
+                  label="Ward"
+                  options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                  value={selectedWardId}
+                  onChange={setSelectedWardId}
+                />
+              </label>
+              <label className="mobile-web-field">
+                <span>Booth</span>
+                <PremiumSelect
+                  label="Booth"
+                  options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
+                  value={selectedBoothId}
+                  onChange={setSelectedBoothId}
+                />
+              </label>
+            </div>
+            {selectedWardId || wardItems[0]?.value ? (
+              <FamilyMapSection
+                key={`family-map-${selectedWardId || wardItems[0]?.value}-${selectedBoothId || 'all'}`}
+                title="Family map"
+                wardId={selectedWardId || wardItems[0]?.value}
+                wardCode={selectedWard?.wardCode}
+                boothId={selectedBoothId || undefined}
+                fullDetails
+                mapHeight="480px"
+              />
+            ) : (
+              <div className="mobile-web-empty mt-3">Select a ward to load the family map.</div>
+            )}
+          </div>
         ) : (
           <div className="mobile-web-families-list">
-            {isSuperAdmin ? (
-              <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
-                <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamiliesExcel} disabled={!families.length || familiesLoading}>
-                  Download Excel (All Families)
-                </button>
-              </div>
-            ) : null}
-            {familiesLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
-            {!familiesLoading && families.length === 0 ? <div className="mobile-web-empty">No families found.</div> : null}
-            {!familiesLoading && families.length > 0 ? (
-              <div className="mobile-web-table-wrap">
+            <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
+              <label className="mobile-web-field">
+                <span>Ward</span>
+                <PremiumSelect
+                  label="Ward"
+                  options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                  value={selectedWardId}
+                  onChange={setSelectedWardId}
+                />
+              </label>
+              <label className="mobile-web-field">
+                <span>Booth</span>
+                <PremiumSelect
+                  label="Booth"
+                  options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
+                  value={selectedBoothId}
+                  onChange={setSelectedBoothId}
+                />
+              </label>
+              <label className="mobile-web-field">
+                <span>View</span>
+                <PremiumSelect
+                  label="View"
+                  options={analysisViewOptions}
+                  value={analysisViewMode}
+                  onChange={setAnalysisViewMode}
+                />
+              </label>
+              {analysisViewMode === 'agent' ? (
+                <label className="mobile-web-field">
+                  <span>Sort By</span>
+                  <PremiumSelect
+                    label="Sort By"
+                    options={analysisSortOptions}
+                    value={analysisSortMode}
+                    onChange={setAnalysisSortMode}
+                  />
+                </label>
+              ) : null}
+              <label className="mobile-web-field">
+                <span>Updated From</span>
+                <input className="mobile-web-input" type="date" value={familyDetailFrom} onChange={(e) => setFamilyDetailFrom(e.target.value)} />
+              </label>
+              <label className="mobile-web-field">
+                <span>Updated To</span>
+                <input className="mobile-web-input" type="date" value={familyDetailTo} onChange={(e) => setFamilyDetailTo(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
+              <button
+                type="button"
+                className="mobile-web-primary-btn"
+                onClick={() => {
+                  loadFamilyAnalysis();
+                  loadFamilyDetails();
+                }}
+                disabled={analysisLoading || familyDetailLoading}
+              >
+                {analysisLoading || familyDetailLoading ? 'Refreshing...' : 'Get Latest Data'}
+              </button>
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisCsv} disabled={!sortedAnalysisRows.length}>
+                Download CSV
+              </button>
+              <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisXls} disabled={!sortedAnalysisRows.length}>
+                Download Excel
+              </button>
+            </div>
+
+            {error ? <div className="mobile-web-error">{error}</div> : null}
+            {analysisLoading ? <div className="mobile-web-empty">Loading family analysis...</div> : null}
+            {!analysisLoading && sortedAnalysisRows.length === 0 ? <div className="mobile-web-empty">No family analysis data found.</div> : null}
+            {!analysisLoading && sortedAnalysisRows.length > 0 ? (
+              <div className="mobile-web-analysis-table-wrap">
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
-                      <th>Family Name</th>
-                      <th>Road</th>
-                      <th>Family No</th>
-                      <th>Flat</th>
-                      <th>Head of Family</th>
-                      <th>EPIC</th>
-                      <th>Members</th>
-                      <th>Availability</th>
-                      <th>Actions</th>
+                      <th>S No</th>
+                      {analysisViewMode === 'agent' ? (
+                        <>
+                          <th>Agent Name</th>
+                          <th>Agent Mobile</th>
+                        </>
+                      ) : null}
+                      {analysisViewMode === 'date' ? (
+                        <>
+                          <th>Date</th>
+                          <th>Agents Worked</th>
+                          <th>Booths Covered</th>
+                        </>
+                      ) : null}
+                      {analysisViewMode === 'ward' ? (
+                        <>
+                          <th>Ward</th>
+                          <th>Agents</th>
+                          <th>Booths</th>
+                        </>
+                      ) : null}
+                      {analysisViewMode === 'booth' ? (
+                        <>
+                          <th>Booth No.</th>
+                          <th>Agents</th>
+                        </>
+                      ) : null}
+                      <th>Total Buildings visited</th>
+                      <th>Total Families visited</th>
+                      {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                        <th key={field.key}>{field.label}</th>
+                      ))}
+                      <th>Last Updated At</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {families.map((f) => {
-                      const isExpanded = expandedFamilyId === f.familyId;
-                      return (
-                        <React.Fragment key={f.familyId}>
-                          <tr
-                            className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : ''}`}
-                            onClick={() => setExpandedFamilyId(isExpanded ? null : f.familyId)}
-                          >
-                            <td>
-                              <div className="flex items-center gap-2">
-                                <div className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
-                                  <ExpandMoreRounded fontSize="small" className="text-slate-400" />
-                                </div>
-                                <div>
-                                  <div className="font-bold text-slate-800">{f.familyName}</div>
-                                  <div className="text-xs text-slate-500 truncate max-w-[180px]">{f.familyAddress || '-'}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td>{f.roadName || '-'}</td>
-                            <td>{f.familyNumber || '-'}</td>
-                            <td>{f.flatNumber || '-'}</td>
-                            <td>{f.headName || '-'}</td>
-                            <td>{f.headEpicNo || '-'}</td>
-                            <td className="text-center">{f.memberCount || f.members?.length || 0}</td>
-                            <td>{f.familyAvailability || f.economicStatus || '-'}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="text-red-500 hover:text-red-700 font-bold text-[11px] uppercase tracking-wider"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteFamily(f.familyId);
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </td>
-                          </tr>
-                          {isExpanded && (
-                            <tr className="bg-slate-50">
-                              <td colSpan={9} className="p-4">
-                                <div className="mobile-web-expanded-members">
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-xs text-slate-600">
-                                    <div><strong>Building No:</strong> {f.buildingNumber || '-'}</div>
-                                    <div><strong>Building Name:</strong> {f.buildingName || '-'}</div>
-                                    <div><strong>Tag Leader:</strong> {f.tagLeader || '-'}</div>
-                                    <div><strong>Points:</strong> {f.points ?? '-'}</div>
-                                  </div>
-                                  <h4 className="font-bold text-slate-700 mb-3 text-xs uppercase tracking-wider">Family Members</h4>
-                                  <div className="mb-3 text-xs font-semibold text-slate-500 grid grid-cols-[1.4fr_1fr_1fr] gap-2 px-1">
-                                    <span>Voter Name</span>
-                                    <span>Relation</span>
-                                    <span>EPIC</span>
-                                  </div>
-                                  <div className="grid grid-cols-1 gap-2">
-                                    {f.members && f.members.map((m, memberIndex) => (
-                                      <button
-                                        key={m.memberId || `${f.familyId}-${memberIndex}`}
-                                        type="button"
-                                        className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left grid grid-cols-[1.4fr_1fr_1fr_auto] gap-2 items-center"
-                                        onClick={async () => {
-                                          try {
-                                            const loc = await requestLocation({ allowCached: true });
-                                            setSelectedVoter({
-                                              epicNo: m.epicNo,
-                                              firstMiddleNameEn: m.voterName,
-                                              boothId: f.boothId,
-                                              ...loc,
-                                            });
-                                          } catch (err) {
-                                            setError(err?.message || 'Unable to open voter info.');
-                                          }
-                                        }}
-                                      >
-                                        <span className="font-bold text-slate-800">{memberIndex + 1}. {m.voterName}</span>
-                                        <span className="text-slate-600">{m.relationName || '-'}</span>
-                                        <span className="text-slate-600">{m.epicNo || '-'}</span>
-                                        <span className="text-blue-600 font-semibold text-xs">View Info</span>
-                                      </button>
-                                    ))}
-                                    {(!f.members || f.members.length === 0) && (
-                                      <div className="text-slate-400 text-xs italic">No member details available</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
+                    {sortedAnalysisRows.map((row, index) => (
+                      <tr key={row.userId || row.groupKey || row.label || index}>
+                        <td>{index + 1}</td>
+                        {analysisViewMode === 'agent' ? (
+                          <>
+                            <td>{row.agentName || '-'}</td>
+                            <td>{row.phone || '-'}</td>
+                          </>
+                        ) : null}
+                        {analysisViewMode === 'date' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                            <td>{row.boothsCovered ?? 0}</td>
+                          </>
+                        ) : null}
+                        {analysisViewMode === 'ward' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                            <td>{row.boothsCovered ?? 0}</td>
+                          </>
+                        ) : null}
+                        {analysisViewMode === 'booth' ? (
+                          <>
+                            <td>{row.label || row.groupKey || '-'}</td>
+                            <td>{row.agentsWorked ?? 0}</td>
+                          </>
+                        ) : null}
+                        <td>{row.totalBuildings ?? 0}</td>
+                        <td>{row.totalFamilies ?? 0}</td>
+                        {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                          <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
+                        ))}
+                        <td>{formatFamilyDateTime(row.lastUpdatedAt)}</td>
+                      </tr>
+                    ))}
+                    {analysisViewMode === 'agent' ? (
+                      <tr className="mobile-web-analysis-total">
+                        <td>Total</td>
+                        <td>-</td>
+                        <td>-</td>
+                        <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalBuildings) || 0), 0)}</td>
+                        <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalFamilies) || 0), 0)}</td>
+                        {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                          <td key={`total-${field.key}`}>
+                            {sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
+                          </td>
+                        ))}
+                        <td>-</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
-                <div className="py-4 text-center text-xs text-slate-400">
-                  {families.length} families loaded (sorted by family number)
-                </div>
               </div>
             ) : null}
+
+            <div className="mobile-web-stack" style={{ marginTop: '16px' }}>
+              <div className="mobile-web-field">
+                <label>Families</label>
+              </div>
+              <div className="mobile-web-action-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
+                <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyDetailCsv} disabled={!familyDetailRows.length}>
+                  Download Detailed CSV
+                </button>
+                <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyDetailXls} disabled={!familyDetailRows.length}>
+                  Download Detailed Excel
+                </button>
+              </div>
+              {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
+              {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
+              {!familyDetailLoading && familyDetailRows.length === 0 ? (
+                <div className="mobile-web-empty">No families found for this ward/booth.</div>
+              ) : null}
+              {!familyDetailLoading && familyDetailRows.length > 0 ? (
+                <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                  <table className="mobile-web-analysis-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px' }} />
+                        {familyDetailColumns.map((key) => (
+                          <th key={key}>{familyDetailLabel(key)}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {familyDetailRows.map((row, idx) => {
+                        const rowKey = row.familyId || `${row.familyName || 'row'}-${idx}`;
+                        const isExpanded = expandedDetailFamilyId === rowKey;
+                        return (
+                          <React.Fragment key={rowKey}>
+                            <tr
+                              className={isExpanded ? 'mobile-web-analysis-total' : ''}
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => setExpandedDetailFamilyId(isExpanded ? null : rowKey)}
+                            >
+                              <td>
+                                <ExpandMoreRounded
+                                  fontSize="small"
+                                  style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', color: '#94a3b8' }}
+                                />
+                              </td>
+                              {familyDetailColumns.map((key) => (
+                                <td key={`${rowKey}-${key}`}>
+                                  {key === 'familyName' ? (
+                                    <strong>{row.familyName || '-'}</strong>
+                                  ) : (
+                                    key === 'serialNumber' ? idx + 1 : renderFamilyDetailValue(row, key)
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                            {isExpanded ? (
+                              <tr>
+                                <td colSpan={familyDetailColumns.length + 1} style={{ background: '#f8fafc', padding: '12px 16px' }}>
+                                  {row.members?.length ? (
+                                    <div>
+                                      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Family Members</div>
+                                      {row.members.map((m, memberIndex) => (
+                                        <div key={m.memberId || `${rowKey}-member-${memberIndex}`} style={{ fontSize: '0.85rem', padding: '4px 0' }}>
+                                          {memberIndex + 1}. {m.voterName || '-'} · {m.epicNo || '-'} · {getFamilyMemberRelationName(m)} · {m.relationType || '-'}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: '0.85rem', color: '#94a3b8' }}>No member details available</div>
+                                  )}
+                                </td>
+                              </tr>
+                            ) : null}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{ padding: '12px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
+                    {familyDetailRows.length} families loaded · click a row to expand member details
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
       </section>
@@ -6059,7 +6856,6 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [detailFrom, setDetailFrom] = useState('');
   const [detailTo, setDetailTo] = useState('');
   const [mapPoints, setMapPoints] = useState([]);
-  const [mapDataMode, setMapDataMode] = useState('volunteers');
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState('');
   const mapsKey = GOOGLE_MAPS_API_KEY;
@@ -6278,27 +7074,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 
   const downloadCsv = () => {
     const { headers, dataRows } = buildExportRows();
-    const csv = [headers.join(','), ...dataRows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'volunteer-analysis.csv';
-    link.click();
-    URL.revokeObjectURL(link.href);
+    downloadCsvFile('volunteer-analysis.csv', headers, dataRows);
   };
 
   const downloadXls = () => {
     const { headers, dataRows } = buildExportRows();
-    const tableRows = [headers, ...dataRows]
-      .map((r) => `<tr>${r.map((v) => `<td>${String(v)}</td>`).join('')}</tr>`)
-      .join('');
-    const html = `<table>${tableRows}</table>`;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'volunteer-analysis.xls';
-    link.click();
-    URL.revokeObjectURL(link.href);
+    downloadXlsFile('volunteer-analysis.xls', headers, dataRows);
   };
 
   const fetchAllDetailsForExport = async () => {
@@ -6441,29 +7222,14 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     const fullData = await fetchAllDetailsForExport();
     const { headers, dataRows } = buildDetailExport(fullData);
     if (!headers.length) return;
-    const csv = [headers.join(','), ...dataRows.map((r) => r.map((v) => String(v)).join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'volunteer-enrichment-details.csv';
-    link.click();
-    URL.revokeObjectURL(link.href);
+    downloadCsvFile('volunteer-enrichment-details.csv', headers, dataRows);
   };
 
   const downloadDetailXls = async () => {
     const fullData = await fetchAllDetailsForExport();
     const { headers, dataRows } = buildDetailExport(fullData);
     if (!headers.length) return;
-    const tableRows = [headers, ...dataRows]
-      .map((r) => `<tr>${r.map((v) => `<td>${String(v)}</td>`).join('')}</tr>`)
-      .join('');
-    const html = `<table>${tableRows}</table>`;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'volunteer-enrichment-details.xls';
-    link.click();
-    URL.revokeObjectURL(link.href);
+    downloadXlsFile('volunteer-enrichment-details.xls', headers, dataRows);
   };
 
   const currentFetchId = useRef(0);
@@ -6544,9 +7310,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       const bounds = new google.maps.LatLngBounds();
       validPoints.forEach((point) => {
         const gender = String(point.gender || '').toUpperCase();
-        const color = mapDataMode === 'families'
-          ? '#2563eb'
-          : (gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b');
+        const color = gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b';
         const marker = new google.maps.Marker({
           position: { lat: point.latitude, lng: point.longitude },
           map: mapInstanceRef.current,
@@ -6561,7 +7325,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         });
 
         const infoWindow = new google.maps.InfoWindow({
-          content: mapDataMode === 'families' ? buildFamilyMapTooltipHtml(point) : `
+          content: `
             <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
               <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
               <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
@@ -6608,9 +7372,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setMapLoading(true);
     setMapError('');
     try {
-      const res = mapDataMode === 'families'
-        ? await mobileApi.fetchFamilyLocationPoints(effectiveWard || undefined)
-        : await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
+      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
       const payload = res?.data?.result || res?.result || [];
       const points = Array.isArray(payload) ? payload : [];
       const normalized = points
@@ -6646,7 +7408,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   useEffect(() => {
     if (activeTab !== 'map') return;
     loadMapPoints();
-  }, [activeTab, effectiveWard, mapDataMode]);
+  }, [activeTab, effectiveWard]);
 
   const detailColumns = useMemo(() => {
     if (!detailRows.length) return [];
@@ -6726,15 +7488,11 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     return { headers, dataRows };
   };
 
-  const hideFamilyLabelsOnMap = ['WARD', 'BOOTH', 'USER'].includes(role);
-
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-volunteer-shell">
         <div className="mobile-web-stack">
-        {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing data for your ward access. Hover map markers for family details.</div> : null}
-        {hydrated && role === 'BOOTH' ? <div className="mobile-web-info-pill">Map view enabled. Hover family markers to see household details.</div> : null}
-        {hydrated && role === 'ASSEMBLY' ? <div className="mobile-web-info-pill">Assembly map access enabled for volunteers and families.</div> : null}
+        {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing volunteer enrichment locations for your ward access.</div> : null}
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
           {role === 'SUPER_ADMIN' && assemblies.length > 0 && (
             <div className="mobile-web-field">
@@ -6832,24 +7590,8 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             </>
           ) : (
             <div className="mobile-web-map-controls">
-              <div className="mobile-web-tab-strip mobile-web-map-mode-tabs">
-                <button
-                  type="button"
-                  className={`mobile-web-tab-btn ${mapDataMode === 'volunteers' ? 'active' : ''}`}
-                  onClick={() => setMapDataMode('volunteers')}
-                >
-                  Volunteers
-                </button>
-                <button
-                  type="button"
-                  className={`mobile-web-tab-btn ${mapDataMode === 'families' ? 'active' : ''}`}
-                  onClick={() => setMapDataMode('families')}
-                >
-                  Families
-                </button>
-              </div>
               <button type="button" className="mobile-web-primary-btn mobile-web-map-refresh-btn" onClick={loadMapPoints} disabled={mapLoading}>
-                {mapLoading ? 'Loading Map...' : `Refresh ${mapDataMode === 'families' ? 'Families' : 'Map'}`}
+                {mapLoading ? 'Loading Map...' : 'Refresh Map'}
               </button>
             </div>
           )}
@@ -6980,15 +7722,9 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             {mapLoading ? <div className="mobile-web-empty">Loading map points...</div> : null}
             {!mapLoading && mapPoints.length === 0 ? <div className="mobile-web-empty">No captured locations found.</div> : null}
             <div className="mobile-web-map-legend">
-              {mapDataMode === 'families' ? (
-                <span><i className="legend-dot unknown" style={{ background: '#2563eb' }} /> Family Location {hideFamilyLabelsOnMap ? '(hover marker for details)' : ''}</span>
-              ) : (
-                <>
-                  <span><i className="legend-dot male" /> Male</span>
-                  <span><i className="legend-dot female" /> Female</span>
-                  <span><i className="legend-dot unknown" /> Other</span>
-                </>
-              )}
+              <span><i className="legend-dot male" /> Male</span>
+              <span><i className="legend-dot female" /> Female</span>
+              <span><i className="legend-dot unknown" /> Other</span>
             </div>
             <div className="mobile-web-map-container" ref={mapRef} />
           </div>

@@ -31,7 +31,7 @@ const menuItems = [
   // Mobile suite (these paths are more specific than '/mobile', so should come first)
   { label: 'Search Voter', path: '/mobile/search-voter', icon: <SearchIcon fontSize="small" /> },
   { label: 'Search Booth', path: '/mobile/search-booth', icon: <HowToVoteIcon fontSize="small" /> },
-  { label: 'Voters Family', path: '/mobile/voters-family', icon: <FamilyRestroom fontSize="small" /> },
+  { label: "Voter's Family", path: '/mobile/voters-family', icon: <FamilyRestroom fontSize="small" /> },
   { label: 'Meetings', path: '/mobile/meetings', icon: <EventNote fontSize="small" /> },
   { label: 'Poll Day', path: '/mobile/poll-day', icon: <TrackChanges fontSize="small" /> },
   { label: 'Print', path: '/mobile/print', icon: <PrintIcon fontSize="small" /> },
