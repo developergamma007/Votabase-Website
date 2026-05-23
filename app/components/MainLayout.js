@@ -94,7 +94,12 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     let items = menuItems;
     
     if (role === 'BOOTH') {
-      items = items.filter(item => !['/volunteers', '/mobile/add-volunteer', '/mobile/my-volunteers'].includes(item.path));
+      items = items.filter(item => ![
+        '/volunteers',
+        '/mobile/add-volunteer',
+        '/mobile/my-volunteers',
+        '/mobile/volunteer-analysis',
+      ].includes(item.path));
     }
     
     // Only show Promotions to SUPER_ADMIN

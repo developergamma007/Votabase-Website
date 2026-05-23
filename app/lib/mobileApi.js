@@ -307,10 +307,11 @@ export const mobileApi = {
     }
     return response;
   },
-  fetchVolunteerEnrichmentDetails: async (wardId, updatedFrom, updatedTo, page, size) => {
+  fetchVolunteerEnrichmentDetails: async (wardId, updatedFrom, updatedTo, page, size, assemblyCode) => {
     try {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       if (page !== undefined) params.set('page', String(page));
@@ -419,11 +420,12 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchVolunteerAnalysis: async (wardId, mode) => {
+  fetchVolunteerAnalysis: async (wardId, mode, assemblyCode) => {
     try {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
       if (mode) params.set('mode', String(mode));
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
       const query = params.toString();
       return await request(`/votebase/v1/api/volunteers/analysis${query ? `?${query}` : ''}`);
     } catch (error) {
@@ -431,12 +433,13 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchFamilyAnalysis: async (wardId, boothId, mode, updatedFrom, updatedTo) => {
+  fetchFamilyAnalysis: async (wardId, boothId, mode, updatedFrom, updatedTo, assemblyCode) => {
     try {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
       if (boothId) params.set('boothId', String(boothId));
       if (mode) params.set('mode', String(mode));
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       const query = params.toString();
@@ -446,11 +449,12 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchFamilyDetails: async (wardId, boothId, updatedFrom, updatedTo, page, size) => {
+  fetchFamilyDetails: async (wardId, boothId, updatedFrom, updatedTo, page, size, assemblyCode) => {
     try {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
       if (boothId) params.set('boothId', String(boothId));
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       if (page !== undefined) params.set('page', String(page));
@@ -462,16 +466,19 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchVolunteerLocationPoints: async (wardId) => {
+  fetchVolunteerLocationPoints: async (wardId, assemblyCode) => {
     try {
-      const query = wardId ? `?wardId=${encodeURIComponent(wardId)}` : '';
-      return await request(`/votebase/v1/api/volunteers/analysis/locations${query}`);
+      const params = new URLSearchParams();
+      if (wardId) params.set('wardId', String(wardId));
+      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
+      const query = params.toString();
+      return await request(`/votebase/v1/api/volunteers/analysis/locations${query ? `?${query}` : ''}`);
     } catch (error) {
       console.log('Error while fetching volunteer map locations:', error);
       throw error;
     }
   },
-  fetchFamilyLocationPoints: async (wardId, boothId, wardCode) => {
+  fetchFamilyLocationPoints: async (wardId, boothId, wardCode, assemblyCode) => {
     const wardIdStr = wardId != null && String(wardId).trim() !== '' ? String(wardId) : '';
     const wardCodeStr = wardCode != null && String(wardCode).trim() !== '' ? String(wardCode).trim() : '';
     const filterPoints = (rows) =>
@@ -488,6 +495,7 @@ export const mobileApi = {
       const params = new URLSearchParams();
       if (wardIdStr) params.set('wardId', wardIdStr);
       if (boothId != null && String(boothId).trim() !== '') params.set('boothId', String(boothId));
+      if (assemblyCode != null && String(assemblyCode).trim() !== '') params.set('assemblyCode', String(assemblyCode));
       const query = params.toString();
       const res = await request(`/votebase/v1/api/families/map-points${query ? `?${query}` : ''}`);
       const payload = res?.data?.result ?? res?.result ?? [];
@@ -495,7 +503,7 @@ export const mobileApi = {
     } catch (apiErr) {
       console.warn('Family map-points API fallback to family list.', apiErr);
       try {
-        const rows = await mobileApi.fetchAllFamilies(undefined, boothId, wardId);
+        const rows = await mobileApi.fetchAllFamilies(undefined, boothId, wardId, assemblyCode);
         return { data: { result: filterPoints(rows) } };
       } catch (error) {
         console.log('Error while fetching family map locations:', error);
@@ -544,7 +552,7 @@ export const mobileApi = {
     }
   },
 
-  fetchFamilies: async (hasAssociation, page, size, boothId, wardId) => {
+  fetchFamilies: async (hasAssociation, page, size, boothId, wardId, assemblyCode) => {
     try {
       const params = { page, size };
       if (boothId !== undefined && boothId !== null && String(boothId).trim() !== '') {
@@ -552,6 +560,9 @@ export const mobileApi = {
       }
       if (wardId !== undefined && wardId !== null && String(wardId).trim() !== '') {
         params.wardId = Number(wardId);
+      }
+      if (assemblyCode !== undefined && assemblyCode !== null && String(assemblyCode).trim() !== '') {
+        params.assemblyCode = String(assemblyCode);
       }
       if (hasAssociation !== undefined && hasAssociation !== null && String(hasAssociation).trim() !== '') {
         params.association = hasAssociation;
@@ -562,12 +573,12 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchAllFamilies: async (hasAssociation, boothId, wardId) => {
+  fetchAllFamilies: async (hasAssociation, boothId, wardId, assemblyCode) => {
     const size = 200;
     let page = 0;
     let all = [];
     while (page < 100) {
-      const res = await mobileApi.fetchFamilies(hasAssociation, page, size, boothId, wardId);
+      const res = await mobileApi.fetchFamilies(hasAssociation, page, size, boothId, wardId, assemblyCode);
       const chunk =
         res?.content ||
         res?.data?.content ||

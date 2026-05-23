@@ -204,9 +204,27 @@ export const familyBelongsToWard = (family, wardId, wardCode) => {
   if (!wardId && !wardCode) return true;
   if (wardId != null && String(wardId).trim() !== '' && String(family?.wardId) === String(wardId)) return true;
   if (wardCode && String(family?.wardCode ?? '').trim() === String(wardCode).trim()) return true;
+  const parts = String(family?.familyNumber ?? '').trim().split('-');
+  if (parts.length >= 3 && wardCode) {
+    const wardFromNumber = String(parts[1] ?? '').replace(/^0+/, '') || parts[1];
+    const target = String(wardCode).trim().replace(/^0+/, '') || String(wardCode).trim();
+    if (wardFromNumber === target) return true;
+  }
   return false;
 };
 
+/** True when familyNumber is assembly-ward-seq for the given prefix (e.g. 151-12-3). */
+export const familyNumberMatchesPrefix = (familyNumber, wardPrefix = '') => {
+  const prefix = String(wardPrefix ?? '').trim();
+  const raw = String(familyNumber ?? '').trim();
+  if (!prefix || !raw) return false;
+  return raw.toLowerCase().startsWith(`${prefix.toLowerCase()}-`);
+};
+
+/**
+ * Next serial for assembly-ward prefix from DB rows (e.g. 151-12-1 exists → 151-12-2).
+ * Only counts family numbers that match the exact prefix; ward 13 starts at 151-13-1.
+ */
 export const getNextFamilyNumber = (families = [], wardPrefix = '') => {
   const prefix = String(wardPrefix ?? '').trim();
   if (!prefix) {
@@ -218,15 +236,49 @@ export const getNextFamilyNumber = (families = [], wardPrefix = '') => {
     return String(max + 1);
   }
   let max = 0;
+  const prefixKey = `${prefix}-`.toLowerCase();
   (families || []).forEach((family) => {
-    const n = parseFamilyNumberSeq(family?.familyNumber, prefix);
+    const raw = String(family?.familyNumber ?? '').trim();
+    if (!raw.toLowerCase().startsWith(prefixKey)) return;
+    const n = parseFamilyNumberSeq(raw, prefix);
     if (n != null && n > max) max = n;
   });
   return `${prefix}-${max + 1}`;
 };
 
+/** Families to scan for numbering: ward-scoped rows and/or matching assembly-ward prefix. */
+export const familiesForNextNumber = (families = [], wardId, wardCode, wardPrefix = '') => {
+  const prefix = String(wardPrefix ?? '').trim();
+  return (families || []).filter((family) => {
+    if (prefix && familyNumberMatchesPrefix(family?.familyNumber, prefix)) return true;
+    return familyBelongsToWard(family, wardId, wardCode);
+  });
+};
+
 export const hasHouseMarkingFields = (buildingNumber, buildingName, flatNumber) =>
   [buildingNumber, buildingName, flatNumber].every((part) => String(part || '').trim());
+
+/** Booth ids from ward booth dropdown (excludes "All Booths"). */
+export const getWardBoothIdList = (boothItems = []) =>
+  (boothItems || [])
+    .map((item) => String(item?.value ?? '').trim())
+    .filter((value) => value && value !== '');
+
+/** Resolve booth for family create: explicit pick, else first booth in selected ward. */
+export const resolveFamilyCreateBoothId = (boothItems = [], explicitBoothId = '') => {
+  const booths = getWardBoothIdList(boothItems);
+  const explicit = String(explicitBoothId ?? '').trim();
+  if (explicit && booths.includes(explicit)) return explicit;
+  return booths[0] || '';
+};
+
+export const isMemberBoothInWard = (memberBoothId, boothItems = []) => {
+  const allowed = getWardBoothIdList(boothItems);
+  if (!allowed.length) return true;
+  const boothId = String(memberBoothId ?? '').trim();
+  if (!boothId) return false;
+  return allowed.includes(boothId);
+};
 
 /** Relation label for family member rows (API uses relationFirstMiddleNameEn, not relationNameEn). */
 export const getVoterRelationDisplay = (voter = {}) => {

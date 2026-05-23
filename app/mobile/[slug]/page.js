@@ -26,9 +26,9 @@ import {
   formatFamilyDateTime,
   formatFamilyMapMemberLine,
   getNextFamilyNumber,
+  familiesForNextNumber,
   getFamilyNumberPrefix,
   parseWardCodeFromWardRecord,
-  familyBelongsToWard,
   hasHouseMarkingFields,
   buildFamilyMapTooltipHtml,
   getFamilyAvailabilityMapColor,
@@ -39,11 +39,16 @@ import {
   getVoterPhoneDisplay,
   getVoterHouseDisplay,
   getFamilyMemberRelationName,
+  resolveFamilyCreateBoothId,
+  isMemberBoothInWard,
+  getWardBoothIdList,
 } from '../../lib/familyFormHelpers';
 import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
+const FAMILY_ANALYSIS_LAZY_STEP = 20;
+const FAMILY_DETAIL_PAGE_SIZE = 30;
 const GOOGLE_MAPS_API_KEY = 'AIzaSyDiHCsapzJETTnhBIC7hFhTwmlWJJfnEg0';
 
 let googleMapsScriptPromise = null;
@@ -79,14 +84,48 @@ function FamilyAvailabilityMapLegend({ compact = false }) {
   );
 }
 
+function FamilyAvailabilityFilterChips({ selected, onChange }) {
+  const toggle = (label) => {
+    if (selected.includes(label)) {
+      const next = selected.filter((item) => item !== label);
+      onChange(next.length ? next : [...FAMILY_AVAILABILITY_OPTIONS]);
+    } else {
+      onChange([...selected, label]);
+    }
+  };
+  return (
+    <div className="mobile-web-availability-filter" role="group" aria-label="Filter by family availability">
+      <span className="mobile-web-muted" style={{ fontSize: '0.8rem', marginRight: '6px' }}>Status filter:</span>
+      {FAMILY_AVAILABILITY_OPTIONS.map((label) => {
+        const active = selected.includes(label);
+        const color = getFamilyAvailabilityMapColor(label);
+        return (
+          <button
+            key={label}
+            type="button"
+            className={`mobile-web-availability-chip ${active ? 'active' : ''}`}
+            onClick={() => toggle(label)}
+            style={{ borderColor: color, background: active ? `${color}22` : 'transparent' }}
+          >
+            <i className="legend-dot" style={{ background: color }} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function FamilyMapSection({
   wardId,
   wardCode,
   boothId,
+  assemblyCode,
   fullDetails = false,
   mapHeight = '420px',
   title = 'Family map',
   showRefresh = true,
+  availabilityFilter = null,
 }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -149,11 +188,15 @@ function FamilyMapSection({
     setMapLoading(true);
     setMapError('');
     try {
-      const res = await mobileApi.fetchFamilyLocationPoints(wardId || undefined, boothId || undefined, wardCode);
+      const res = await mobileApi.fetchFamilyLocationPoints(wardId || undefined, boothId || undefined, wardCode, assemblyCode || undefined);
       const payload = res?.data?.result || res?.result || [];
-      const points = (Array.isArray(payload) ? payload : [])
+      let points = (Array.isArray(payload) ? payload : [])
         .map(normalizeFamilyMapPoint)
         .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+      if (Array.isArray(availabilityFilter) && availabilityFilter.length) {
+        const allowed = new Set(availabilityFilter.map((v) => String(v).trim()));
+        points = points.filter((p) => allowed.has(String(p.familyAvailability || '').trim()));
+      }
       setPointCount(points.length);
       await buildMap(points);
     } catch (err) {
@@ -170,7 +213,7 @@ function FamilyMapSection({
       mapMarkersRef.current.forEach((marker) => marker.setMap(null));
       mapMarkersRef.current = [];
     };
-  }, [wardId, wardCode, boothId, fullDetails]);
+  }, [wardId, wardCode, boothId, assemblyCode, fullDetails, availabilityFilter]);
 
   return (
     <div className="mobile-web-family-map-block">
@@ -3660,6 +3703,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [selectedWardId, setSelectedWardId] = useState('');
   const [boothItems, setBoothItems] = useState([]);
   const [selectedBoothId, setSelectedBoothId] = useState('');
+  const [newFamilyBoothId, setNewFamilyBoothId] = useState('');
+  const [pendingAvailabilityFilter, setPendingAvailabilityFilter] = useState(() => [...FAMILY_AVAILABILITY_OPTIONS]);
   const [analysisRows, setAnalysisRows] = useState([]);
   const [analysisFields, setAnalysisFields] = useState(FAMILY_ANALYSIS_AVAILABILITY_KEYS);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -3672,6 +3717,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [familyDetailError, setFamilyDetailError] = useState('');
   const [familyDetailFrom, setFamilyDetailFrom] = useState('');
   const [familyDetailTo, setFamilyDetailTo] = useState('');
+  const [analysisVisibleCount, setAnalysisVisibleCount] = useState(FAMILY_ANALYSIS_LAZY_STEP);
+  const [familyDetailPage, setFamilyDetailPage] = useState(0);
+  const [familyDetailHasMore, setFamilyDetailHasMore] = useState(false);
+  const [familyDetailLoadingMore, setFamilyDetailLoadingMore] = useState(false);
+  const [familyDetailTotal, setFamilyDetailTotal] = useState(0);
   const userInfo = useMemo(() => (mounted ? getUserInfoSafe() : {}), [mounted]);
 
   const accessWardIds = useMemo(() => {
@@ -3710,10 +3760,22 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     return tabs;
   }, [canViewFamiliesList, canViewFamilyMapTab]);
 
-  const selectedWard = useMemo(
-    () => wardItems.find((w) => String(w.value) === String(selectedWardId)) || wardItems[0] || null,
-    [wardItems, selectedWardId]
+  const selectedWard = useMemo(() => {
+    if (selectedWardId) {
+      return wardItems.find((w) => String(w.value) === String(selectedWardId)) || wardItems[0] || null;
+    }
+    if (activeTab === 'NEW' || activeTab === 'PENDING_MAP') {
+      return wardItems[0] || null;
+    }
+    return null;
+  }, [wardItems, selectedWardId, activeTab]);
+
+  const familyWardSelectOptions = useMemo(
+    () => [{ value: '', label: 'All Wards' }, ...wardItems],
+    [wardItems]
   );
+
+  const effectiveAnalysisWardId = selectedWardId || undefined;
 
   const assemblyCodeForFamily = useMemo(
     () => assemblyCodeProp || (mounted ? getAssemblyCode() : ''),
@@ -3726,8 +3788,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   );
 
   const wardFamilies = useMemo(
-    () => families.filter((f) => familyBelongsToWard(f, selectedWard?.value, selectedWard?.wardCode)),
-    [families, selectedWard]
+    () => familiesForNextNumber(families, selectedWard?.value, selectedWard?.wardCode, wardNumberPrefix),
+    [families, selectedWard, wardNumberPrefix]
   );
 
   const headOfFamilyOptions = useMemo(
@@ -3767,12 +3829,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (hasHouseMarkingFields(buildingNumber, buildingName, flatNumber) && wardNumberPrefix) {
-      setFamilyNumber(getNextFamilyNumber(wardFamilies, wardNumberPrefix));
-    } else {
+    if (!wardNumberPrefix) {
       setFamilyNumber('');
+      return;
     }
-  }, [buildingNumber, buildingName, flatNumber, wardFamilies, wardNumberPrefix]);
+    setFamilyNumber(getNextFamilyNumber(wardFamilies, wardNumberPrefix));
+  }, [wardFamilies, wardNumberPrefix, selectedWardId]);
 
   useEffect(() => {
     if (!mounted || !assemblyCodeProp) return undefined;
@@ -3820,10 +3882,23 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       setFamilies([]);
       return;
     }
-    mobileApi.fetchAllFamilies(undefined, undefined, wardId)
-      .then((all) => setFamilies(sortFamiliesByNumber(all)))
-      .catch(() => setFamilies([]));
-  }, [mounted, selectedWardId, wardItems]);
+    let cancelled = false;
+    mobileApi.fetchAllFamilies(undefined, undefined, wardId, assemblyCodeForFamily || undefined)
+      .then((all) => {
+        if (!cancelled) setFamilies(sortFamiliesByNumber(all));
+      })
+      .catch(() => {
+        if (!cancelled) setFamilies([]);
+      });
+    return () => { cancelled = true; };
+  }, [mounted, selectedWardId, wardItems, activeTab, assemblyCodeForFamily]);
+
+  useEffect(() => {
+    if (!wardItems.length) return;
+    if ((activeTab === 'NEW' || activeTab === 'PENDING_MAP') && !selectedWardId) {
+      setSelectedWardId(wardItems[0].value);
+    }
+  }, [activeTab, wardItems, selectedWardId]);
 
   useEffect(() => {
     setMounted(true);
@@ -3863,10 +3938,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (!mounted || !assemblyCodeProp || !['LIST', 'MAP'].includes(activeTab)) return undefined;
-    const wardId = selectedWardId || wardItems[0]?.value;
+    if (!mounted || !assemblyCodeProp) return undefined;
+    const needsBooths = ['LIST', 'MAP', 'NEW'].includes(activeTab);
+    if (!needsBooths) return undefined;
+    const wardId = selectedWardId || (activeTab === 'NEW' ? wardItems[0]?.value : '');
     if (!wardId) {
-      setBoothItems([]);
+      setBoothItems([{ value: '', label: 'All Booths' }]);
+      setNewFamilyBoothId('');
       return undefined;
     }
     let active = true;
@@ -3879,9 +3957,14 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
           label: booth?.boothNo ?? booth?.booth_no ?? booth?.label ?? `Booth ${booth?.boothId ?? booth?.id ?? ''}`,
         }))
         .filter((item) => item.value);
-      setBoothItems([{ value: '', label: 'All Booths' }, ...list]);
+      const nextBoothItems = [{ value: '', label: 'All Booths' }, ...list];
+      setBoothItems(nextBoothItems);
       if (selectedBoothId && !list.some((item) => item.value === selectedBoothId)) {
         setSelectedBoothId('');
+      }
+      if (activeTab === 'NEW') {
+        const resolved = resolveFamilyCreateBoothId(nextBoothItems, newFamilyBoothId);
+        setNewFamilyBoothId(resolved);
       }
     }).catch(() => {
       if (active) setBoothItems([{ value: '', label: 'All Booths' }]);
@@ -3889,21 +3972,26 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     return () => { active = false; };
   }, [mounted, assemblyCodeProp, selectedWardId, wardItems, activeTab]);
 
+  useEffect(() => {
+    if (!selectedWardId) setSelectedBoothId('');
+  }, [selectedWardId]);
+
   const loadFamilyAnalysis = async () => {
     setAnalysisLoading(true);
     setError('');
     try {
-      const wardId = selectedWardId || wardItems[0]?.value;
       const res = await mobileApi.fetchFamilyAnalysis(
-        wardId || undefined,
+        effectiveAnalysisWardId,
         selectedBoothId || undefined,
         analysisViewMode,
         familyDetailFrom || undefined,
         familyDetailTo || undefined,
+        assemblyCodeForFamily || undefined,
       );
       const payload = res?.data?.result ?? res?.result ?? res;
       setAnalysisFields(payload?.fields || FAMILY_ANALYSIS_AVAILABILITY_KEYS);
       setAnalysisRows(Array.isArray(payload?.rows) ? payload.rows : []);
+      setAnalysisVisibleCount(FAMILY_ANALYSIS_LAZY_STEP);
     } catch (err) {
       console.error('Failed to load family analysis:', err);
       setAnalysisRows([]);
@@ -3959,62 +4047,65 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     lastUpdatedAt: family.lastUpdatedAt,
   });
 
-  const loadFamilyDetails = async () => {
-    setFamilyDetailLoading(true);
-    setFamilyDetailError('');
+  const loadFamilyDetails = async (reset = true) => {
+    if (reset) {
+      setFamilyDetailLoading(true);
+      setFamilyDetailError('');
+      setFamilyDetailPage(0);
+      setFamilyDetailRows([]);
+      setFamilyDetailHasMore(false);
+      setFamilyDetailTotal(0);
+    } else {
+      if (familyDetailLoadingMore || familyDetailLoading || !familyDetailHasMore) return;
+      setFamilyDetailLoadingMore(true);
+    }
+
+    const boothId = selectedBoothId || undefined;
+    const pageToLoad = reset ? 0 : familyDetailPage;
+
     try {
-      const wardId = selectedWardId || wardItems[0]?.value;
-      const boothId = selectedBoothId || undefined;
-      const all = await mobileApi.fetchAllFamilies(undefined, boothId, wardId);
-      const sorted = sortFamiliesByNumber(all);
-      setFamilyDetailFields([]);
-      setFamilyDetailRows(sorted.map(mapFamilyDtoToDetailRow));
-      try {
-        const res = await mobileApi.fetchFamilyDetails(
-          wardId || undefined,
-          boothId || undefined,
-          familyDetailFrom || undefined,
-          familyDetailTo || undefined,
-        );
-        const payload = res?.data?.result ?? res?.result ?? res;
-        if (Array.isArray(payload?.fields) && payload.fields.length) {
-          setFamilyDetailFields(payload.fields);
-        }
-        const apiRows = Array.isArray(payload?.rows) ? payload.rows : [];
-        if (apiRows.length) {
-          const byFamilyId = new Map(sorted.map((f) => [String(f.familyId), f]));
-          setFamilyDetailRows(
-            apiRows.map((row, index) => {
-              const source = byFamilyId.get(String(row.familyId)) || sorted[index];
-              const members = row.members?.length ? row.members : source?.members;
-              return source
-                ? {
-                    ...mapFamilyDtoToDetailRow(source, index),
-                    ...row,
-                    members: normalizeDetailMembers(members),
-                  }
-                : { ...row, serialNumber: index + 1, members: normalizeDetailMembers(row.members) };
-            })
-          );
-        }
-      } catch (apiErr) {
-        console.warn('Family details API fallback to list data.', apiErr);
+      const res = await mobileApi.fetchFamilyDetails(
+        effectiveAnalysisWardId,
+        boothId || undefined,
+        familyDetailFrom || undefined,
+        familyDetailTo || undefined,
+        pageToLoad,
+        FAMILY_DETAIL_PAGE_SIZE,
+        assemblyCodeForFamily || undefined,
+      );
+      const payload = res?.data?.result ?? res?.result ?? res;
+      if (Array.isArray(payload?.fields) && payload.fields.length) {
+        setFamilyDetailFields(payload.fields);
       }
+      const apiRows = Array.isArray(payload?.rows) ? payload.rows : [];
+      const total = Number(payload?.total ?? 0);
+      const mapped = apiRows.map((row, index) => ({
+        ...row,
+        serialNumber: row.serialNumber ?? pageToLoad * FAMILY_DETAIL_PAGE_SIZE + index + 1,
+        members: normalizeDetailMembers(row.members),
+      }));
+      setFamilyDetailRows((current) => (reset ? mapped : [...current, ...mapped]));
+      setFamilyDetailTotal(total);
+      setFamilyDetailHasMore((pageToLoad + 1) * FAMILY_DETAIL_PAGE_SIZE < total);
+      setFamilyDetailPage(pageToLoad + 1);
     } catch (err) {
       console.error('Failed to load family details:', err);
-      setFamilyDetailRows([]);
-      setFamilyDetailError('Failed to load families.');
+      if (reset) {
+        setFamilyDetailRows([]);
+        setFamilyDetailError(err?.message || 'Failed to load families.');
+      }
     } finally {
-      setFamilyDetailLoading(false);
+      if (reset) setFamilyDetailLoading(false);
+      setFamilyDetailLoadingMore(false);
     }
   };
 
   useEffect(() => {
     if (activeTab === 'LIST' && mounted) {
       loadFamilyAnalysis();
-      loadFamilyDetails();
+      loadFamilyDetails(true);
     }
-  }, [activeTab, mounted, selectedWardId, selectedBoothId, analysisViewMode, familyDetailFrom, familyDetailTo]);
+  }, [activeTab, mounted, selectedWardId, selectedBoothId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily]);
 
   const analysisViewOptions = [
     { label: 'Agent wise', value: 'agent' },
@@ -4050,6 +4141,27 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     }
     return items.sort((a, b) => String(a.agentName || '').localeCompare(String(b.agentName || ''), 'en'));
   }, [analysisRows, analysisSortMode, analysisViewMode]);
+
+  const visibleAnalysisRows = useMemo(
+    () => sortedAnalysisRows.slice(0, analysisVisibleCount),
+    [sortedAnalysisRows, analysisVisibleCount],
+  );
+
+  const canLoadMoreAnalysis = visibleAnalysisRows.length < sortedAnalysisRows.length;
+
+  const loadMoreAnalysisRows = () => {
+    setAnalysisVisibleCount((count) => Math.min(count + FAMILY_ANALYSIS_LAZY_STEP, sortedAnalysisRows.length));
+  };
+
+  const analysisLazySentinelRef = useInfiniteTrigger(
+    canLoadMoreAnalysis && !analysisLoading,
+    loadMoreAnalysisRows,
+  );
+
+  const familyDetailLazySentinelRef = useInfiniteTrigger(
+    familyDetailHasMore && !familyDetailLoading && !familyDetailLoadingMore,
+    () => loadFamilyDetails(false),
+  );
 
   const familyDetailColumns = useMemo(() => {
     const keys = [...FAMILY_DETAIL_SUMMARY_KEYS];
@@ -4288,9 +4400,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     setMemberLoading(true);
     searchTimerRef.current = setTimeout(async () => {
       try {
+        const wardForSearch = selectedWardId || wardItems[0]?.value;
         const res = await mobileApi.searchVoters({
           searchQuery: query,
           relationName: relationQuery.trim() || undefined,
+          wardId: wardForSearch || undefined,
           size: 20,
         });
         const payload = res?.data?.result || res?.result || res?.data || [];
@@ -4306,7 +4420,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         clearTimeout(searchTimerRef.current);
       }
     };
-  }, [memberQuery, relationQuery]);
+  }, [memberQuery, relationQuery, selectedWardId, wardItems]);
 
   const handleGetLocation = async () => {
     setError('');
@@ -4333,13 +4447,18 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       const headMember = members.find((m) => m.id === headOfFamily);
       if (!headMember || !headMember.epic) throw new Error('Invalid head of family selected');
 
-      const boothIdMember = members.find((m) => m.boothId);
-      if (!boothIdMember) throw new Error('Member booth information missing. Please add members again.');
+      const wardIdForCreate = selectedWardId || wardItems[0]?.value;
+      if (!wardIdForCreate) throw new Error('Please select a ward.');
+      const invalidMember = members.find((m) => m.boothId && !isMemberBoothInWard(m.boothId, boothItems));
+      if (invalidMember) {
+        throw new Error('A member belongs to a different ward. Remove them and search again within your selected ward.');
+      }
+      const resolvedBoothId = resolveFamilyCreateBoothId(boothItems, newFamilyBoothId);
+      if (!resolvedBoothId) throw new Error('No booth found for the selected ward. Please try again.');
 
       if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
         throw new Error('Building/Apartment Number, Building/Apartment Name, and Flat Number are required');
       }
-      if (!selectedWardId && wardItems.length > 1) throw new Error('Please select a ward.');
       if (!wardNumberPrefix) throw new Error('Ward is required to generate a family number.');
       const generatedFamilyNumber = getNextFamilyNumber(wardFamilies, wardNumberPrefix);
 
@@ -4362,7 +4481,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         pointsProvided: 0,
         latitude: location?.latitude || 0,
         longitude: location?.longitude || 0,
-        boothId: parseInt(boothIdMember.boothId, 10),
+        boothId: parseInt(resolvedBoothId, 10),
+        wardId: parseInt(wardIdForCreate, 10),
         headEpicNo: headMember.epic,
         memberEpicNos: members.map((m) => m.epic).filter(Boolean),
         economicStatus,
@@ -4372,9 +4492,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       await mobileApi.createFamily(payload);
       setSuccess('Family saved successfully!');
       loadSuggestions();
-      const all = await mobileApi.fetchAllFamilies(undefined, undefined, selectedWardId);
+      const all = await mobileApi.fetchAllFamilies(undefined, undefined, wardIdForCreate, assemblyCodeForFamily || undefined);
       setFamilies(sortFamiliesByNumber(all));
       resetNewFamilyForm();
+      setNewFamilyBoothId(resolveFamilyCreateBoothId(boothItems, ''));
     } catch (err) {
       setError(err?.message || 'Failed to save family');
     } finally {
@@ -4433,6 +4554,17 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   />
                 )}
               </label>
+              {getWardBoothIdList(boothItems).length > 1 ? (
+                <label className="mobile-web-field">
+                  <span>Booth</span>
+                  <PremiumSelect
+                    label="Booth"
+                    options={boothItems.filter((b) => b.value).map((b) => ({ value: b.value, label: b.label }))}
+                    value={newFamilyBoothId}
+                    onChange={setNewFamilyBoothId}
+                  />
+                </label>
+              ) : null}
             </div>
 
             <div className="mobile-web-family-grid">
@@ -4752,15 +4884,21 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 )}
               </label>
             </div>
-            {selectedWardId ? (
+            {(selectedWardId || wardItems[0]?.value) ? (
               <div className="mobile-web-family-pending-map mt-3">
+                <FamilyAvailabilityFilterChips
+                  selected={pendingAvailabilityFilter}
+                  onChange={setPendingAvailabilityFilter}
+                />
                 <FamilyMapSection
-                  key={`pending-map-${selectedWardId}`}
+                  key={`pending-map-${selectedWardId || wardItems[0]?.value}-${pendingAvailabilityFilter.join('|')}`}
                   title="Pending work map"
-                  wardId={selectedWardId}
+                  wardId={selectedWardId || wardItems[0]?.value}
                   wardCode={selectedWard?.wardCode}
+                  assemblyCode={assemblyCodeForFamily}
                   fullDetails={false}
                   mapHeight="420px"
+                  availabilityFilter={pendingAvailabilityFilter}
                 />
               </div>
             ) : (
@@ -4774,7 +4912,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <span>Ward</span>
                 <PremiumSelect
                   label="Ward"
-                  options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                  options={familyWardSelectOptions}
                   value={selectedWardId}
                   onChange={setSelectedWardId}
                 />
@@ -4786,22 +4924,20 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
                   value={selectedBoothId}
                   onChange={setSelectedBoothId}
+                  disabled={!selectedWardId}
                 />
               </label>
             </div>
-            {selectedWardId || wardItems[0]?.value ? (
-              <FamilyMapSection
-                key={`family-map-${selectedWardId || wardItems[0]?.value}-${selectedBoothId || 'all'}`}
-                title="Family map"
-                wardId={selectedWardId || wardItems[0]?.value}
-                wardCode={selectedWard?.wardCode}
-                boothId={selectedBoothId || undefined}
-                fullDetails
-                mapHeight="480px"
-              />
-            ) : (
-              <div className="mobile-web-empty mt-3">Select a ward to load the family map.</div>
-            )}
+            <FamilyMapSection
+              key={`family-map-${selectedWardId || 'all'}-${selectedBoothId || 'all'}`}
+              title="Family map"
+              wardId={effectiveAnalysisWardId}
+              wardCode={selectedWard?.wardCode}
+              boothId={selectedBoothId || undefined}
+              assemblyCode={assemblyCodeForFamily}
+              fullDetails
+              mapHeight="480px"
+            />
           </div>
         ) : (
           <div className="mobile-web-families-list">
@@ -4810,7 +4946,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <span>Ward</span>
                 <PremiumSelect
                   label="Ward"
-                  options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                  options={familyWardSelectOptions}
                   value={selectedWardId}
                   onChange={setSelectedWardId}
                 />
@@ -4822,6 +4958,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
                   value={selectedBoothId}
                   onChange={setSelectedBoothId}
+                  disabled={!selectedWardId}
                 />
               </label>
               <label className="mobile-web-field">
@@ -4860,7 +4997,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 className="mobile-web-primary-btn"
                 onClick={() => {
                   loadFamilyAnalysis();
-                  loadFamilyDetails();
+                  loadFamilyDetails(true);
                 }}
                 disabled={analysisLoading || familyDetailLoading}
               >
@@ -4878,7 +5015,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             {analysisLoading ? <div className="mobile-web-empty">Loading family analysis...</div> : null}
             {!analysisLoading && sortedAnalysisRows.length === 0 ? <div className="mobile-web-empty">No family analysis data found.</div> : null}
             {!analysisLoading && sortedAnalysisRows.length > 0 ? (
-              <div className="mobile-web-analysis-table-wrap">
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-table-scroll">
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
@@ -4918,8 +5055,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedAnalysisRows.map((row, index) => (
-                      <tr key={row.userId || row.groupKey || row.label || index}>
+                    {visibleAnalysisRows.map((row, index) => (
+                      <tr key={row.userId || row.groupKey || row.label || `${index}-${row.agentName}`}>
                         <td>{index + 1}</td>
                         {analysisViewMode === 'agent' ? (
                           <>
@@ -4972,6 +5109,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                     ) : null}
                   </tbody>
                 </table>
+                {canLoadMoreAnalysis ? (
+                  <div ref={analysisLazySentinelRef} className="mobile-web-lazy-load-sentinel">
+                    {analysisLoading ? null : (
+                      <span>Scroll for more agents ({visibleAnalysisRows.length} of {sortedAnalysisRows.length})</span>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -4989,11 +5133,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               </div>
               {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
               {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
+              {familyDetailLoadingMore ? <div className="mobile-web-empty">Loading more families...</div> : null}
               {!familyDetailLoading && familyDetailRows.length === 0 ? (
                 <div className="mobile-web-empty">No families found for this ward/booth.</div>
               ) : null}
               {!familyDetailLoading && familyDetailRows.length > 0 ? (
-                <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail mobile-web-analysis-table-scroll">
                   <table className="mobile-web-analysis-table">
                     <thead>
                       <tr>
@@ -5053,8 +5198,17 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                       })}
                     </tbody>
                   </table>
+                  {familyDetailHasMore ? (
+                    <div ref={familyDetailLazySentinelRef} className="mobile-web-lazy-load-sentinel">
+                      <span>
+                        Scroll for more families ({familyDetailRows.length}
+                        {familyDetailTotal ? ` of ${familyDetailTotal}` : ''})
+                      </span>
+                    </div>
+                  ) : null}
                   <div style={{ padding: '12px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
-                    {familyDetailRows.length} families loaded · click a row to expand member details
+                    {familyDetailRows.length}
+                    {familyDetailTotal ? ` of ${familyDetailTotal}` : ''} families loaded · click a row to expand member details
                   </div>
                 </div>
               ) : null}
@@ -5605,8 +5759,8 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
                   ) : attendanceList.length === 0 ? (
                     <div className="mobile-web-empty">No attendance recorded yet. Ensure voters have location setup.</div>
                   ) : (
-                    <div className="mobile-web-analysis-table-wrap">
-                      <table className="mobile-web-analysis-table">
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-table-scroll">
+                <table className="mobile-web-analysis-table">
                         <thead>
                           <tr>
                             <th>Name</th>
@@ -6876,9 +7030,16 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const mapMarkersRef = useRef([]);
 
   useEffect(() => {
+    if (assemblyCodeProp) {
+      const fromParent = String(parseInt(String(assemblyCodeProp), 10));
+      if (fromParent) setSelectedAssembly(fromParent);
+    }
+  }, [assemblyCodeProp]);
+
+  useEffect(() => {
     setRole((userInfo?.role || '').toUpperCase());
-    const rawAssembly = getAssemblyCode();
-    const initialAssembly = rawAssembly ? String(parseInt(rawAssembly)) : '';
+    const rawAssembly = assemblyCodeProp || getAssemblyCode();
+    const initialAssembly = rawAssembly ? String(parseInt(String(rawAssembly), 10)) : '';
     setSelectedAssembly(initialAssembly);
     setHydrated(true);
 
@@ -6924,6 +7085,11 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     }
     return selectedWard;
   }, [role, accessWardIds, selectedWard]);
+
+  const effectiveAssemblyCode = useMemo(() => {
+    const code = selectedAssembly || assemblyCodeProp || (hydrated ? getAssemblyCode() : '');
+    return code ? String(code).trim() : '';
+  }, [selectedAssembly, assemblyCodeProp, hydrated]);
 
   useEffect(() => {
     setSelectedWard('');
@@ -7084,7 +7250,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 
   const fetchAllDetailsForExport = async () => {
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined, undefined, undefined, effectiveAssemblyCode || undefined);
       return Array.isArray(res?.data?.result || res?.result) ? (res?.data?.result || res?.result) : [];
     } catch (err) {
       console.warn('Failed to fetch full data for export.', err);
@@ -7162,7 +7328,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setDetailLoading(true);
     setDetailError('');
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, undefined, undefined, 0, 50);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(wardId, undefined, undefined, 0, 50, effectiveAssemblyCode || undefined);
       const payload = res?.data?.result || res?.result || [];
       const newRows = Array.isArray(payload) ? payload : [];
       setDetailRows(newRows);
@@ -7180,7 +7346,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     if (detailLoading || !hasMoreDetails) return;
     setDetailLoading(true);
     try {
-      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined, detailPage, 50);
+      const res = await mobileApi.fetchVolunteerEnrichmentDetails(effectiveWard || undefined, undefined, undefined, detailPage, 50, effectiveAssemblyCode || undefined);
       const payload = res?.data?.result || res?.result || [];
       const newRows = Array.isArray(payload) ? payload : [];
       setDetailRows((prev) => {
@@ -7239,7 +7405,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setLoading(true);
     setError('');
     try {
-      const res = await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode);
+      const res = await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode, effectiveAssemblyCode || undefined);
       if (fetchId !== currentFetchId.current) return;
       const payload = res?.data?.result || res?.result || {};
       setRows(payload?.rows || []);
@@ -7257,7 +7423,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     if (wardItems.length === 0) return;
     if (accessWardIds.length > 0 && !effectiveWard) return;
     loadAnalysis();
-  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length]);
+  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode]);
 
   const loadGoogleMaps = () => new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
@@ -7372,7 +7538,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setMapLoading(true);
     setMapError('');
     try {
-      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined);
+      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined, effectiveAssemblyCode || undefined);
       const payload = res?.data?.result || res?.result || [];
       const points = Array.isArray(payload) ? payload : [];
       const normalized = points
@@ -7569,24 +7735,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         <div className="mobile-web-action-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
           {activeTab === 'table' ? (
             <>
-              <button type="button" className="mobile-web-primary-btn" onClick={loadAnalysis} disabled={loading}>
-                {loading ? 'Refreshing...' : 'Get Latest Data'}
-              </button>
               <button type="button" className="mobile-web-secondary-btn" onClick={downloadCsv} disabled={!rows.length}>
                 Download CSV
               </button>
               <button type="button" className="mobile-web-secondary-btn" onClick={downloadXls} disabled={!rows.length}>
                 Download Excel
               </button>
-              {role === 'SUPER_ADMIN' && (
-                <button
-                  type="button"
-                  className={`mobile-web-primary-btn ${showDetails ? 'subtle' : ''}`}
-                  onClick={toggleDetails}
-                >
-                  {showDetails ? 'Hide Enrichment Details' : 'View Enrichment Details'}
-                </button>
-              )}
             </>
           ) : (
             <div className="mobile-web-map-controls">
@@ -7602,7 +7756,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             {loading ? <div className="mobile-web-empty">Loading analysis...</div> : null}
             {!loading && sortedRows.length === 0 ? <div className="mobile-web-empty">No analysis data found.</div> : null}
             {!loading && sortedRows.length > 0 ? (
-              <div className="mobile-web-analysis-table-wrap">
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-table-scroll">
                 {summaryTotals ? (
                   <div className="mobile-web-analysis-summary">
                     {viewMode !== 'booth' ? (
@@ -7773,7 +7927,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             {detailLoading ? <div className="mobile-web-empty">Loading enrichment details...</div> : null}
             {!detailLoading && detailRows.length === 0 ? <div className="mobile-web-empty">No enrichment details found.</div> : null}
             {!detailLoading && detailRows.length > 0 ? (
-              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail" style={{ maxHeight: '60vh', overflowY: 'auto' }} onScroll={handleDetailScroll}>
+              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail mobile-web-analysis-table-scroll" onScroll={handleDetailScroll}>
                 <table className="mobile-web-analysis-table">
                   <thead>
                     <tr>
@@ -7832,7 +7986,7 @@ export default function MobileDetailPage({ params }) {
     const info = getUserInfoSafe();
     setUserRole(info?.role || '');
     const initialAsm = getAssemblyCode();
-    setSelectedAssembly(initialAsm);
+    const normalizedInitial = initialAsm ? String(parseInt(String(initialAsm), 10)) : '';
 
     if (info?.userName === 'admin@iswot.io' || info?.role === 'SUPER_ADMIN') {
       mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
@@ -7844,7 +7998,19 @@ export default function MobileDetailPage({ params }) {
             : (item.name || `Assembly ${item.id}`),
         }));
         setAssemblies(formatted);
-      }).catch(() => setAssemblies([]));
+        const validInitial = normalizedInitial && formatted.some((a) => String(a.value) === normalizedInitial);
+        const nextAssembly = validInitial ? normalizedInitial : (formatted[0]?.value || '');
+        setSelectedAssembly(nextAssembly);
+        if (nextAssembly && typeof window !== 'undefined') {
+          localStorage.setItem('assemblyCode', nextAssembly);
+          if (!validInitial) setAssemblyKey((prev) => prev + 1);
+        }
+      }).catch(() => {
+        setAssemblies([]);
+        setSelectedAssembly(normalizedInitial);
+      });
+    } else {
+      setSelectedAssembly(normalizedInitial || initialAsm);
     }
 
     // Refresh profile to sync ward/booth assignments if they are missing
@@ -7877,9 +8043,13 @@ export default function MobileDetailPage({ params }) {
         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Context</label>
         <div className="flex-1">
           <SingleOptionSelect
-            label="Select Assembly"
+            label="Assembly"
             options={assemblies.map(a => a.label)}
-            value={assemblies.find(a => String(a.value) === String(selectedAssembly))?.label || ''}
+            value={
+              assemblies.find((a) => String(a.value) === String(selectedAssembly))?.label
+              || assemblies[0]?.label
+              || ''
+            }
             onSelect={(label) => handleAssemblyChange(assemblies.find(a => a.label === label)?.value || '')}
             customValue=""
             onCustomValueChange={() => {}}
@@ -7910,7 +8080,18 @@ export default function MobileDetailPage({ params }) {
     if (slug === 'extract') return <ExtractScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'add-volunteer') return <AddVolunteerScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'my-volunteers') return <MyVolunteersScreen key={assemblyKey} {...commonProps} />;
-    if (slug === 'volunteer-analysis') return <VolunteerAnalysisScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'volunteer-analysis') {
+      if (userRole === 'BOOTH') {
+        return (
+          <ScreenFrame accent="light">
+            <section className="mobile-web-card">
+              <div className="mobile-web-empty">Volunteer Analysis is not available for booth-level access.</div>
+            </section>
+          </ScreenFrame>
+        );
+      }
+      return <VolunteerAnalysisScreen key={assemblyKey} {...commonProps} />;
+    }
     if (slug === 'promotions') return <PromotionsScreen key={assemblyKey} {...commonProps} />;
     return (
       <section className="mobile-web-card">
