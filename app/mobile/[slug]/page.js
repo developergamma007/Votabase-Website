@@ -41,35 +41,22 @@ import {
   getFamilyMemberRelationName,
   resolveFamilyCreateBoothId,
   isMemberBoothInWard,
-  getWardBoothIdList,
 } from '../../lib/familyFormHelpers';
 import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
+import {
+  buildClickableOsmMap,
+  buildDraggableOsmMap,
+  buildFamilyOsmMap,
+  buildPointsOsmMap,
+  destroyOsmMap,
+  getOsmEmbedUrl,
+  getOsmExternalUrl,
+} from '../../lib/osmMap';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
 const FAMILY_ANALYSIS_LAZY_STEP = 20;
 const FAMILY_DETAIL_PAGE_SIZE = 30;
-const GOOGLE_MAPS_API_KEY = 'AIzaSyDiHCsapzJETTnhBIC7hFhTwmlWJJfnEg0';
-
-let googleMapsScriptPromise = null;
-
-function loadGoogleMapsScript() {
-  if (typeof window === 'undefined') return Promise.reject(new Error('Maps unavailable'));
-  if (window.google?.maps) return Promise.resolve(window.google);
-  if (!GOOGLE_MAPS_API_KEY) return Promise.reject(new Error('Google Maps API key is missing.'));
-  if (!googleMapsScriptPromise) {
-    googleMapsScriptPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}`;
-      script.async = true;
-      script.defer = true;
-      script.onload = () => resolve(window.google);
-      script.onerror = () => reject(new Error('Failed to load Google Maps.'));
-      document.body.appendChild(script);
-    });
-  }
-  return googleMapsScriptPromise;
-}
 
 function FamilyAvailabilityMapLegend({ compact = false }) {
   return (
@@ -128,60 +115,22 @@ function FamilyMapSection({
   availabilityFilter = null,
 }) {
   const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const mapMarkersRef = useRef([]);
+  const osmMapRef = useRef(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState('');
   const [pointCount, setPointCount] = useState(0);
 
+  const cleanupMapInstances = () => {
+    if (osmMapRef.current) {
+      destroyOsmMap(osmMapRef.current);
+      osmMapRef.current = null;
+    }
+  };
+
   const buildMap = async (points) => {
     if (!mapRef.current) return;
-    const google = await loadGoogleMapsScript();
-    const validPoints = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
-    const center = validPoints.length
-      ? { lat: validPoints[0].latitude, lng: validPoints[0].longitude }
-      : { lat: 12.9716, lng: 77.5946 };
-    if (!mapInstanceRef.current) {
-      mapInstanceRef.current = new google.maps.Map(mapRef.current, {
-        center,
-        zoom: validPoints.length ? 13 : 11,
-        mapTypeId: 'roadmap',
-      });
-    } else {
-      mapInstanceRef.current.setCenter(center);
-    }
-    mapMarkersRef.current.forEach((marker) => marker.setMap(null));
-    mapMarkersRef.current = [];
-    const bounds = new google.maps.LatLngBounds();
-    validPoints.forEach((point) => {
-      const color = getFamilyAvailabilityMapColor(point.familyAvailability);
-      const marker = new google.maps.Marker({
-        position: { lat: point.latitude, lng: point.longitude },
-        map: mapInstanceRef.current,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 6,
-          fillColor: color,
-          fillOpacity: 0.92,
-          strokeColor: '#ffffff',
-          strokeWeight: 1.5,
-        },
-      });
-      const infoWindow = new google.maps.InfoWindow({
-        content: buildFamilyMapTooltipHtml(point, { full: fullDetails }),
-      });
-      const openInfo = () => infoWindow.open(mapInstanceRef.current, marker);
-      marker.addListener('mouseover', openInfo);
-      marker.addListener('mouseout', () => infoWindow.close());
-      marker.addListener('click', openInfo);
-      mapMarkersRef.current.push(marker);
-      bounds.extend(marker.getPosition());
-    });
-    if (validPoints.length >= 2) {
-      mapInstanceRef.current.fitBounds(bounds, 36);
-    } else if (validPoints.length === 1) {
-      mapInstanceRef.current.setZoom(15);
-    }
+    cleanupMapInstances();
+    osmMapRef.current = await buildFamilyOsmMap(mapRef.current, points, { fullDetails });
   };
 
   const loadMapPoints = async () => {
@@ -198,8 +147,14 @@ function FamilyMapSection({
         points = points.filter((p) => allowed.has(String(p.familyAvailability || '').trim()));
       }
       setPointCount(points.length);
+      if (points.length === 0) {
+        cleanupMapInstances();
+        if (mapRef.current) mapRef.current.innerHTML = '';
+        return;
+      }
       await buildMap(points);
     } catch (err) {
+      cleanupMapInstances();
       setMapError(err?.message || 'Unable to load family map.');
       setPointCount(0);
     } finally {
@@ -210,10 +165,20 @@ function FamilyMapSection({
   useEffect(() => {
     loadMapPoints();
     return () => {
-      mapMarkersRef.current.forEach((marker) => marker.setMap(null));
-      mapMarkersRef.current = [];
+      cleanupMapInstances();
     };
   }, [wardId, wardCode, boothId, assemblyCode, fullDetails, availabilityFilter]);
+
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el || typeof window === 'undefined') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries[0]?.isIntersecting) return;
+      osmMapRef.current?.invalidateSize?.();
+    }, { threshold: 0.1 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mapLoading, pointCount]);
 
   return (
     <div className="mobile-web-family-map-block">
@@ -235,7 +200,11 @@ function FamilyMapSection({
       <FamilyAvailabilityMapLegend compact={mapHeight !== '420px'} />
       {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
       {mapLoading ? <div className="mobile-web-empty">Loading map...</div> : null}
-      {!mapLoading && pointCount === 0 && !mapError ? <div className="mobile-web-empty">No family locations found for this ward.</div> : null}
+      {!mapLoading && pointCount === 0 && !mapError ? (
+        <div className="mobile-web-empty">
+          {wardId || wardCode ? 'No family locations found for this ward.' : 'No family locations found for the current filters.'}
+        </div>
+      ) : null}
       <div className="mobile-web-map-container" ref={mapRef} style={{ height: mapHeight, minHeight: mapHeight }} />
       {!mapLoading && pointCount > 0 ? (
         <div className="mobile-web-muted" style={{ marginTop: '8px', fontSize: '0.85rem' }}>
@@ -521,7 +490,7 @@ function normalizeBoothLocationLink(booth, templateLink) {
   const lat = booth?.latitude ?? booth?.lat ?? booth?.boothLat ?? booth?.booth_lat;
   const lng = booth?.longitude ?? booth?.lng ?? booth?.boothLng ?? booth?.booth_long;
   if (!lat || !lng) return '';
-  return `https://maps.google.com/?q=${lat},${lng}`;
+  return getOsmExternalUrl(lat, lng);
 }
 function buildWhatsAppMessage(voter, booth, template) {
   const authority = template?.authorityName || 'Greater Bengaluru Authority';
@@ -626,7 +595,82 @@ function buildSMSMessage(voter, booth, template) {
 function getWardOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const labels = wards.map((ward) => ward.wardNameEn || `Ward ${ward.wardId}`); const unique = Array.from(new Set(labels.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function getBoothOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const booths = wards.flatMap((ward) => (ward.booths || []).map((booth) => booth.boothNameEn || booth.nameEn || booth.booth_add_en || `Booth ${booth.boothId ?? booth.id ?? booth.booth_no ?? ''}`)); const unique = Array.from(new Set(booths.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function MobileHeader({ title, subtitle, onBack, hideAvatar = false }) { return <div className={`mobile-web-list-topbar ${hideAvatar ? 'no-avatar' : ''}`}><button className="mobile-web-back-btn" onClick={onBack} type="button"><ArrowBackIosNewRounded fontSize="small" /></button><div className="mobile-web-header-copy"><h2>{title}</h2>{subtitle ? <div className="mobile-web-header-subtitle">{subtitle}</div> : null}</div>{hideAvatar ? <div /> : <div className="mobile-web-avatar"><PersonOutlineRounded /></div>}</div>; }
-function useDropdownDismiss(rootRef, onClose) { useEffect(() => { const handlePointerDown = (event) => { if (!rootRef.current?.contains(event.target)) onClose(); }; document.addEventListener('mousedown', handlePointerDown); return () => document.removeEventListener('mousedown', handlePointerDown); }, [rootRef, onClose]); }
+function useDropdownDismiss(rootRef, onClose) {
+  useEffect(() => {
+    const handleOutside = (event) => {
+      if (!rootRef.current?.contains(event.target)) onClose();
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [rootRef, onClose]);
+}
+
+function filterNameSuggestions(suggestions, query, limit = 8) {
+  const list = Array.isArray(suggestions) ? suggestions.filter(Boolean) : [];
+  const q = String(query || '').trim().toLowerCase();
+  const filtered = q
+    ? list.filter((item) => String(item).toLowerCase().includes(q))
+    : list;
+  return filtered.slice(0, limit);
+}
+
+function FamilySuggestInput({
+  label,
+  value,
+  onChange,
+  suggestions = [],
+  placeholder = '',
+  required = false,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useDropdownDismiss(rootRef, () => setOpen(false));
+  const filtered = useMemo(
+    () => filterNameSuggestions(suggestions, value),
+    [suggestions, value],
+  );
+
+  return (
+    <label className="mobile-web-field mobile-web-suggest-field" ref={rootRef}>
+      <span>{label}{required ? '' : ''}</span>
+      <input
+        className="mobile-web-input"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+      />
+      {open && filtered.length > 0 ? (
+        <div className="mobile-web-suggestion-panel mobile-web-field-suggestions" role="listbox">
+          <div className="mobile-web-suggestion-list">
+            {filtered.map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="option"
+                className="mobile-web-suggestion-item"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  onChange(item);
+                  setOpen(false);
+                }}
+              >
+                <div className="mobile-web-suggestion-name">{item}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </label>
+  );
+}
 function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) { const [open, setOpen] = useState(false); const rootRef = useRef(null); useDropdownDismiss(rootRef, () => setOpen(false)); const optionSet = new Set(options); const isUnknown = !!value && value !== 'Others' && !optionSet.has(value); const showOther = value === 'Others' || isUnknown || !!customValue; const summaryValue = showOther ? 'Others' : value; const otherValue = customValue || (isUnknown ? value : ''); return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel mobile-web-premium-select-panel">{options.map((option) => { const checked = option === 'Others' ? showOther : value === option; return <button key={option} type="button" className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`} onClick={() => { onSelect(option); setOpen(false); }}><span>{option}</span></button>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; }
 
 function PremiumSelect({ label, options = [], value, onChange, disabled = false, placeholder = '' }) {
@@ -663,7 +707,8 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
                 role="option"
                 aria-selected={checked}
                 className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
-                onClick={() => {
+                onPointerDown={(event) => {
+                  event.preventDefault();
                   onChange(option.value);
                   setOpen(false);
                 }}
@@ -932,9 +977,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     if (!lat || !lng) return null;
     return { latitude: lat, longitude: lng };
   }, [location, voter]);
-  const mapSrc = mapTarget
-    ? `https://maps.google.com/maps?q=${mapTarget.latitude},${mapTarget.longitude}&z=15&output=embed`
-    : '';
+  const mapSrc = mapTarget ? getOsmEmbedUrl(mapTarget.latitude, mapTarget.longitude) : '';
 
   const handleFieldChange = (key, value) => {
     const nextValue = key === 'mobile' ? normalizeMobileValue(value) : value;
@@ -2177,7 +2220,6 @@ function PromotionsScreen({ assemblyCodeProp }) {
   const [feedback, setFeedback] = useState({ error: '', success: '' });
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [activatedWards, setActivatedWards] = useState([]);
-  const mapsKey = GOOGLE_MAPS_API_KEY;
   const [form, setForm] = useState({
     authorityName: '',
     electionName: '',
@@ -2215,91 +2257,57 @@ function PromotionsScreen({ assemblyCodeProp }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markerRef = useRef(null);
-
-
-  const loadGoogleMaps = () => new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('Maps are not available on the server.'));
-      return;
-    }
-    if (window.google?.maps) {
-      resolve(window.google);
-      return;
-    }
-    if (!mapsKey) {
-      reject(new Error('Google Maps key not configured.'));
-      return;
-    }
-    const existing = document.querySelector('script[data-google-maps="true"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(window.google));
-      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleMaps = 'true';
-    script.onload = () => resolve(window.google);
-    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
-    document.body.appendChild(script);
-  });
+  const osmMapRef = useRef(null);
 
   const parseLatLng = (link) => {
     if (!link) return null;
+    const osmMatch = link.match(/mlat=([-+]?\d*\.?\d+)[^&]*(?:&|&amp;)mlon=([-+]?\d*\.?\d+)/);
+    if (osmMatch) return { lat: parseFloat(osmMatch[1]), lng: parseFloat(osmMatch[2]) };
     const match = link.match(/query=([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
     if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+    const hashMatch = link.match(/#map=\d+\/([-+]?\d*\.?\d+)\/([-+]?\d*\.?\d+)/);
+    if (hashMatch) return { lat: parseFloat(hashMatch[1]), lng: parseFloat(hashMatch[2]) };
     const simple = link.match(/([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)/);
     if (simple) return { lat: parseFloat(simple[1]), lng: parseFloat(simple[2]) };
     return null;
   };
 
   const initMap = async () => {
-    if (!mapRef.current || !mapsKey) return;
+    if (!mapRef.current) return;
     try {
-      const google = await loadGoogleMaps();
-      const existingPos = parseLatLng(form.boothLocationLink) || { lat: 12.9716, lng: 77.5946 };
-
-      if (!mapInstanceRef.current) {
-        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
-          center: existingPos,
-          zoom: 15,
-          mapTypeId: 'roadmap',
-          disableDefaultUI: true,
-          zoomControl: true,
-        });
-
-        markerRef.current = new google.maps.Marker({
-          position: existingPos,
-          map: mapInstanceRef.current,
-          draggable: true,
-          animation: google.maps.Animation.DROP,
-        });
-
-        google.maps.event.addListener(markerRef.current, 'dragend', () => {
-          const pos = markerRef.current.getPosition();
-          const lat = pos.lat().toFixed(6);
-          const lng = pos.lng().toFixed(6);
-          const newLink = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-          setForm(prev => ({ ...prev, boothLocationLink: newLink }));
-        });
-      } else {
-        mapInstanceRef.current.setCenter(existingPos);
-        markerRef.current.setPosition(existingPos);
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
       }
+      const existingPos = parseLatLng(form.boothLocationLink) || { lat: 12.9716, lng: 77.5946 };
+      const { map } = await buildDraggableOsmMap(mapRef.current, {
+        lat: existingPos.lat,
+        lng: existingPos.lng,
+        zoom: 15,
+        onPositionChange: (lat, lng) => {
+          setForm((prev) => ({
+            ...prev,
+            boothLocationLink: getOsmExternalUrl(lat, lng),
+          }));
+        },
+      });
+      osmMapRef.current = map;
     } catch (err) {
       console.warn('Map init failed:', err);
     }
   };
 
   useEffect(() => {
-    if (selectedWard && mapsKey) {
+    if (selectedWard) {
       initMap();
     }
-  }, [selectedWard, mapsKey]);
+    return () => {
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
+      }
+    };
+  }, [selectedWard]);
 
   useEffect(() => {
     if (role && (isAdmin || role === 'SUPER_ADMIN')) {
@@ -3684,10 +3692,15 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [associationName, setAssociationName] = useState('');
   const [associationHeadName, setAssociationHeadName] = useState('');
   const [associationHeadPhone, setAssociationHeadPhone] = useState('');
+  const [familyNameSuggestions, setFamilyNameSuggestions] = useState([]);
   const [roadSuggestions, setRoadSuggestions] = useState([]);
   const [leaderSuggestions, setLeaderSuggestions] = useState([]);
   const [buildingSuggestions, setBuildingSuggestions] = useState([]);
+  const [buildingNumberSuggestions, setBuildingNumberSuggestions] = useState([]);
+  const [flatSuggestions, setFlatSuggestions] = useState([]);
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [associationSuggestions, setAssociationSuggestions] = useState([]);
+  const [associationHeadSuggestions, setAssociationHeadSuggestions] = useState([]);
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
   const lastMemberSelectionRef = useRef(null);
@@ -3702,9 +3715,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [wardItems, setWardItems] = useState([]);
   const [selectedWardId, setSelectedWardId] = useState('');
   const [boothItems, setBoothItems] = useState([]);
-  const [selectedBoothId, setSelectedBoothId] = useState('');
-  const [newFamilyBoothId, setNewFamilyBoothId] = useState('');
   const [pendingAvailabilityFilter, setPendingAvailabilityFilter] = useState(() => [...FAMILY_AVAILABILITY_OPTIONS]);
+  const [analysisAvailabilityFilter, setAnalysisAvailabilityFilter] = useState(() => [...FAMILY_AVAILABILITY_OPTIONS]);
+  const [mapAvailabilityFilter, setMapAvailabilityFilter] = useState(() => [...FAMILY_AVAILABILITY_OPTIONS]);
   const [analysisRows, setAnalysisRows] = useState([]);
   const [analysisFields, setAnalysisFields] = useState(FAMILY_ANALYSIS_AVAILABILITY_KEYS);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -3762,13 +3775,16 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const selectedWard = useMemo(() => {
     if (selectedWardId) {
-      return wardItems.find((w) => String(w.value) === String(selectedWardId)) || wardItems[0] || null;
+      return wardItems.find((w) => String(w.value) === String(selectedWardId)) || null;
     }
-    if (activeTab === 'NEW' || activeTab === 'PENDING_MAP') {
+    // Only New Family defaults to first ward; map/analysis tabs honour "All Wards".
+    if (activeTab === 'NEW') {
       return wardItems[0] || null;
     }
     return null;
   }, [wardItems, selectedWardId, activeTab]);
+
+  const mapWardCode = selectedWardId ? selectedWard?.wardCode : undefined;
 
   const familyWardSelectOptions = useMemo(
     () => [{ value: '', label: 'All Wards' }, ...wardItems],
@@ -3810,21 +3826,48 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const loadSuggestions = async () => {
     try {
-      const [roadRes, leaderRes, bRes, aRes] = await Promise.all([
-        mobileApi.fetchFamilySuggestions('road').catch(() => ({ data: { result: [] } })),
-        mobileApi.fetchFamilySuggestions('leader').catch(() => ({ data: { result: [] } })),
-        mobileApi.fetchFamilySuggestions('building').catch(() => ({ data: { result: [] } })),
-        mobileApi.fetchFamilySuggestions('association').catch(() => ({ data: { result: [] } })),
+      const empty = { data: { result: [] } };
+      const [
+        familyRes,
+        roadRes,
+        leaderRes,
+        bRes,
+        bNumRes,
+        flatRes,
+        addrRes,
+        aRes,
+        aHeadRes,
+      ] = await Promise.all([
+        mobileApi.fetchFamilySuggestions('family').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('road').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('leader').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('building').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('buildingnumber').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('flat').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('address').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('association').catch(() => empty),
+        mobileApi.fetchFamilySuggestions('associationhead').catch(() => empty),
       ]);
-      setRoadSuggestions(roadRes?.data?.result || []);
-      setLeaderSuggestions(leaderRes?.data?.result || []);
-      setBuildingSuggestions(bRes?.data?.result || []);
-      setAssociationSuggestions(aRes?.data?.result || []);
+      const pick = (res) => res?.data?.result || res?.result || [];
+      setFamilyNameSuggestions(pick(familyRes));
+      setRoadSuggestions(pick(roadRes));
+      setLeaderSuggestions(pick(leaderRes));
+      setBuildingSuggestions(pick(bRes));
+      setBuildingNumberSuggestions(pick(bNumRes));
+      setFlatSuggestions(pick(flatRes));
+      setAddressSuggestions(pick(addrRes));
+      setAssociationSuggestions(pick(aRes));
+      setAssociationHeadSuggestions(pick(aHeadRes));
     } catch {
+      setFamilyNameSuggestions([]);
       setRoadSuggestions([]);
       setLeaderSuggestions([]);
       setBuildingSuggestions([]);
+      setBuildingNumberSuggestions([]);
+      setFlatSuggestions([]);
+      setAddressSuggestions([]);
       setAssociationSuggestions([]);
+      setAssociationHeadSuggestions([]);
     }
   };
 
@@ -3866,9 +3909,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         ? list.filter((item) => accessWardIds.includes(item.value))
         : list;
       setWardItems(filtered);
-      if (filtered.length && !selectedWardId) {
-        setSelectedWardId(filtered[0].value);
-      }
     }).catch(() => {
       if (active) setWardItems([]);
     });
@@ -3877,13 +3917,16 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!mounted) return;
-    const wardId = selectedWardId || wardItems[0]?.value;
-    if (!wardId) {
+    const wardIdForFetch =
+      activeTab === 'NEW'
+        ? (selectedWardId || wardItems[0]?.value)
+        : (selectedWardId || undefined);
+    if (!wardIdForFetch && activeTab === 'NEW') {
       setFamilies([]);
-      return;
+      return undefined;
     }
     let cancelled = false;
-    mobileApi.fetchAllFamilies(undefined, undefined, wardId, assemblyCodeForFamily || undefined)
+    mobileApi.fetchAllFamilies(undefined, undefined, wardIdForFetch, assemblyCodeForFamily || undefined)
       .then((all) => {
         if (!cancelled) setFamilies(sortFamiliesByNumber(all));
       })
@@ -3895,7 +3938,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!wardItems.length) return;
-    if ((activeTab === 'NEW' || activeTab === 'PENDING_MAP') && !selectedWardId) {
+    if (activeTab === 'NEW' && !selectedWardId) {
       setSelectedWardId(wardItems[0].value);
     }
   }, [activeTab, wardItems, selectedWardId]);
@@ -3939,12 +3982,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!mounted || !assemblyCodeProp) return undefined;
-    const needsBooths = ['LIST', 'MAP', 'NEW'].includes(activeTab);
-    if (!needsBooths) return undefined;
-    const wardId = selectedWardId || (activeTab === 'NEW' ? wardItems[0]?.value : '');
+    if (activeTab !== 'NEW') return undefined;
+    const wardId = selectedWardId || wardItems[0]?.value || '';
     if (!wardId) {
       setBoothItems([{ value: '', label: 'All Booths' }]);
-      setNewFamilyBoothId('');
       return undefined;
     }
     let active = true;
@@ -3957,24 +3998,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
           label: booth?.boothNo ?? booth?.booth_no ?? booth?.label ?? `Booth ${booth?.boothId ?? booth?.id ?? ''}`,
         }))
         .filter((item) => item.value);
-      const nextBoothItems = [{ value: '', label: 'All Booths' }, ...list];
-      setBoothItems(nextBoothItems);
-      if (selectedBoothId && !list.some((item) => item.value === selectedBoothId)) {
-        setSelectedBoothId('');
-      }
-      if (activeTab === 'NEW') {
-        const resolved = resolveFamilyCreateBoothId(nextBoothItems, newFamilyBoothId);
-        setNewFamilyBoothId(resolved);
-      }
+      setBoothItems([{ value: '', label: 'All Booths' }, ...list]);
     }).catch(() => {
       if (active) setBoothItems([{ value: '', label: 'All Booths' }]);
     });
     return () => { active = false; };
   }, [mounted, assemblyCodeProp, selectedWardId, wardItems, activeTab]);
-
-  useEffect(() => {
-    if (!selectedWardId) setSelectedBoothId('');
-  }, [selectedWardId]);
 
   const loadFamilyAnalysis = async () => {
     setAnalysisLoading(true);
@@ -3982,7 +4011,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     try {
       const res = await mobileApi.fetchFamilyAnalysis(
         effectiveAnalysisWardId,
-        selectedBoothId || undefined,
+        undefined,
         analysisViewMode,
         familyDetailFrom || undefined,
         familyDetailTo || undefined,
@@ -4060,13 +4089,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       setFamilyDetailLoadingMore(true);
     }
 
-    const boothId = selectedBoothId || undefined;
     const pageToLoad = reset ? 0 : familyDetailPage;
 
     try {
       const res = await mobileApi.fetchFamilyDetails(
         effectiveAnalysisWardId,
-        boothId || undefined,
+        undefined,
         familyDetailFrom || undefined,
         familyDetailTo || undefined,
         pageToLoad,
@@ -4105,7 +4133,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       loadFamilyAnalysis();
       loadFamilyDetails(true);
     }
-  }, [activeTab, mounted, selectedWardId, selectedBoothId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily]);
+  }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily]);
 
   const analysisViewOptions = [
     { label: 'Agent wise', value: 'agent' },
@@ -4141,6 +4169,18 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     }
     return items.sort((a, b) => String(a.agentName || '').localeCompare(String(b.agentName || ''), 'en'));
   }, [analysisRows, analysisSortMode, analysisViewMode]);
+
+  const activeAnalysisAvailabilityFields = useMemo(() => {
+    const fields = analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS;
+    const selected = new Set(analysisAvailabilityFilter);
+    return fields.filter((field) => selected.has(field.label));
+  }, [analysisFields, analysisAvailabilityFilter]);
+
+  const filteredFamilyDetailRows = useMemo(() => {
+    const allowed = new Set(analysisAvailabilityFilter.map((v) => String(v).trim()));
+    if (!allowed.size || allowed.size >= FAMILY_AVAILABILITY_OPTIONS.length) return familyDetailRows;
+    return familyDetailRows.filter((row) => allowed.has(String(row.familyAvailability || '').trim()));
+  }, [familyDetailRows, analysisAvailabilityFilter]);
 
   const visibleAnalysisRows = useMemo(
     () => sortedAnalysisRows.slice(0, analysisVisibleCount),
@@ -4453,8 +4493,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       if (invalidMember) {
         throw new Error('A member belongs to a different ward. Remove them and search again within your selected ward.');
       }
-      const resolvedBoothId = resolveFamilyCreateBoothId(boothItems, newFamilyBoothId);
-      if (!resolvedBoothId) throw new Error('No booth found for the selected ward. Please try again.');
+      const memberBoothId = members.map((m) => m.boothId).find((id) => id && isMemberBoothInWard(id, boothItems));
+      const resolvedBoothId = memberBoothId
+        ? String(memberBoothId)
+        : resolveFamilyCreateBoothId(boothItems, '');
+      if (!resolvedBoothId) throw new Error('No booth found for the ward. Add a family member from this ward first.');
 
       if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
         throw new Error('Building/Apartment Number, Building/Apartment Name, and Flat Number are required');
@@ -4495,7 +4538,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       const all = await mobileApi.fetchAllFamilies(undefined, undefined, wardIdForCreate, assemblyCodeForFamily || undefined);
       setFamilies(sortFamiliesByNumber(all));
       resetNewFamilyForm();
-      setNewFamilyBoothId(resolveFamilyCreateBoothId(boothItems, ''));
     } catch (err) {
       setError(err?.message || 'Failed to save family');
     } finally {
@@ -4554,24 +4596,27 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   />
                 )}
               </label>
-              {getWardBoothIdList(boothItems).length > 1 ? (
-                <label className="mobile-web-field">
-                  <span>Booth</span>
-                  <PremiumSelect
-                    label="Booth"
-                    options={boothItems.filter((b) => b.value).map((b) => ({ value: b.value, label: b.label }))}
-                    value={newFamilyBoothId}
-                    onChange={setNewFamilyBoothId}
-                  />
-                </label>
-              ) : null}
             </div>
 
-            <div className="mobile-web-family-grid">
-              <label className="mobile-web-field">
-                <span>Enter family name</span>
-                <input className="mobile-web-input" placeholder="Family name" value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
-              </label>
+            <div className="mobile-web-family-grid mt-3">
+              <FamilySuggestInput
+                label="Road Name (Mandatory)"
+                value={roadName}
+                onChange={setRoadName}
+                suggestions={roadSuggestions}
+                placeholder="Road name"
+                required
+              />
+            </div>
+
+            <div className="mobile-web-family-grid mt-3">
+              <FamilySuggestInput
+                label="Enter family name"
+                value={familyName}
+                onChange={setFamilyName}
+                suggestions={familyNameSuggestions}
+                placeholder="Family name"
+              />
               <label className="mobile-web-field">
                 <span>Family Number</span>
                 <input className="mobile-web-input" placeholder={wardNumberPrefix ? `${wardNumberPrefix}-1` : 'Ward required'} value={familyNumber} readOnly />
@@ -4579,56 +4624,37 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             </div>
 
             <div className="mobile-web-family-grid mt-3">
-              <label className="mobile-web-field">
-                <span>Building/Apartment Number</span>
-                <input className="mobile-web-input" placeholder="Building/Apartment Number" value={buildingNumber} onChange={(e) => setBuildingNumber(e.target.value)} />
-              </label>
-              <label className="mobile-web-field">
-                <span>Building/Apartment Name</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Building/Apartment Name"
-                  value={buildingName}
-                  onChange={(e) => setBuildingName(e.target.value)}
-                  list="building-suggestions"
-                />
-                <datalist id="building-suggestions">
-                  {buildingSuggestions.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </label>
-              <label className="mobile-web-field">
-                <span>Flat Number</span>
-                <input className="mobile-web-input" placeholder="Flat Number" value={flatNumber} onChange={(e) => setFlatNumber(e.target.value)} />
-              </label>
+              <FamilySuggestInput
+                label="Building/Apartment Number"
+                value={buildingNumber}
+                onChange={setBuildingNumber}
+                suggestions={buildingNumberSuggestions}
+                placeholder="Building/Apartment Number"
+              />
+              <FamilySuggestInput
+                label="Building/Apartment Name"
+                value={buildingName}
+                onChange={setBuildingName}
+                suggestions={buildingSuggestions}
+                placeholder="Building/Apartment Name"
+              />
+              <FamilySuggestInput
+                label="Flat Number"
+                value={flatNumber}
+                onChange={setFlatNumber}
+                suggestions={flatSuggestions}
+                placeholder="Flat Number"
+              />
             </div>
 
             <div className="mobile-web-family-grid mt-3">
-              <label className="mobile-web-field">
-                <span>Building/Apartment Address</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Building/Apartment Address"
-                  value={buildingAddress}
-                  onChange={(e) => setBuildingAddress(e.target.value)}
-                />
-              </label>
-              <label className="mobile-web-field">
-                <span>Road Name (Mandatory)</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Road name"
-                  value={roadName}
-                  onChange={(e) => setRoadName(e.target.value)}
-                  list="road-suggestions"
-                />
-                <datalist id="road-suggestions">
-                  {roadSuggestions.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </label>
+              <FamilySuggestInput
+                label="Building/Apartment Address"
+                value={buildingAddress}
+                onChange={setBuildingAddress}
+                suggestions={addressSuggestions}
+                placeholder="Building/Apartment Address"
+              />
               <div className="mobile-web-field mobile-web-field-inline mobile-web-association-check">
                 <input
                   type="checkbox"
@@ -4643,30 +4669,20 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
             {hasAssociation ? (
               <div className="mobile-web-family-grid mobile-web-tag-grid mt-3">
-                <label className="mobile-web-field">
-                  <span>Association Name</span>
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Association Name"
-                    value={associationName}
-                    onChange={(e) => setAssociationName(e.target.value)}
-                    list="association-suggestions"
-                  />
-                  <datalist id="association-suggestions">
-                    {associationSuggestions.map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                  </datalist>
-                </label>
-                <label className="mobile-web-field">
-                  <span>Association Head Name</span>
-                  <input
-                    className="mobile-web-input"
-                    placeholder="Association Head Name"
-                    value={associationHeadName}
-                    onChange={(e) => setAssociationHeadName(e.target.value)}
-                  />
-                </label>
+                <FamilySuggestInput
+                  label="Association Name"
+                  value={associationName}
+                  onChange={setAssociationName}
+                  suggestions={associationSuggestions}
+                  placeholder="Association Name"
+                />
+                <FamilySuggestInput
+                  label="Association Head Name"
+                  value={associationHeadName}
+                  onChange={setAssociationHeadName}
+                  suggestions={associationHeadSuggestions}
+                  placeholder="Association Head Name"
+                />
                 <label className="mobile-web-field">
                   <span>Association Head Phone number</span>
                   <input
@@ -4681,21 +4697,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             ) : null}
 
             <div className="mobile-web-family-grid mt-3">
-              <label className="mobile-web-field">
-                <span>Tag a Leader</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Leader name"
-                  value={tagLeader}
-                  onChange={(e) => setTagLeader(e.target.value)}
-                  list="leader-suggestions"
-                />
-                <datalist id="leader-suggestions">
-                  {leaderSuggestions.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </label>
+              <FamilySuggestInput
+                label="Tag a Leader"
+                value={tagLeader}
+                onChange={setTagLeader}
+                suggestions={leaderSuggestions}
+                placeholder="Leader name"
+              />
               <label className="mobile-web-field">
                 <span>Family Availability</span>
                 <PremiumSelect
@@ -4713,7 +4721,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   <iframe
                     className="mobile-web-map-frame"
                     title="Family location map"
-                    src={`https://maps.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`}
+                    src={getOsmEmbedUrl(location.latitude, location.longitude)}
                     loading="lazy"
                   />
                 ) : (
@@ -4872,38 +4880,30 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             <div className="mobile-web-family-grid mt-3">
               <label className="mobile-web-field">
                 <span>Ward</span>
-                {wardItems.length > 1 ? (
-                  <PremiumSelect
-                    label="Ward"
-                    options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
-                    value={selectedWardId}
-                    onChange={setSelectedWardId}
-                  />
-                ) : (
-                  <input className="mobile-web-input" value={selectedWard?.label || 'Ward'} readOnly />
-                )}
+                <PremiumSelect
+                  label="Ward"
+                  options={familyWardSelectOptions}
+                  value={selectedWardId}
+                  onChange={setSelectedWardId}
+                />
               </label>
             </div>
-            {(selectedWardId || wardItems[0]?.value) ? (
-              <div className="mobile-web-family-pending-map mt-3">
-                <FamilyAvailabilityFilterChips
-                  selected={pendingAvailabilityFilter}
-                  onChange={setPendingAvailabilityFilter}
-                />
-                <FamilyMapSection
-                  key={`pending-map-${selectedWardId || wardItems[0]?.value}-${pendingAvailabilityFilter.join('|')}`}
-                  title="Pending work map"
-                  wardId={selectedWardId || wardItems[0]?.value}
-                  wardCode={selectedWard?.wardCode}
-                  assemblyCode={assemblyCodeForFamily}
-                  fullDetails={false}
-                  mapHeight="420px"
-                  availabilityFilter={pendingAvailabilityFilter}
-                />
-              </div>
-            ) : (
-              <div className="mobile-web-empty mt-3">Select a ward to load the pending work map.</div>
-            )}
+            <div className="mobile-web-family-pending-map mt-3">
+              <FamilyAvailabilityFilterChips
+                selected={pendingAvailabilityFilter}
+                onChange={setPendingAvailabilityFilter}
+              />
+              <FamilyMapSection
+                key={`pending-map-${selectedWardId || 'all'}-${pendingAvailabilityFilter.join('|')}`}
+                title="Pending work map"
+                wardId={effectiveAnalysisWardId}
+                wardCode={mapWardCode}
+                assemblyCode={assemblyCodeForFamily}
+                fullDetails={false}
+                mapHeight="420px"
+                availabilityFilter={pendingAvailabilityFilter}
+              />
+            </div>
           </div>
         ) : activeTab === 'MAP' ? (
           <div className="mobile-web-families-map-tab">
@@ -4917,26 +4917,20 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   onChange={setSelectedWardId}
                 />
               </label>
-              <label className="mobile-web-field">
-                <span>Booth</span>
-                <PremiumSelect
-                  label="Booth"
-                  options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
-                  value={selectedBoothId}
-                  onChange={setSelectedBoothId}
-                  disabled={!selectedWardId}
-                />
-              </label>
             </div>
+            <FamilyAvailabilityFilterChips
+              selected={mapAvailabilityFilter}
+              onChange={setMapAvailabilityFilter}
+            />
             <FamilyMapSection
-              key={`family-map-${selectedWardId || 'all'}-${selectedBoothId || 'all'}`}
+              key={`family-map-${selectedWardId || 'all'}-${mapAvailabilityFilter.join('|')}`}
               title="Family map"
               wardId={effectiveAnalysisWardId}
-              wardCode={selectedWard?.wardCode}
-              boothId={selectedBoothId || undefined}
+              wardCode={mapWardCode}
               assemblyCode={assemblyCodeForFamily}
               fullDetails
               mapHeight="480px"
+              availabilityFilter={mapAvailabilityFilter}
             />
           </div>
         ) : (
@@ -4949,16 +4943,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   options={familyWardSelectOptions}
                   value={selectedWardId}
                   onChange={setSelectedWardId}
-                />
-              </label>
-              <label className="mobile-web-field">
-                <span>Booth</span>
-                <PremiumSelect
-                  label="Booth"
-                  options={boothItems.map((booth) => ({ value: booth.value, label: booth.label }))}
-                  value={selectedBoothId}
-                  onChange={setSelectedBoothId}
-                  disabled={!selectedWardId}
                 />
               </label>
               <label className="mobile-web-field">
@@ -4990,6 +4974,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <input className="mobile-web-input" type="date" value={familyDetailTo} onChange={(e) => setFamilyDetailTo(e.target.value)} />
               </label>
             </div>
+
+            <FamilyAvailabilityFilterChips
+              selected={analysisAvailabilityFilter}
+              onChange={setAnalysisAvailabilityFilter}
+            />
 
             <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
               <button
@@ -5048,7 +5037,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                       ) : null}
                       <th>Total Buildings visited</th>
                       <th>Total Families visited</th>
-                      {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                      {activeAnalysisAvailabilityFields.map((field) => (
                         <th key={field.key}>{field.label}</th>
                       ))}
                       <th>Last Updated At</th>
@@ -5086,7 +5075,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                         ) : null}
                         <td>{row.totalBuildings ?? 0}</td>
                         <td>{row.totalFamilies ?? 0}</td>
-                        {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                        {activeAnalysisAvailabilityFields.map((field) => (
                           <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
                         ))}
                         <td>{formatFamilyDateTime(row.lastUpdatedAt)}</td>
@@ -5099,7 +5088,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                         <td>-</td>
                         <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalBuildings) || 0), 0)}</td>
                         <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalFamilies) || 0), 0)}</td>
-                        {(analysisFields.length ? analysisFields : FAMILY_ANALYSIS_AVAILABILITY_KEYS).map((field) => (
+                        {activeAnalysisAvailabilityFields.map((field) => (
                           <td key={`total-${field.key}`}>
                             {sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
                           </td>
@@ -5134,10 +5123,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
               {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
               {familyDetailLoadingMore ? <div className="mobile-web-empty">Loading more families...</div> : null}
-              {!familyDetailLoading && familyDetailRows.length === 0 ? (
-                <div className="mobile-web-empty">No families found for this ward/booth.</div>
+              {!familyDetailLoading && filteredFamilyDetailRows.length === 0 ? (
+                <div className="mobile-web-empty">No families found for this ward and status filter.</div>
               ) : null}
-              {!familyDetailLoading && familyDetailRows.length > 0 ? (
+              {!familyDetailLoading && filteredFamilyDetailRows.length > 0 ? (
                 <div className="mobile-web-analysis-table-wrap mobile-web-analysis-detail mobile-web-analysis-table-scroll">
                   <table className="mobile-web-analysis-table">
                     <thead>
@@ -5149,7 +5138,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {familyDetailRows.map((row, idx) => {
+                      {filteredFamilyDetailRows.map((row, idx) => {
                         const rowKey = row.familyId || `${row.familyName || 'row'}-${idx}`;
                         const isExpanded = expandedDetailFamilyId === rowKey;
                         return (
@@ -5276,13 +5265,11 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
       return true;
     });
   }, [meetings, role, isAdmin]);
-  const mapsKey = GOOGLE_MAPS_API_KEY;
   const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markerRef = useRef(null);
+  const osmMapRef = useRef(null);
   const newMapRef = useRef(null);
-  const newMapInstanceRef = useRef(null);
-  const newMarkerRef = useRef(null);
+  const newOsmMapRef = useRef(null);
+  const newOsmMarkerRef = useRef(null);
   const newMeetingLocInitRef = useRef(false);
 
   useEffect(() => {
@@ -5381,65 +5368,25 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
     }
   };
 
-  const loadGoogleMaps = () => new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('Maps not available.'));
-      return;
-    }
-    if (window.google?.maps) {
-      resolve(window.google);
-      return;
-    }
-    if (!mapsKey) {
-      reject(new Error('Google Maps key not configured.'));
-      return;
-    }
-    const existing = document.querySelector('script[data-google-maps="true"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(window.google));
-      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleMaps = 'true';
-    script.onload = () => resolve(window.google);
-    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
-    document.body.appendChild(script);
-  });
-
   const syncMap = async (meeting) => {
     if (!mapRef.current) return;
     try {
-      const google = await loadGoogleMaps();
-      const center = {
-        lat: meeting?.latitude ?? 12.9716,
-        lng: meeting?.longitude ?? 77.5946,
-      };
-      if (!mapInstanceRef.current) {
-        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
-          center,
-          zoom: 14,
-          mapTypeId: 'roadmap',
-        });
-        mapInstanceRef.current.addListener('click', (event) => {
-          if (!event?.latLng) return;
-          const lat = event.latLng.lat();
-          const lng = event.latLng.lng();
-          setSelectedMeeting((prev) => (prev ? { ...prev, latitude: lat, longitude: lng } : prev));
-        });
-      } else {
-        mapInstanceRef.current.setCenter(center);
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
       }
-      if (markerRef.current) {
-        markerRef.current.setMap(null);
-      }
-      markerRef.current = new google.maps.Marker({
-        position: center,
-        map: mapInstanceRef.current,
+      const lat = Number(meeting?.latitude) || 12.9716;
+      const lng = Number(meeting?.longitude) || 77.5946;
+      const { map } = await buildClickableOsmMap(mapRef.current, {
+        lat,
+        lng,
+        zoom: 14,
+        draggable: false,
+        onPositionChange: (clickLat, clickLng) => {
+          setSelectedMeeting((prev) => (prev ? { ...prev, latitude: clickLat, longitude: clickLng } : prev));
+        },
       });
+      osmMapRef.current = map;
     } catch {
       // ignore map errors
     }
@@ -5447,52 +5394,55 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
 
   useEffect(() => {
     if (selectedMeeting) syncMap(selectedMeeting);
+    return () => {
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
+      }
+    };
   }, [selectedMeeting]);
 
-  const syncNewMeetingMap = async () => {
-    if (!newMapRef.current) return;
+  const initNewMeetingMap = async () => {
+    if (!newMapRef.current || newOsmMapRef.current) return;
     try {
-      const google = await loadGoogleMaps();
       const lat = Number(newMeeting.latitude) || 12.9716;
       const lng = Number(newMeeting.longitude) || 77.5946;
-      const center = { lat, lng };
-      if (!newMapInstanceRef.current) {
-        newMapInstanceRef.current = new google.maps.Map(newMapRef.current, {
-          center,
-          zoom: 14,
-          mapTypeId: 'roadmap',
-        });
-        newMapInstanceRef.current.addListener('click', (event) => {
-          if (!event?.latLng) return;
-          const clickLat = event.latLng.lat();
-          const clickLng = event.latLng.lng();
-          setNewMeeting((prev) => ({ ...prev, latitude: clickLat.toFixed(6), longitude: clickLng.toFixed(6) }));
-        });
-      } else {
-        newMapInstanceRef.current.setCenter(center);
-      }
-      if (newMarkerRef.current) {
-        newMarkerRef.current.setPosition(center);
-      } else {
-        newMarkerRef.current = new google.maps.Marker({
-          position: center,
-          map: newMapInstanceRef.current,
-          draggable: true,
-        });
-        newMarkerRef.current.addListener('dragend', (event) => {
-          if (!event?.latLng) return;
-          const dragLat = event.latLng.lat();
-          const dragLng = event.latLng.lng();
-          setNewMeeting((prev) => ({ ...prev, latitude: dragLat.toFixed(6), longitude: dragLng.toFixed(6) }));
-        });
-      }
+      const { map, marker } = await buildDraggableOsmMap(newMapRef.current, {
+        lat,
+        lng,
+        zoom: 14,
+        onPositionChange: (dragLat, dragLng) => {
+          setNewMeeting((prev) => ({
+            ...prev,
+            latitude: dragLat.toFixed(6),
+            longitude: dragLng.toFixed(6),
+          }));
+        },
+      });
+      newOsmMapRef.current = map;
+      newOsmMarkerRef.current = marker;
     } catch {
       // ignore map errors
     }
   };
 
   useEffect(() => {
-    syncNewMeetingMap();
+    initNewMeetingMap();
+    return () => {
+      if (newOsmMapRef.current) {
+        destroyOsmMap(newOsmMapRef.current);
+        newOsmMapRef.current = null;
+        newOsmMarkerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!newOsmMarkerRef.current) return;
+    const lat = Number(newMeeting.latitude) || 12.9716;
+    const lng = Number(newMeeting.longitude) || 77.5946;
+    newOsmMarkerRef.current.setLatLng([lat, lng]);
+    newOsmMapRef.current?.panTo([lat, lng]);
   }, [newMeeting.latitude, newMeeting.longitude]);
 
   const handleUseMyLocation = () => {
@@ -7012,7 +6962,6 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [mapPoints, setMapPoints] = useState([]);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState('');
-  const mapsKey = GOOGLE_MAPS_API_KEY;
   const [masterUploadLoading, setMasterUploadLoading] = useState(false);
   const [masterUploadProgress, setMasterUploadProgress] = useState(0);
   const [masterUploadFeedback, setMasterUploadFeedback] = useState({ error: '', success: '' });
@@ -7026,8 +6975,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [selectedAssembly, setSelectedAssembly] = useState('');
   const [assemblies, setAssemblies] = useState([]);
   const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const mapMarkersRef = useRef([]);
+  const osmMapRef = useRef(null);
 
   useEffect(() => {
     if (assemblyCodeProp) {
@@ -7425,110 +7373,43 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     loadAnalysis();
   }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode]);
 
-  const loadGoogleMaps = () => new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('Maps are not available on the server.'));
-      return;
-    }
-    if (window.google?.maps) {
-      resolve(window.google);
-      return;
-    }
-    if (!mapsKey) {
-      reject(new Error('Google Maps key not configured.'));
-      return;
-    }
-    const existing = document.querySelector('script[data-google-maps="true"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(window.google));
-      existing.addEventListener('error', () => reject(new Error('Failed to load Google Maps.')));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&v=weekly`;
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleMaps = 'true';
-    script.onload = () => resolve(window.google);
-    script.onerror = () => reject(new Error('Failed to load Google Maps.'));
-    document.body.appendChild(script);
-  });
-
   const buildMap = async (points) => {
     if (!mapRef.current) return;
     try {
-      const google = await loadGoogleMaps();
-      const validPoints = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
-      const center = validPoints.length
-        ? { lat: validPoints[0].latitude, lng: validPoints[0].longitude }
-        : { lat: 12.9716, lng: 77.5946 };
-      if (!mapInstanceRef.current) {
-        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
-          center,
-          zoom: validPoints.length ? 13 : 11,
-          mapTypeId: 'roadmap',
-        });
-      } else {
-        mapInstanceRef.current.setCenter(center);
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
       }
-      mapMarkersRef.current.forEach((marker) => marker.setMap(null));
-      mapMarkersRef.current = [];
-      const bounds = new google.maps.LatLngBounds();
-      validPoints.forEach((point) => {
+      const getColor = (point) => {
         const gender = String(point.gender || '').toUpperCase();
-        const color = gender.startsWith('M') ? '#DDA0DD' : gender.startsWith('F') ? '#FFA6C9' : '#64748b';
-        const marker = new google.maps.Marker({
-          position: { lat: point.latitude, lng: point.longitude },
-          map: mapInstanceRef.current,
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 5,
-            fillColor: color,
-            fillOpacity: 0.85,
-            strokeColor: '#ffffff',
-            strokeWeight: 1,
-          },
-        });
-
-        const infoWindow = new google.maps.InfoWindow({
-          content: `
-            <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
-              <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
-              <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #64748b; font-weight: 500;">Relation:</span>
-                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.relationName || '-'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #64748b; font-weight: 500;">EPIC:</span>
-                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.epic || '-'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #64748b; font-weight: 500;">Mobile:</span>
-                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.mobile || '-'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #64748b; font-weight: 500;">Gender:</span>
-                  <span style="color: #334155; font-weight: 600; text-align: right;">${point.gender || '-'}</span>
-                </div>
-              </div>
+        if (gender.startsWith('M')) return '#DDA0DD';
+        if (gender.startsWith('F')) return '#FFA6C9';
+        return '#64748b';
+      };
+      const getPopupHtml = (point) => `
+        <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 220px;">
+          <h3 style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">${point.name || 'Voter Details'}</h3>
+          <div style="display: grid; gap: 8px; font-size: 13px; line-height: 1.4;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b; font-weight: 500;">Relation:</span>
+              <span style="color: #334155; font-weight: 600; text-align: right;">${point.relationName || '-'}</span>
             </div>
-          `
-        });
-
-        const openInfo = () => infoWindow.open(mapInstanceRef.current, marker);
-        marker.addListener('mouseover', openInfo);
-        marker.addListener('mouseout', () => infoWindow.close());
-        marker.addListener('click', openInfo);
-
-        mapMarkersRef.current.push(marker);
-        bounds.extend(marker.getPosition());
-      });
-      if (validPoints.length >= 2) {
-        mapInstanceRef.current.fitBounds(bounds, 36);
-      } else if (validPoints.length === 1) {
-        mapInstanceRef.current.setZoom(15);
-      }
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b; font-weight: 500;">EPIC:</span>
+              <span style="color: #334155; font-weight: 600; text-align: right;">${point.epic || '-'}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b; font-weight: 500;">Mobile:</span>
+              <span style="color: #334155; font-weight: 600; text-align: right;">${point.mobile || '-'}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b; font-weight: 500;">Gender:</span>
+              <span style="color: #334155; font-weight: 600; text-align: right;">${point.gender || '-'}</span>
+            </div>
+          </div>
+        </div>
+      `;
+      osmMapRef.current = await buildPointsOsmMap(mapRef.current, points, { getColor, getPopupHtml });
     } catch (err) {
       setMapError(err?.message || 'Unable to load map.');
     }
@@ -7574,6 +7455,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   useEffect(() => {
     if (activeTab !== 'map') return;
     loadMapPoints();
+    return () => {
+      if (osmMapRef.current) {
+        destroyOsmMap(osmMapRef.current);
+        osmMapRef.current = null;
+      }
+    };
   }, [activeTab, effectiveWard]);
 
   const detailColumns = useMemo(() => {

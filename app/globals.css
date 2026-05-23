@@ -1557,6 +1557,19 @@ textarea {
   position: relative;
 }
 
+.mobile-web-suggest-field {
+  position: relative;
+}
+
+.mobile-web-field-suggestions {
+  max-height: 200px;
+  overflow: hidden;
+}
+
+.mobile-web-field-suggestions .mobile-web-suggestion-list {
+  max-height: 180px;
+}
+
 .mobile-web-suggestion-panel {
   position: absolute;
   top: calc(100% + 6px);
