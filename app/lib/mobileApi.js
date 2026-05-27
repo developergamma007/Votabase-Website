@@ -760,32 +760,119 @@ export const mobileApi = {
       method: 'POST'
     });
   },
-  uploadMasterRoll: async (file, onProgress) => {
+  fetchMasterRollImportStatus: async () => {
+    return await request('/votebase/v1/api/admin/master-roll/import-status');
+  },
+  uploadMasterRoll: async (file, callbacks = {}) => {
+    const { onUploadProgress, onProcessingStart } = callbacks;
     const token = getToken();
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_BASE_URL}/votebase/v1/api/admin/master-roll/upload`);
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      
+      xhr.timeout = 0;
+
+      let processingStarted = false;
+      const beginProcessing = () => {
+        if (processingStarted) return;
+        processingStarted = true;
+        if (onProcessingStart) onProcessingStart();
+      };
+
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           const percent = Math.round((e.loaded / e.total) * 100);
-          if (onProgress) onProgress(percent);
+          if (onUploadProgress) onUploadProgress(percent);
+          if (percent >= 100) beginProcessing();
+        } else if (onUploadProgress) {
+          onUploadProgress(5);
         }
       };
+
+      xhr.upload.onload = () => beginProcessing();
 
       xhr.onload = () => {
         try {
-          const res = JSON.parse(xhr.responseText);
-          if (xhr.status >= 200 && xhr.status < 300) resolve(res);
-          else reject(res);
+          const res = JSON.parse(xhr.responseText || '{}');
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(res);
+            return;
+          }
+          const errMsg =
+            res?.data?.error ||
+            res?.message ||
+            res?.detail ||
+            `Upload failed (HTTP ${xhr.status})`;
+          reject({ message: errMsg, raw: res });
         } catch (err) {
-          reject({ message: 'Server error' });
+          reject({ message: xhr.responseText || 'Server error while importing master roll' });
         }
       };
 
-      xhr.onerror = () => reject({ message: 'Network error' });
-      
+      xhr.onerror = () =>
+        reject({
+          message:
+            'Network error — ensure votabase-backend is running (http://127.0.0.1:8000) and NEXT_PUBLIC_API_BASE_URL matches.',
+        });
+
+      const formData = new FormData();
+      formData.append('file', file);
+      xhr.send(formData);
+    });
+  },
+
+  resumeMasterRoll: async (file, callbacks = {}) => {
+    const { onUploadProgress, onProcessingStart } = callbacks;
+    const token = getToken();
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE_URL}/votebase/v1/api/admin/master-roll/upload?resume=true`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.timeout = 0;
+
+      let processingStarted = false;
+      const beginProcessing = () => {
+        if (processingStarted) return;
+        processingStarted = true;
+        if (onProcessingStart) onProcessingStart();
+      };
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          if (onUploadProgress) onUploadProgress(percent);
+          if (percent >= 100) beginProcessing();
+        } else if (onUploadProgress) {
+          onUploadProgress(5);
+        }
+      };
+
+      xhr.upload.onload = () => beginProcessing();
+
+      xhr.onload = () => {
+        try {
+          const res = JSON.parse(xhr.responseText || '{}');
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(res);
+            return;
+          }
+          const errMsg =
+            res?.data?.error ||
+            res?.message ||
+            res?.detail ||
+            `Resume failed (HTTP ${xhr.status})`;
+          reject({ message: errMsg, raw: res });
+        } catch {
+          reject({ message: xhr.responseText || 'Server error while resuming master roll' });
+        }
+      };
+
+      xhr.onerror = () =>
+        reject({
+          message:
+            'Network error — ensure votabase-backend is running and NEXT_PUBLIC_API_BASE_URL matches.',
+        });
+
       const formData = new FormData();
       formData.append('file', file);
       xhr.send(formData);

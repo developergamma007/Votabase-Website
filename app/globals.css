@@ -2052,6 +2052,45 @@ textarea {
   transition: width 0.2s ease;
 }
 
+.mobile-web-master-import-status {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.mobile-web-import-banner {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.mobile-web-import-counts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.mobile-web-import-counts th,
+.mobile-web-import-counts td {
+  border: 1px solid #e2e8f0;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.mobile-web-import-counts th {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+.mobile-web-import-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
 .mobile-web-tag {
   align-self: flex-start;
   padding: 6px 12px;

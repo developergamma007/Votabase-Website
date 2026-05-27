@@ -55,6 +55,58 @@ import {
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
 const PAGE_SIZE = 50;
+
+const MASTER_ROLL_PHASE_LABELS = {
+  starting: 'Starting import…',
+  assembly: 'Loading assembly…',
+  wards: 'Loading wards…',
+  booths: 'Loading booths…',
+  voters: 'Loading voters…',
+  done: 'Import complete',
+  error: 'Import failed',
+};
+
+const MASTER_ROLL_TABLE_ROWS = [
+  { key: 'assembly', label: 'assembly' },
+  { key: 'wards', label: 'wards' },
+  { key: 'booths', label: 'booths' },
+  { key: 'voters', label: 'voters' },
+];
+
+function parseMasterRollUploadError(err) {
+  if (!err) return 'Master roll upload failed.';
+  if (typeof err === 'string') return err;
+  const nested = err?.raw?.data?.error ?? err?.data?.error ?? err?.error ?? err?.detail;
+  if (typeof nested === 'string') return nested;
+  if (err?.message) return String(err.message);
+  return 'Master roll upload failed.';
+}
+
+function formatMasterRollUploadSuccess(res) {
+  const payload = res?.data?.result ?? res?.data ?? res ?? {};
+  const inserted = payload?.inserted || {};
+  const assemblyNo = payload?.assembly_no ?? '';
+  const baseMessage = res?.message || 'Master roll imported successfully';
+  return `${baseMessage} Assembly ${assemblyNo}: ${inserted.assembly ?? 1} assembly, ${inserted.wards ?? 0} wards, ${inserted.booths ?? 0} booths, ${inserted.voters ?? 0} voters.`;
+}
+
+function applyMasterRollStatus(setter, status) {
+  if (!status) return;
+  setter({
+    phase: status.phase || 'idle',
+    progress: status.progress ?? 0,
+    assemblyNo: status.assembly_no ?? null,
+    assemblyName: status.assembly_name_en ?? '',
+    inserted: {
+      assembly: status.inserted?.assembly ?? 0,
+      wards: status.inserted?.wards ?? 0,
+      booths: status.inserted?.booths ?? 0,
+      voters: status.inserted?.voters ?? 0,
+    },
+    error: status.error || null,
+    active: Boolean(status.active),
+  });
+}
 const FAMILY_ANALYSIS_LAZY_STEP = 20;
 const FAMILY_DETAIL_PAGE_SIZE = 30;
 
@@ -6964,8 +7016,20 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [mapError, setMapError] = useState('');
   const [masterUploadLoading, setMasterUploadLoading] = useState(false);
   const [masterUploadProgress, setMasterUploadProgress] = useState(0);
-  const [masterUploadFeedback, setMasterUploadFeedback] = useState({ error: '', success: '' });
+  const [masterUploadPhase, setMasterUploadPhase] = useState('');
+  const [masterImportLive, setMasterImportLive] = useState({
+    phase: 'idle',
+    progress: 0,
+    assemblyNo: null,
+    assemblyName: '',
+    inserted: { assembly: 0, wards: 0, booths: 0, voters: 0 },
+    error: null,
+    active: false,
+  });
+  const [masterUploadBanner, setMasterUploadBanner] = useState({ type: '', text: '' });
   const masterFileInputRef = useRef(null);
+  const resumeFileInputRef = useRef(null);
+  const masterUploadPollRef = useRef(null);
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const [role, setRole] = useState('');
@@ -7249,28 +7313,194 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     }
   };
 
+  const stopMasterUploadPoll = () => {
+    if (masterUploadPollRef.current) {
+      clearInterval(masterUploadPollRef.current);
+      masterUploadPollRef.current = null;
+    }
+  };
+
+  const reloadAssembliesDropdown = () => {
+    if (role !== 'SUPER_ADMIN' && role !== 'ADMIN') return;
+    mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
+      const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
+      const formatted = raw.map((item) => ({
+        value: String(item.id),
+        label:
+          item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id))
+            ? `${item.name} (${item.id})`
+            : item.name || `Assembly ${item.id}`,
+      }));
+      setAssemblies(formatted);
+    }).catch(() => {});
+  };
+
+  const pollMasterRollImportStatus = () => {
+    stopMasterUploadPoll();
+    masterUploadPollRef.current = setInterval(async () => {
+      try {
+        const res = await mobileApi.fetchMasterRollImportStatus();
+        const status = res?.data?.result ?? res?.data ?? {};
+        applyMasterRollStatus(setMasterImportLive, status);
+        setMasterUploadPhase(status.phase || '');
+        if (typeof status.progress === 'number') {
+          setMasterUploadProgress(status.progress);
+        }
+        if (status.assembly_no && ['assembly', 'wards', 'booths', 'voters', 'done'].includes(status.phase)) {
+          reloadAssembliesDropdown();
+          setSelectedAssembly(String(status.assembly_no));
+        }
+        if (status.phase === 'error') {
+          setMasterUploadBanner({ type: 'error', text: status.error || 'Import failed' });
+          stopMasterUploadPoll();
+        }
+        if (!status.active && status.phase === 'done') {
+          stopMasterUploadPoll();
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }, 1200);
+  };
+
   const handleMasterUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    stopMasterUploadPoll();
     setMasterUploadLoading(true);
     setMasterUploadProgress(0);
-    setMasterUploadFeedback({ error: '', success: '' });
+    setMasterUploadPhase('starting');
+    setMasterImportLive({
+      phase: 'starting',
+      progress: 0,
+      assemblyNo: null,
+      assemblyName: '',
+      inserted: { assembly: 0, wards: 0, booths: 0, voters: 0 },
+      error: null,
+      active: true,
+    });
+    setMasterUploadBanner({ type: '', text: '' });
+    pollMasterRollImportStatus();
     try {
-      const res = await mobileApi.uploadMasterRoll(file, (percent) => {
-        setMasterUploadProgress(percent);
+      const res = await mobileApi.uploadMasterRoll(file, {
+        onUploadProgress: (percent) => {
+          setMasterUploadPhase('uploading');
+          setMasterUploadProgress(Math.min(15, Math.max(2, Math.round(percent * 0.15))));
+        },
+        onProcessingStart: () => {
+          setMasterUploadPhase('processing');
+        },
       });
-      setMasterUploadFeedback({ 
-        success: `Successfully imported ${res?.data?.voters || res?.voters || ''} voters into ${res?.data?.tenant_id || res?.tenant_id || ''}`, 
-        error: '' 
+      const finalStatus = res?.data?.result ?? {};
+      applyMasterRollStatus(setMasterImportLive, {
+        phase: 'done',
+        progress: 100,
+        active: false,
+        assembly_no: finalStatus.assembly_no,
+        assembly_name_en: null,
+        inserted: {
+          assembly: finalStatus.inserted?.assembly ?? 1,
+          wards: finalStatus.inserted?.wards ?? 0,
+          booths: finalStatus.inserted?.booths ?? 0,
+          voters: finalStatus.inserted?.voters ?? 0,
+        },
       });
+      setMasterUploadProgress(100);
+      setMasterUploadPhase('done');
+      setMasterUploadBanner({ type: 'success', text: formatMasterRollUploadSuccess(res) });
+      reloadAssembliesDropdown();
+      if (finalStatus.assembly_no) setSelectedAssembly(String(finalStatus.assembly_no));
       if (masterFileInputRef.current) masterFileInputRef.current.value = '';
+      try {
+        localStorage.removeItem('masterRollLastProgress');
+        localStorage.removeItem('masterRollCanResume');
+      } catch { }
+      if (showDetails) await loadDetails(effectiveWard || undefined);
     } catch (err) {
-      setMasterUploadFeedback({ error: err?.detail || err?.message || 'Upload failed', success: '' });
+      setMasterUploadBanner({ type: 'error', text: parseMasterRollUploadError(err) });
+      setMasterUploadPhase('error');
+      try {
+        localStorage.setItem('masterRollLastProgress', String(masterUploadProgress || masterImportLive.progress || 0));
+        localStorage.setItem('masterRollCanResume', '1');
+      } catch { }
     } finally {
+      stopMasterUploadPoll();
       setMasterUploadLoading(false);
-      setMasterUploadProgress(0);
     }
   };
+
+  const handleResumeMasterRoll = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    stopMasterUploadPoll();
+    setMasterUploadLoading(true);
+    const startAt = (() => {
+      try {
+        return Number(localStorage.getItem('masterRollLastProgress') || '0') || 0;
+      } catch {
+        return 0;
+      }
+    })();
+    setMasterUploadProgress(Math.max(0, Math.min(99, startAt)));
+    setMasterUploadPhase('starting');
+    setMasterUploadBanner({ type: '', text: '' });
+    pollMasterRollImportStatus();
+    try {
+      const res = await mobileApi.resumeMasterRoll(file, {
+        onUploadProgress: (percent) => {
+          setMasterUploadPhase('uploading');
+          const uploadPct = Math.min(15, Math.max(2, Math.round(percent * 0.15)));
+          setMasterUploadProgress((prev) => Math.max(prev, uploadPct));
+        },
+        onProcessingStart: () => setMasterUploadPhase('processing'),
+      });
+      const finalStatus = res?.data?.result ?? {};
+      applyMasterRollStatus(setMasterImportLive, {
+        phase: 'done',
+        progress: 100,
+        active: false,
+        assembly_no: finalStatus.assembly_no,
+        assembly_name_en: null,
+        inserted: {
+          assembly: finalStatus.inserted?.assembly ?? 1,
+          wards: finalStatus.inserted?.wards ?? 0,
+          booths: finalStatus.inserted?.booths ?? 0,
+          voters: finalStatus.inserted?.voters ?? 0,
+        },
+      });
+      setMasterUploadProgress(100);
+      setMasterUploadPhase('done');
+      setMasterUploadBanner({ type: 'success', text: formatMasterRollUploadSuccess(res) });
+      reloadAssembliesDropdown();
+      if (finalStatus.assembly_no) setSelectedAssembly(String(finalStatus.assembly_no));
+      if (resumeFileInputRef.current) resumeFileInputRef.current.value = '';
+      try {
+        localStorage.removeItem('masterRollLastProgress');
+        localStorage.removeItem('masterRollCanResume');
+      } catch { }
+    } catch (err) {
+      setMasterUploadBanner({ type: 'error', text: parseMasterRollUploadError(err) });
+      setMasterUploadPhase('error');
+      try {
+        localStorage.setItem('masterRollLastProgress', String(masterUploadProgress || masterImportLive.progress || 0));
+        localStorage.setItem('masterRollCanResume', '1');
+      } catch { }
+    } finally {
+      stopMasterUploadPoll();
+      setMasterUploadLoading(false);
+    }
+  };
+
+  const canResumeMasterRoll = (() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('masterRollCanResume') === '1';
+    } catch {
+      return false;
+    }
+  })();
+
+  useEffect(() => () => stopMasterUploadPoll(), []);
 
   const loadDetails = async (wardId) => {
     setDetailLoading(true);
@@ -7798,16 +8028,85 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                   ref={masterFileInputRef}
                   onChange={handleMasterUpload}
                 />
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  ref={resumeFileInputRef}
+                  onChange={handleResumeMasterRoll}
+                />
                 <button
                   type="button"
                   className="mobile-web-gradient-btn subtle"
                   disabled={masterUploadLoading}
                   onClick={() => masterFileInputRef.current?.click()}
                 >
-                  {masterUploadLoading ? `Uploading Roll... ${masterUploadProgress}%` : 'UPLOAD MASTER ROLL EXCEL'}
+                  {masterUploadLoading ? 'Importing master roll…' : 'UPLOAD MASTER ROLL EXCEL'}
                 </button>
-                {masterUploadFeedback.success && <div className="text-green-600 text-xs w-full text-center mt-1">{masterUploadFeedback.success}</div>}
-                {masterUploadFeedback.error && <div className="text-red-600 text-xs w-full text-center mt-1">{masterUploadFeedback.error}</div>}
+                {(masterUploadPhase === 'error' || canResumeMasterRoll) && !masterUploadLoading ? (
+                  <button
+                    type="button"
+                    className="mobile-web-secondary-btn"
+                    onClick={() => resumeFileInputRef.current?.click()}
+                    title="Re-upload the same Excel; continues from last progress (no delete)"
+                  >
+                    Resume
+                    {(() => {
+                      try {
+                        const p = Number(localStorage.getItem('masterRollLastProgress') || '0');
+                        return p > 0 ? ` (from ~${p}%)` : '';
+                      } catch {
+                        return '';
+                      }
+                    })()}
+                  </button>
+                ) : null}
+                {masterUploadLoading ? (
+                  <div className="mobile-web-master-import-status w-full">
+                    <div className="mobile-web-progress">
+                      <div className="mobile-web-progress-label">
+                        {masterUploadPhase === 'uploading'
+                          ? `Uploading Excel file… ${masterUploadProgress}%`
+                          : `${MASTER_ROLL_PHASE_LABELS[masterImportLive.phase] || 'Processing…'} (${masterUploadProgress}%)`}
+                      </div>
+                      <div className="mobile-web-progress-bar" aria-valuenow={masterUploadProgress} aria-valuemin={0} aria-valuemax={100}>
+                        <span style={{ width: `${masterUploadProgress}%` }} />
+                      </div>
+                    </div>
+                    <table className="mobile-web-import-counts">
+                      <thead>
+                        <tr>
+                          <th>Table</th>
+                          <th>Loaded</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {MASTER_ROLL_TABLE_ROWS.map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.label}</td>
+                            <td>{Number(masterImportLive.inserted[row.key] ?? 0).toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {masterImportLive.assemblyNo ? (
+                      <p className="mobile-web-import-hint">
+                        Assembly {masterImportLive.assemblyNo}
+                        {masterImportLive.assemblyName ? ` — ${masterImportLive.assemblyName}` : ''} appears in the dropdown as each step commits.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {masterUploadBanner.type === 'success' ? (
+                  <div className="mobile-web-success mobile-web-import-banner w-full" role="status">
+                    {masterUploadBanner.text}
+                  </div>
+                ) : null}
+                {masterUploadBanner.type === 'error' ? (
+                  <div className="mobile-web-error mobile-web-import-banner w-full" role="alert">
+                    {masterUploadBanner.text}
+                  </div>
+                ) : null}
               </div>
             )}
             {detailError ? <div className="mobile-web-error">{detailError}</div> : null}
