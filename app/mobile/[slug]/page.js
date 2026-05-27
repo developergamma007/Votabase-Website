@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowBackIosNewRounded,
@@ -661,6 +661,42 @@ function useDropdownDismiss(rootRef, onClose) {
   }, [rootRef, onClose]);
 }
 
+/** Open dropdown upward when there is not enough viewport space below the trigger. */
+function useDropdownDropUp(rootRef, open, panelRef, maxPanelHeight = 260) {
+  const [dropUp, setDropUp] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setDropUp(false);
+      return undefined;
+    }
+    const measure = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const panel = panelRef?.current;
+      const panelHeight = panel
+        ? Math.min(panel.scrollHeight, maxPanelHeight)
+        : maxPanelHeight;
+      const margin = 12;
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const spaceAbove = rect.top - margin;
+      setDropUp(spaceBelow < panelHeight && spaceAbove > spaceBelow);
+    };
+    measure();
+    const raf = requestAnimationFrame(measure);
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [open, rootRef, panelRef, maxPanelHeight]);
+
+  return dropUp;
+}
+
 function filterNameSuggestions(suggestions, query, limit = 8) {
   const list = Array.isArray(suggestions) ? suggestions.filter(Boolean) : [];
   const q = String(query || '').trim().toLowerCase();
@@ -680,6 +716,8 @@ function FamilySuggestInput({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  const dropUp = useDropdownDropUp(rootRef, open, panelRef, 200);
   useDropdownDismiss(rootRef, () => setOpen(false));
   const filtered = useMemo(
     () => filterNameSuggestions(suggestions, value),
@@ -687,7 +725,10 @@ function FamilySuggestInput({
   );
 
   return (
-    <label className="mobile-web-field mobile-web-suggest-field" ref={rootRef}>
+    <label
+      className={`mobile-web-field mobile-web-suggest-field ${open && dropUp ? 'drop-up' : ''}`}
+      ref={rootRef}
+    >
       <span>{label}{required ? '' : ''}</span>
       <input
         className="mobile-web-input"
@@ -700,7 +741,11 @@ function FamilySuggestInput({
         onFocus={() => setOpen(true)}
       />
       {open && filtered.length > 0 ? (
-        <div className="mobile-web-suggestion-panel mobile-web-field-suggestions" role="listbox">
+        <div
+          ref={panelRef}
+          className="mobile-web-suggestion-panel mobile-web-field-suggestions"
+          role="listbox"
+        >
           <div className="mobile-web-suggestion-list">
             {filtered.map((item) => (
               <button
@@ -728,14 +773,21 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
 function PremiumSelect({ label, options = [], value, onChange, disabled = false, placeholder = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  const dropUp = useDropdownDropUp(rootRef, open, panelRef, 240);
   useDropdownDismiss(rootRef, () => setOpen(false));
+
   const normalized = options.map((option) => (
     typeof option === 'string' ? { value: option, label: option } : option
   ));
   const selected = normalized.find((option) => String(option.value) === String(value));
   const display = selected?.label || placeholder || `Select ${label}`;
+
   return (
-    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+    <div
+      className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${dropUp ? 'drop-up' : ''} ${disabled ? 'is-disabled' : ''}`}
+      ref={rootRef}
+    >
       <button
         className="mobile-web-multiselect-trigger"
         type="button"
@@ -749,7 +801,11 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
         <ExpandMoreRounded className="mobile-web-select-icon" />
       </button>
       {open ? (
-        <div className="mobile-web-multiselect-panel mobile-web-premium-select-panel" role="listbox">
+        <div
+          ref={panelRef}
+          className="mobile-web-multiselect-panel mobile-web-premium-select-panel"
+          role="listbox"
+        >
           {normalized.map((option) => {
             const checked = String(option.value) === String(value);
             return (
@@ -2362,10 +2418,17 @@ function PromotionsScreen({ assemblyCodeProp }) {
   }, [selectedWard]);
 
   useEffect(() => {
-    if (role && (isAdmin || role === 'SUPER_ADMIN')) {
-      mobileApi.fetchVolunteerDropdown('ASSEMBLY').then(res => {
+    const asm = assemblyCodeProp || getAssemblyCode();
+    if (asm) {
+      setForm((prev) => ({ ...prev, assemblyId: String(asm) }));
+    }
+  }, [assemblyCodeProp]);
+
+  useEffect(() => {
+    if (role && isAdmin && !assemblyCodeProp) {
+      mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
-        const formatted = raw.map(item => ({
+        const formatted = raw.map((item) => ({
           id: item.id,
           label: (item.name && !item.name.includes(String(item.id))) ? `${item.name} (${item.id})` : (item.name || `Assembly ${item.id}`)
         }));
@@ -2376,19 +2439,20 @@ function PromotionsScreen({ assemblyCodeProp }) {
           setForm(prev => ({ ...prev, assemblyId: String(match.id) }));
         }
       });
-    } else if (role) {
-      setForm(prev => ({ ...prev, assemblyId: assemblyCodeProp || getAssemblyCode() }));
     }
-  }, [role, isAdmin, assemblyCodeProp]);
+  }, [role, isAdmin, assemblyCodeProp, form.assemblyId]);
 
   const loadWardsForCurrentAssembly = async () => {
     if (!form.assemblyId) return;
     try {
       const res = await mobileApi.fetchWards(form.assemblyId);
-      let list = (res || []).map(w => ({
-        id: w.wardId || w.id,
-        label: (w.wardNameEn || `Ward ${w.wardId || w.id}`) + (w.wardNo ? ` - ${w.wardNo}` : '')
-      }));
+      let list = (res || []).map((w) => {
+        const id = w.wardId || w.id;
+        const name = w.wardNameEn || w.name || '';
+        const code = w.wardCode || w.wardNo || '';
+        const label = code && name ? `${code} - ${name}` : (name || code || `Ward ${id}`);
+        return { id, label };
+      });
 
       const ids = [];
       if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
@@ -2422,13 +2486,22 @@ function PromotionsScreen({ assemblyCodeProp }) {
   const loadActivatedWards = async () => {
     try {
       const res = await mobileApi.fetchActivatedWards(form.assemblyId);
-      const raw = res?.data?.result || [];
-      // Keep only entries that have a valid wardLabel (non‑empty string)
-      const filtered = raw.filter((w) => w.wardLabel && String(w.wardLabel).trim() !== "");
-      setActivatedWards(filtered);
+      const raw = res?.data?.result || res?.result || [];
+      setActivatedWards(Array.isArray(raw) ? raw : []);
     } catch (err) {
       console.error('Failed to load activated wards');
     }
+  };
+
+  const activatedWardDisplayLabel = (aw) => {
+    if (aw.wardId == null || aw.wardId === '') return aw.wardLabel || aw.wardNameEn || 'Global';
+    const fromList = wards.find((w) => String(w.id) === String(aw.wardId));
+    return (
+      aw.wardLabel ||
+      aw.wardNameEn ||
+      fromList?.label ||
+      (aw.wardId != null ? `Ward ${aw.wardId}` : 'Ward')
+    );
   };
 
   useEffect(() => {
@@ -2512,8 +2585,30 @@ function PromotionsScreen({ assemblyCodeProp }) {
         currentBannerUrl = uploadRes?.data?.result?.bannerUrl;
       }
 
-      await mobileApi.saveMessageTemplate({ ...form, wardId: wardIdForApi, bannerUrl: currentBannerUrl });
-      setFeedback({ error: '', success: 'Template and photo saved successfully!' });
+      const assemblyLabel =
+        form.assemblyLabel ||
+        assemblies.find((a) => String(a.id) === String(form.assemblyId))?.label ||
+        `Assembly ${form.assemblyId}`;
+      const wardLabel =
+        selectedWard.id === 'GLOBAL'
+          ? 'All Wards (Global)'
+          : (form.wardLabel || selectedWard?.label || '');
+
+      await mobileApi.saveMessageTemplate({
+        ...form,
+        wardId: wardIdForApi,
+        bannerUrl: currentBannerUrl,
+        assemblyLabel,
+        wardLabel,
+        enabled: form.enabled,
+      });
+      const channelLabel = form.channel === 'WHATSAPP' ? 'WhatsApp' : form.channel === 'SMS' ? 'SMS' : 'Print';
+      setFeedback({
+        error: '',
+        success: form.enabled
+          ? `${channelLabel} template saved for ${wardLabel || 'selected ward'}. Enable WhatsApp, SMS, and Print separately (one save per channel).`
+          : `Template saved (${channelLabel} disabled for this ward).`,
+      });
       setSelectedFile(null);
       // Refresh current ward list to show updated status
       loadWardsForCurrentAssembly();
@@ -2544,21 +2639,11 @@ function PromotionsScreen({ assemblyCodeProp }) {
           <div className="mobile-web-warning">Only admin login can customize promotional message templates.</div>
         ) : null}
 
+        <p className="text-sm text-slate-500 mb-4">
+          Assembly is chosen in the <strong>Context</strong> bar at the top. Each channel (WhatsApp, SMS, Print) is saved separately with <strong>Enable</strong> checked.
+        </p>
+
         <div className="mobile-web-form-grid mb-6">
-          {isAdmin && assemblies.length > 0 ? (
-            <div className="mobile-web-field">
-              <label>Select Assembly</label>
-              <SingleOptionSelect
-                label="Assembly"
-                options={assemblies.map(a => a.label)}
-                value={assemblies.find(a => String(a.id) === String(form.assemblyId))?.label || ''}
-                onSelect={(label) => {
-                  const id = assemblies.find(a => a.label === label)?.id;
-                  if (id) handleChange('assemblyId', String(id));
-                }}
-              />
-            </div>
-          ) : null}
           <div className="mobile-web-field">
             <label>Select Ward</label>
             <SingleOptionSelect
@@ -2862,14 +2947,11 @@ function PromotionsScreen({ assemblyCodeProp }) {
                 {activatedWards.filter(aw => aw.channel === 'WHATSAPP').length === 0 ? (
                   <div className="text-slate-400 italic">No wards activated for WhatsApp yet.</div>
                 ) : (
-                  activatedWards.filter(aw => aw.channel === 'WHATSAPP').map(aw => {
-                    const ward = wards.find(w => String(w.id) === String(aw.wardId));
-                    return (
-                      <div key={`wp-${aw.wardId}`} className="px-3 py-1.5 rounded-full border bg-green-50 border-green-200 text-green-700 font-bold">
-                        {ward ? ward.label : (aw.wardId ? `Ward ${aw.wardId}` : 'Global')}
+                  activatedWards.filter(aw => aw.channel === 'WHATSAPP').map(aw => (
+                      <div key={`wp-${aw.wardId}-${aw.channel}`} className="px-3 py-1.5 rounded-full border bg-green-50 border-green-200 text-green-700 font-bold">
+                        {activatedWardDisplayLabel(aw)}
                       </div>
-                    );
-                  })
+                    ))
                 )}
               </div>
             </div>
@@ -2882,14 +2964,11 @@ function PromotionsScreen({ assemblyCodeProp }) {
                 {activatedWards.filter(aw => aw.channel === 'SMS').length === 0 ? (
                   <div className="text-slate-400 italic">No wards activated for SMS yet.</div>
                 ) : (
-                  activatedWards.filter(aw => aw.channel === 'SMS').map(aw => {
-                    const ward = wards.find(w => String(w.id) === String(aw.wardId));
-                    return (
-                      <div key={`sms-${aw.wardId}`} className="px-3 py-1.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700 font-bold">
-                        {ward ? ward.label : (aw.wardId ? `Ward ${aw.wardId}` : 'Global')}
+                  activatedWards.filter(aw => aw.channel === 'SMS').map(aw => (
+                      <div key={`sms-${aw.wardId}-${aw.channel}`} className="px-3 py-1.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700 font-bold">
+                        {activatedWardDisplayLabel(aw)}
                       </div>
-                    );
-                  })
+                    ))
                 )}
               </div>
             </div>
@@ -2903,14 +2982,11 @@ function PromotionsScreen({ assemblyCodeProp }) {
                   {activatedWards.filter(aw => aw.channel === 'PRINT').length === 0 ? (
                     <div className="text-slate-400 italic">No wards activated for Print yet.</div>
                   ) : (
-                    activatedWards.filter(aw => aw.channel === 'PRINT').map(aw => {
-                      const ward = wards.find(w => String(w.id) === String(aw.wardId));
-                      return (
-                        <div key={`print-${aw.wardId}`} className="px-3 py-1.5 rounded-full border bg-slate-50 border-slate-200 text-slate-700 font-bold">
-                          {ward ? ward.label : (aw.wardId ? `Ward ${aw.wardId}` : 'Global')}
+                    activatedWards.filter(aw => aw.channel === 'PRINT').map(aw => (
+                        <div key={`print-${aw.wardId}-${aw.channel}`} className="px-3 py-1.5 rounded-full border bg-slate-50 border-slate-200 text-slate-700 font-bold">
+                          {activatedWardDisplayLabel(aw)}
                         </div>
-                      );
-                    })
+                      ))
                   )}
                 </div>
               </div>
@@ -2923,6 +2999,144 @@ function PromotionsScreen({ assemblyCodeProp }) {
 }
 
 function getUserInfoSafe() { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { return {}; } }
+
+function normalizeAssemblyKey(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return String(parseInt(raw, 10));
+  return raw;
+}
+
+function assemblyIdVariants(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return [];
+  const variants = new Set([raw, normalizeAssemblyKey(raw)]);
+  if (/^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n)) {
+      variants.add(String(n));
+      variants.add(String(n).padStart(12, '0'));
+    }
+  }
+  return [...variants];
+}
+
+function assemblyIdsMatch(a, b) {
+  const setB = new Set(assemblyIdVariants(b));
+  return assemblyIdVariants(a).some((key) => setB.has(key));
+}
+
+function findAssemblyOption(options, assemblyId) {
+  if (!assemblyId) return null;
+  return options.find((item) => (
+    assemblyIdsMatch(item.value, assemblyId)
+    || assemblyIdsMatch(item.id, assemblyId)
+    || assemblyIdsMatch(item.code, assemblyId)
+  )) || null;
+}
+
+function toSnapshotAssemblyCode(assemblyId) {
+  const raw = String(assemblyId ?? '').trim();
+  if (!raw) return '';
+  if (/^\d{12}$/.test(raw)) return raw;
+  if (/^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return String(n).padStart(12, '0');
+  }
+  return raw;
+}
+
+function isGenericAssemblyName(name, code) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (/^assembly\s*\d+$/i.test(n)) return true;
+  const c = String(code || '').trim();
+  if (c && (n === c || n === `Assembly ${c}`)) return true;
+  return false;
+}
+
+function formatAssemblyDropdownItem(item) {
+  const code = item.code != null && String(item.code).trim() !== '' ? String(item.code).trim() : String(item.id);
+  const rawName = (item.name || item.assemblyNameEn || item.assembly_name_en || '').trim();
+  const name = isGenericAssemblyName(rawName, code) ? '' : rawName;
+  const displayName = name || `Assembly ${code}`;
+  return {
+    value: code,
+    id: String(item.id),
+    code,
+    name: name || displayName,
+    label: name || displayName,
+  };
+}
+
+function pickAssemblyLabel(option) {
+  if (!option) return '';
+  const code = option.code || option.value;
+  const name = String(option.name || '').trim();
+  if (name && !isGenericAssemblyName(name, code)) return name;
+  const label = String(option.label || '').trim();
+  if (label && !isGenericAssemblyName(label, code)) return label;
+  return '';
+}
+
+function assemblyNameFromSnapshot(snapshot) {
+  const asm = snapshot?.assembly || snapshot;
+  return String(
+    asm?.assemblyNameEn
+    || asm?.assembly_name_en
+    || snapshot?.assemblyNameEn
+    || snapshot?.assembly_name_en
+    || '',
+  ).trim();
+}
+
+async function fetchAssemblyDisplayName(assemblyId) {
+  const id = String(assemblyId || '').trim();
+  if (!id) return '';
+
+  try {
+    const res = await mobileApi.resolveAssemblyName(id);
+    const payload = res?.data?.result || res?.result || res?.data || {};
+    const resolved = String(payload.nameEn || payload.name || '').trim();
+    if (resolved && !isGenericAssemblyName(resolved, id)) return resolved;
+  } catch {
+    // try fallbacks below
+  }
+
+  const snapshotCodes = [...new Set([
+    toSnapshotAssemblyCode(id),
+    id,
+    normalizeAssemblyKey(id),
+  ].filter(Boolean))];
+
+  for (const code of snapshotCodes) {
+    try {
+      const response = await mobileApi.loadDataLite(code);
+      const snapshot = await resolveSnapshot(response);
+      const name = assemblyNameFromSnapshot(snapshot);
+      if (name && !isGenericAssemblyName(name, id)) return name;
+    } catch {
+      // try next code variant
+    }
+  }
+
+  try {
+    const res = await mobileApi.fetchVolunteerDropdown('ASSEMBLY');
+    const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
+    const formatted = raw.map((item) => formatAssemblyDropdownItem(item));
+    const match = findAssemblyOption(formatted, id);
+    const picked = pickAssemblyLabel(match);
+    if (picked) return picked;
+    const rawMatch = findAssemblyOption(raw, id);
+    const directName = String(rawMatch?.name || rawMatch?.assemblyNameEn || '').trim();
+    if (directName && !isGenericAssemblyName(directName, id)) return directName;
+  } catch {
+    // ignore
+  }
+
+  return '';
+}
+
 function AddVolunteerScreen({ assemblyCodeProp }) {
   const [form, setForm] = useState({
     firstName: '',
@@ -2943,13 +3157,66 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const role = userInfo?.role || 'ADMIN';
+  const creatorRole = useMemo(() => {
+    const r = String(role || '').replace('ROLE_', '').toUpperCase();
+    const assignmentType = String(userInfo?.assignmentType || userInfo?.assignment_type || '').toUpperCase();
+    if (r === 'SUPER_ADMIN' || r === 'ADMIN') return r;
+    if (assignmentType === 'ASSEMBLY' || assignmentType === 'WARD') return assignmentType;
+    return r;
+  }, [role, userInfo]);
   const prevWorkingLevelRef = useRef(null);
   const prevAssemblyRef = useRef(null);
   const accessWardIds = useMemo(() => {
-    const ids = String(userInfo?.assignmentId || '').split(',').map((id) => id.trim()).filter(Boolean);
-    return ids;
+    const ids = [];
+    if (Array.isArray(userInfo?.wardIds)) {
+      userInfo.wardIds.forEach((id) => {
+        if (id != null && String(id).trim() !== '') ids.push(String(id).trim());
+      });
+    }
+    if (Array.isArray(userInfo?.wards)) {
+      userInfo.wards.forEach((id) => {
+        if (id != null && String(id).trim() !== '') ids.push(String(id).trim());
+      });
+    }
+    const assignmentType = String(userInfo?.assignmentType || userInfo?.assignment_type || '').toUpperCase();
+    if (assignmentType === 'WARD' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .forEach((id) => ids.push(id));
+    }
+    return Array.from(new Set(ids));
   }, [userInfo]);
 
+  const [resolvedAssemblyId, setResolvedAssemblyId] = useState('');
+  const [lockedAssemblyLabel, setLockedAssemblyLabel] = useState('');
+
+  const creatorAssemblyId = useMemo(() => {
+    if (resolvedAssemblyId) return resolvedAssemblyId;
+    const fromList = userInfo?.assemblyIds?.[0] ?? userInfo?.assemblyId ?? userInfo?.assembly_id;
+    if (fromList != null && String(fromList).trim() !== '') return String(fromList);
+    if (creatorRole === 'ASSEMBLY' && userInfo?.assignmentId) {
+      return String(userInfo.assignmentId).split(',')[0].trim();
+    }
+    return '';
+  }, [userInfo, creatorRole, resolvedAssemblyId]);
+
+
+  useEffect(() => {
+    if (!hasHydrated || !userInfo?.token) return undefined;
+    if (userInfo.wardIds?.length || userInfo.assemblyIds?.length) return undefined;
+    let cancelled = false;
+    mobileApi.fetchMe().then((res) => {
+      if (cancelled) return;
+      const updated = res?.data?.result || res?.result || res;
+      if (updated && typeof window !== 'undefined') {
+        const merged = { ...userInfo, ...updated };
+        localStorage.setItem('userInfo', JSON.stringify(merged));
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [hasHydrated, userInfo?.token]);
 
   // Load volunteerEdit from sessionStorage on mount
   useEffect(() => {
@@ -2975,12 +3242,84 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (pendingEditRef.current || isEditing) return;
+    if (creatorRole === 'WARD' && form.workingLevel !== 'BOOTH') {
+      setForm((prev) => ({ ...prev, workingLevel: 'BOOTH', wardIds: [], boothIds: [] }));
+    } else if (creatorRole === 'ASSEMBLY' && form.workingLevel === 'ASSEMBLY') {
+      setForm((prev) => ({ ...prev, workingLevel: 'WARD', wardIds: [], boothIds: [] }));
+    }
+  }, [creatorRole, isEditing, form.workingLevel]);
+
+  useEffect(() => {
+    if (!hasHydrated || pendingEditRef.current) return undefined;
+    if (creatorRole !== 'WARD' && creatorRole !== 'ASSEMBLY') return undefined;
+
+    const resolveFromWards = () => {
+      if (!accessWardIds.length) return Promise.resolve(null);
+      return mobileApi.fetchWards().then((res) => {
+        const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || res?.wards || []);
+        const wardSet = new Set(accessWardIds.map(String));
+        const match = raw.find((item) => {
+          const wardId = item.wardId ?? item.ward_id ?? item.id;
+          return wardSet.has(String(wardId));
+        });
+        const asm = match?.assemblyId ?? match?.assembly_id ?? match?.assemblyNo ?? match?.assembly_no;
+        return asm != null && String(asm).trim() !== '' ? String(asm) : null;
+      }).catch(() => null);
+    };
+
+    let cancelled = false;
+
+    // Ward volunteers: assembly id from their ward row (profile assemblyIds are often internal ids).
+    if (creatorRole === 'WARD' && accessWardIds.length) {
+      resolveFromWards().then((asm) => {
+        if (!cancelled && asm) setResolvedAssemblyId(asm);
+      });
+      return () => { cancelled = true; };
+    }
+
+    const fromProfile = userInfo?.assemblyIds?.[0] ?? userInfo?.assemblyId ?? userInfo?.assembly_id;
+    if (fromProfile != null && String(fromProfile).trim() !== '') {
+      setResolvedAssemblyId(String(fromProfile));
+      return () => { cancelled = true; };
+    }
+
+    if (!accessWardIds.length) return undefined;
+
+    resolveFromWards().then((asm) => {
+      if (!cancelled && asm) setResolvedAssemblyId(asm);
+    });
+    return () => { cancelled = true; };
+  }, [hasHydrated, userInfo, creatorRole, accessWardIds]);
+
+  useEffect(() => {
+    if (!creatorAssemblyId || pendingEditRef.current) return;
+    if (creatorRole === 'ASSEMBLY' || creatorRole === 'WARD') {
+      setForm((prev) => (
+        prev.assemblyId && String(prev.assemblyId) === String(creatorAssemblyId)
+          ? prev
+          : { ...prev, assemblyId: String(creatorAssemblyId) }
+      ));
+    }
+  }, [creatorRole, creatorAssemblyId]);
+
   const handleChange = (key, value) => {
     const nextValue = key === 'phone' ? String(value || '').replace(/\D/g, '').slice(0, 10) : value;
     setForm((prev) => ({ ...prev, [key]: nextValue }));
   };
   const handleReset = (preserveFeedback = false) => {
-    setForm({ firstName: '', phone: '', workingLevel: 'ASSEMBLY', assemblyId: '', wardIds: [], boothIds: [] });
+    const defaultLevel = creatorRole === 'WARD' ? 'BOOTH' : creatorRole === 'ASSEMBLY' ? 'WARD' : 'ASSEMBLY';
+    setForm({
+      firstName: '',
+      phone: '',
+      workingLevel: defaultLevel,
+      assemblyId: (creatorRole === 'ASSEMBLY' || creatorRole === 'WARD') && creatorAssemblyId
+        ? String(creatorAssemblyId)
+        : '',
+      wardIds: [],
+      boothIds: [],
+    });
     if (!preserveFeedback) setFeedback({ error: '', success: '' });
     setIsEditing(false);
     setEditPhone('');
@@ -3008,25 +3347,37 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
     mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
       if (!active) return;
       const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
-      const formatted = raw.map((item) => ({
-        value: item.id,
-        label: (item.name && !item.name.toLowerCase().includes('assembly') && !item.name.includes(String(item.id)))
-          ? `${item.name} (${item.id})`
-          : (item.name || `Assembly ${item.id}`),
-      }));
+      const formatted = raw.map((item) => formatAssemblyDropdownItem(item));
       setAssemblies(formatted);
+      if (creatorRole === 'ASSEMBLY' || creatorRole === 'WARD') {
+        const asmId = String(form.assemblyId || resolvedAssemblyId || creatorAssemblyId || '').trim();
+        const fromList = pickAssemblyLabel(findAssemblyOption(formatted, asmId));
+        if (fromList) {
+          setLockedAssemblyLabel(fromList);
+        } else if (asmId) {
+          fetchAssemblyDisplayName(asmId).then((name) => {
+            if (active && name) setLockedAssemblyLabel(name);
+          });
+        }
+      }
     }).catch(() => setAssemblies([]));
     return () => { active = false; };
-  }, []);
+  }, [creatorRole, form.assemblyId, resolvedAssemblyId, creatorAssemblyId]);
 
   // When workingLevel changes by user (not from edit), reset selections
   useEffect(() => {
     if (pendingEditRef.current) return; // skip reset during edit prefill
     if (prevWorkingLevelRef.current !== null && prevWorkingLevelRef.current !== form.workingLevel) {
-      setForm((prev) => ({ ...prev, assemblyId: '', wardIds: [], boothIds: [] }));
+      const keepAssembly = (creatorRole === 'ASSEMBLY' || creatorRole === 'WARD') && creatorAssemblyId;
+      setForm((prev) => ({
+        ...prev,
+        assemblyId: keepAssembly ? String(creatorAssemblyId) : '',
+        wardIds: [],
+        boothIds: [],
+      }));
       setWards([]);
       setBooths([]);
-      prevAssemblyRef.current = null;
+      prevAssemblyRef.current = keepAssembly ? String(creatorAssemblyId) : null;
     }
     prevWorkingLevelRef.current = form.workingLevel;
   }, [form.workingLevel]);
@@ -3081,11 +3432,18 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
         } else {
           pendingEditRef.current = null;
         }
+      } else if (creatorRole === 'WARD' && accessWardIds.length) {
+        const validWardIds = accessWardIds.filter((id) => list.some((item) => String(item.value) === String(id)));
+        if (validWardIds.length) {
+          setForm((prev) => ({ ...prev, wardIds: validWardIds, boothIds: [] }));
+        } else {
+          setForm((prev) => ({ ...prev, wardIds: [], boothIds: [] }));
+        }
       } else {
         setForm((prev) => ({ ...prev, wardIds: [], boothIds: [] }));
       }
     }).catch(() => setWards([]));
-  }, [form.workingLevel, form.assemblyId]);
+  }, [form.workingLevel, form.assemblyId, creatorRole, accessWardIds]);
 
   // Load booths when wardIds change (non-edit path only)
   useEffect(() => {
@@ -3112,6 +3470,16 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
       setBooths(unique);
     }).catch(() => setBooths([]));
   }, [form.workingLevel, form.wardIds]);
+
+  useEffect(() => {
+    if (creatorRole !== 'WARD' || form.workingLevel !== 'BOOTH' || pendingEditRef.current) return;
+    if (form.wardIds.length === 0 && accessWardIds.length && wards.length) {
+      const validWardIds = accessWardIds.filter((id) => wards.some((w) => String(w.value) === String(id)));
+      if (validWardIds.length) {
+        setForm((prev) => ({ ...prev, wardIds: validWardIds }));
+      }
+    }
+  }, [creatorRole, form.workingLevel, accessWardIds, form.wardIds.length, wards]);
 
   const handleSubmit = async () => {
     setSaving(true);
@@ -3153,13 +3521,18 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
     }
   };
 
-  const levelOptions = [
-    { label: 'Assembly', value: 'ASSEMBLY' },
-    { label: 'Ward', value: 'WARD' },
-    { label: 'Booth', value: 'BOOTH' },
-  ];
+  const levelOptions = useMemo(() => {
+    const all = [
+      { label: 'Assembly', value: 'ASSEMBLY' },
+      { label: 'Ward', value: 'WARD' },
+      { label: 'Booth', value: 'BOOTH' },
+    ];
+    if (creatorRole === 'ASSEMBLY') return all.filter((item) => item.value !== 'ASSEMBLY');
+    if (creatorRole === 'WARD') return all.filter((item) => item.value === 'BOOTH');
+    return all;
+  }, [creatorRole]);
   const selectedLevelLabel = levelOptions.find((item) => item.value === form.workingLevel)?.label || '';
-  const selectedAssemblyLabel = assemblies.find((item) => String(item.value) === String(form.assemblyId))?.label || '';
+  const lockAssemblyPicker = creatorRole === 'ASSEMBLY' || creatorRole === 'WARD';
   const wardOptions = wards.map((item) => item.label);
   const boothOptions = booths.map((item) => item.label);
   const allWardLabels = wards.map((item) => String(item.value));
@@ -3169,11 +3542,113 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
   const selectedWardLabels = wards.filter((item) => form.wardIds.includes(String(item.value))).map((item) => item.label);
   const selectedBoothLabels = booths.filter((item) => form.boothIds.includes(String(item.value))).map((item) => item.label);
 
+  useEffect(() => {
+    if (!lockAssemblyPicker) {
+      setLockedAssemblyLabel('');
+      return undefined;
+    }
+    const profileName = String(
+      userInfo?.assemblyNameEn ?? userInfo?.assemblyName ?? userInfo?.assembly_name_en ?? '',
+    ).trim();
+    const asmId = String(form.assemblyId || creatorAssemblyId || resolvedAssemblyId || '').trim();
+    if (!asmId) {
+      setLockedAssemblyLabel('');
+      return undefined;
+    }
+    if (profileName && !isGenericAssemblyName(profileName, asmId)) {
+      setLockedAssemblyLabel(profileName);
+      return undefined;
+    }
+    const fromListLabel = pickAssemblyLabel(findAssemblyOption(assemblies, asmId));
+    if (fromListLabel) {
+      setLockedAssemblyLabel(fromListLabel);
+      return undefined;
+    }
+    let cancelled = false;
+    setLockedAssemblyLabel('Loading…');
+    fetchAssemblyDisplayName(asmId).then((name) => {
+      if (cancelled) return;
+      setLockedAssemblyLabel(name || 'Loading…');
+    });
+    return () => { cancelled = true; };
+  }, [lockAssemblyPicker, form.assemblyId, creatorAssemblyId, resolvedAssemblyId, assemblies, userInfo]);
+
+  const renderAssemblyField = () => (
+    <div className="mobile-web-field">
+      <label>Assembly</label>
+      {lockAssemblyPicker ? (
+        <input className="mobile-web-input" value={lockedAssemblyLabel || 'Loading…'} readOnly />
+      ) : (
+        <PremiumSelect
+          label="Assembly"
+          options={assemblies}
+          value={form.assemblyId}
+          onChange={(v) => handleChange('assemblyId', String(v))}
+          placeholder="Select assembly"
+        />
+      )}
+    </div>
+  );
+  const renderWardField = () => (
+    <div className="mobile-web-field">
+      <label>Ward</label>
+      {creatorRole === 'WARD' && wardOptions.length <= 1 && selectedWardLabels.length ? (
+        <input className="mobile-web-input" value={selectedWardLabels[0] || 'Ward'} readOnly />
+      ) : (
+        <MultiCheckboxSelect
+          label="Ward"
+          options={creatorRole === 'WARD' ? wardOptions : ['All Wards', ...wardOptions]}
+          value={creatorRole === 'WARD' ? selectedWardLabels : (allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels)}
+          customValue=""
+          onToggle={(option) => {
+            if (creatorRole !== 'WARD' && option === 'All Wards') {
+              const nextIds = allWardsSelected ? [] : allWardLabels;
+              handleChange('wardIds', nextIds);
+              return;
+            }
+            const wardValue = String(wards.find((item) => item.label === option)?.value || '');
+            const nextIds = selectedWardLabels.includes(option)
+              ? form.wardIds.filter((id) => String(id) !== wardValue)
+              : form.wardIds.concat(wardValue);
+            handleChange('wardIds', nextIds.filter(Boolean));
+          }}
+          onCustomValueChange={() => {}}
+          disabled={!form.assemblyId || (creatorRole === 'WARD' && wardOptions.length <= 1)}
+        />
+      )}
+    </div>
+  );
+  const renderBoothField = () => (
+    <div className="mobile-web-field">
+      <label>Booth</label>
+      <MultiCheckboxSelect
+        label="Booth"
+        options={['All Booths', ...boothOptions]}
+        value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels}
+        customValue=""
+        onToggle={(option) => {
+          if (option === 'All Booths') {
+            const nextIds = allBoothsSelected ? [] : allBoothLabels;
+            handleChange('boothIds', nextIds);
+            return;
+          }
+          const boothValue = String(booths.find((item) => item.label === option)?.value || '');
+          const nextIds = selectedBoothLabels.includes(option)
+            ? form.boothIds.filter((id) => String(id) !== boothValue)
+            : form.boothIds.concat(boothValue);
+          handleChange('boothIds', nextIds.filter(Boolean));
+        }}
+        onCustomValueChange={() => {}}
+        disabled={!form.wardIds.length}
+      />
+    </div>
+  );
+
   return (
     <ScreenFrame accent="blue">
-      <section className="mobile-web-card">
+      <section className="mobile-web-card mobile-web-add-volunteer-card">
         <div className="mobile-web-stack">
-          <div className="mobile-web-form-grid">
+          <div className="mobile-web-form-grid mobile-web-add-volunteer-grid">
             <div className="mobile-web-field">
               <label>First Name *</label>
               <input className="mobile-web-input" placeholder="First Name" value={form.firstName} onChange={(e) => handleChange('firstName', e.target.value)} />
@@ -3182,62 +3657,35 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
               <label>Phone * </label>
               <input className="mobile-web-input" placeholder="Phone" value={form.phone} maxLength={10} inputMode="numeric" onChange={(e) => handleChange('phone', e.target.value)} disabled={isEditing} />
             </div>
-            <div className="mobile-web-field">
-              <label>Working Level *</label>
-              <SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => handleChange('workingLevel', levelOptions.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
+            <div className={`mobile-web-field ${creatorRole === 'ASSEMBLY' || creatorRole === 'WARD' ? 'mobile-web-field-span-2' : ''}`}>
+              <label>
+                Working Level *
+                {creatorRole === 'ASSEMBLY' ? (
+                  <span className="mobile-web-label-hint"> (You can assign Ward or Booth volunteers only)</span>
+                ) : null}
+                {creatorRole === 'WARD' ? (
+                  <span className="mobile-web-label-hint"> (You can assign Booth volunteers only)</span>
+                ) : null}
+              </label>
+              <SingleOptionSelect label="Working Level" options={levelOptions.map((item) => item.label)} value={selectedLevelLabel} customValue="" onSelect={(option) => handleChange('workingLevel', levelOptions.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} disabled={creatorRole === 'WARD' && levelOptions.length === 1} />
             </div>
-            {form.workingLevel === 'ASSEMBLY' ? (
+            {['ASSEMBLY', 'WARD', 'BOOTH'].includes(form.workingLevel) ? (
               <>
-                <div className="mobile-web-field">
-                  <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
-                </div>
-                <div className="mobile-web-field">
-                  <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
-                  {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
-                </div>
-                <div className="mobile-web-field">
-                  <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
-                  {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
-                </div>
-              </>
-            ) : null}
-            {form.workingLevel === 'WARD' ? (
-              <>
-                <div className="mobile-web-field">
-                  <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
-                </div>
-                <div className="mobile-web-field">
-                  <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
-                  {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
-                </div>
-                <div className="mobile-web-field">
-                  <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
-                  {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
-                </div>
-              </>
-            ) : null}
-            {form.workingLevel === 'BOOTH' ? (
-              <>
-                <div className="mobile-web-field">
-                  <label>Assembly</label>
-                  <SingleOptionSelect label="Assembly" options={assemblies.map((item) => item.label)} value={selectedAssemblyLabel} customValue="" onSelect={(option) => handleChange('assemblyId', assemblies.find((item) => item.label === option)?.value || '')} onCustomValueChange={() => { }} />
-                </div>
-                <div className="mobile-web-field">
-                  <label>Ward</label>
-                  <MultiCheckboxSelect label="Ward" options={['All Wards', ...wardOptions]} value={allWardsSelected ? selectedWardLabels.concat('All Wards') : selectedWardLabels} customValue="" onToggle={(option) => { if (option === 'All Wards') { const nextIds = allWardsSelected ? [] : allWardLabels; handleChange('wardIds', nextIds); return; } const wardValue = String(wards.find((item) => item.label === option)?.value || ''); const nextIds = selectedWardLabels.includes(option) ? form.wardIds.filter((id) => String(id) !== wardValue) : form.wardIds.concat(wardValue); handleChange('wardIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.assemblyId} />
-                  {!form.assemblyId ? <p className="mobile-web-helper">Select an assembly to load wards.</p> : null}
-                </div>
-                <div className="mobile-web-field">
-                  <label>Booth</label>
-                  <MultiCheckboxSelect label="Booth" options={['All Booths', ...boothOptions]} value={allBoothsSelected ? selectedBoothLabels.concat('All Booths') : selectedBoothLabels} customValue="" onToggle={(option) => { if (option === 'All Booths') { const nextIds = allBoothsSelected ? [] : allBoothLabels; handleChange('boothIds', nextIds); return; } const boothValue = String(booths.find((item) => item.label === option)?.value || ''); const nextIds = selectedBoothLabels.includes(option) ? form.boothIds.filter((id) => String(id) !== boothValue) : form.boothIds.concat(boothValue); handleChange('boothIds', nextIds.filter(Boolean)); }} onCustomValueChange={() => { }} disabled={!form.wardIds.length} />
-                  {!form.wardIds.length ? <p className="mobile-web-helper">Select a ward to load booths.</p> : null}
-                </div>
+                {renderAssemblyField()}
+                {renderWardField()}
+                {renderBoothField()}
+                {!form.assemblyId && lockAssemblyPicker ? (
+                  <p className="mobile-web-form-hint-row">Loading your assembly…</p>
+                ) : null}
+                {!form.assemblyId && !lockAssemblyPicker ? (
+                  <p className="mobile-web-form-hint-row">Select an assembly to load wards.</p>
+                ) : null}
+                {form.assemblyId && !wardOptions.length && !lockAssemblyPicker ? (
+                  <p className="mobile-web-form-hint-row">Select wards for this assembly.</p>
+                ) : null}
+                {form.wardIds.length === 0 && form.assemblyId ? (
+                  <p className="mobile-web-form-hint-row">Select a ward to load booths.</p>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -4921,9 +5369,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
             {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
             <div className="mobile-web-actions">
-              <button className="mobile-web-secondary-btn" type="button">Preview Screen</button>
               <button className="mobile-web-primary-btn" type="button" onClick={handleUpdate} disabled={saving}>
-                {saving ? 'Updating...' : 'Update'}
+                {saving ? 'Saving...' : 'Save Family'}
               </button>
             </div>
           </>
@@ -7711,6 +8158,8 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       'addressLocal',
       'team',
       'updatedFields',
+      'updatedByName',
+      'updatedByPhone',
     ]);
     const keys = Object.keys(detailRows[0] || {}).filter((key) => !excluded.has(key));
     const preferredOrder = ['serialNumber', 'wardName', 'name', 'epicNo', 'boothNo', 'voterSerialNo', 'lastUpdatedAt'];
@@ -8223,7 +8672,7 @@ export default function MobileDetailPage({ params }) {
   const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' };
   const isSuperAdmin = userInfo?.userName === 'admin@iswot.io' || userRole === 'SUPER_ADMIN';
 
-  const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && (
+  const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && slug !== 'add-volunteer' && (
     <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3 max-w-lg mx-auto">
         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Context</label>
@@ -8264,7 +8713,7 @@ export default function MobileDetailPage({ params }) {
     if (slug === 'poll-day') return <PollDayScreen key={assemblyKey} isSuperAdmin={isSuperAdmin} {...commonProps} />;
     if (slug === 'print') return <PrintScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'extract') return <ExtractScreen key={assemblyKey} {...commonProps} />;
-    if (slug === 'add-volunteer') return <AddVolunteerScreen key={assemblyKey} {...commonProps} />;
+    if (slug === 'add-volunteer') return <AddVolunteerScreen key={assemblyKey} />;
     if (slug === 'my-volunteers') return <MyVolunteersScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'volunteer-analysis') {
       if (userRole === 'BOOTH') {

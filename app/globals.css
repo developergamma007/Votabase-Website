@@ -1064,16 +1064,29 @@ textarea {
 
   .top-bar {
     padding: 16px 18px;
-    display: grid;
-    grid-template-columns: auto 1fr auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .top-bar-title {
+    flex: 1;
+    min-width: 0;
     justify-content: center;
   }
 
   .top-bar-menu {
     display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .top-bar-menu.hidden {
+    display: none;
+  }
+
+  .profile-menu {
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .mobile-screen {
@@ -1490,6 +1503,11 @@ textarea {
 
 .mobile-web-family-grid .mobile-web-field {
   min-width: 0;
+  overflow: visible;
+}
+
+.mobile-web-family-grid .mobile-web-multiselect-wrap {
+  overflow: visible;
 }
 
 .mobile-web-family-grid .mobile-web-input,
@@ -1581,6 +1599,15 @@ textarea {
   border-radius: 14px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
   padding: 10px;
+}
+
+.mobile-web-suggest-field.drop-up .mobile-web-suggestion-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.mobile-web-suggest-field.drop-up {
+  z-index: 200;
 }
 
 .mobile-web-suggestion-search {
@@ -3374,6 +3401,15 @@ textarea {
   z-index: 50;
 }
 
+.mobile-web-family-shell .mobile-web-multiselect-wrap.open,
+.mobile-web-family-grid .mobile-web-multiselect-wrap.open {
+  z-index: 200;
+}
+
+.mobile-web-multiselect-wrap.drop-up.open .mobile-web-select-icon {
+  transform: translateY(-50%) rotate(180deg);
+}
+
 .mobile-web-multiselect-panel {
   position: absolute;
   top: calc(100% + 10px);
@@ -3395,6 +3431,15 @@ textarea {
 
 .mobile-web-premium-select-panel {
   max-height: 240px;
+}
+
+.mobile-web-select-panel-portal {
+  box-sizing: border-box;
+}
+
+.mobile-web-multiselect-wrap.drop-up .mobile-web-multiselect-panel {
+  top: auto;
+  bottom: calc(100% + 10px);
 }
 
 .mobile-web-multiselect-panel::-webkit-scrollbar {
@@ -3633,6 +3678,57 @@ textarea {
 
 .mobile-web-form-grid.two-cols {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mobile-web-add-volunteer-card {
+  padding: 18px;
+}
+
+.mobile-web-add-volunteer-grid {
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mobile-web-add-volunteer-grid .mobile-web-field label {
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+
+.mobile-web-add-volunteer-grid .mobile-web-input,
+.mobile-web-add-volunteer-grid .mobile-web-multiselect-trigger {
+  min-height: 46px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.mobile-web-form-hint-row {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.mobile-web-field-align-end {
+  display: flex;
+  align-items: flex-end;
+  min-height: 46px;
+}
+
+.mobile-web-helper-inline {
+  margin: 0;
+  line-height: 1.35;
+}
+
+.mobile-web-field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.mobile-web-label-hint {
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: #64748b;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .mobile-web-inline-toggle {

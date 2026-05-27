@@ -420,6 +420,14 @@ export const mobileApi = {
       throw error;
     }
   },
+  resolveAssemblyName: async (assemblyId) => {
+    const params = new URLSearchParams();
+    if (assemblyId != null && String(assemblyId).trim() !== '') {
+      params.set('assemblyId', String(assemblyId).trim());
+    }
+    const query = params.toString();
+    return request(`/votebase/v1/api/assemblies/resolve-name${query ? `?${query}` : ''}`);
+  },
   fetchVolunteerAnalysis: async (wardId, mode, assemblyCode) => {
     try {
       const params = new URLSearchParams();
