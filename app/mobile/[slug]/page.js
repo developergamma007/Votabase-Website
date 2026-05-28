@@ -2295,17 +2295,18 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     );
   };
 
-  const handleSelectVoter = (voter) => {
+  const handleSelectVoter = async (voter) => {
     lastSelectionRef.current = { voter };
-    setSelectedVoter(voter);
+    setIsLocating(true);
     setErrorText('');
-    requestLocation({ allowCached: true }).then((loc) => {
-      setSelectedVoter((current) => (
-        current && (current.epicNo === voter.epicNo || current.voterId === voter.voterId)
-          ? { ...current, latitude: loc.latitude, longitude: loc.longitude }
-          : current
-      ));
-    }).catch(() => {});
+    try {
+      const loc = await requestLocation({ allowCached: true });
+      setSelectedVoter({ ...voter, ...loc });
+    } catch (error) {
+      setErrorText(error?.message || 'Location is required to view voter info.');
+    } finally {
+      setIsLocating(false);
+    }
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
@@ -2605,17 +2606,18 @@ function SearchBoothScreen({ assemblyCodeProp }) {
     }));
   };
 
-  const handleSelectBoothVoter = (voter) => {
+  const handleSelectBoothVoter = async (voter) => {
     lastSelectionRef.current = { voter };
-    setSelectedVoter(voter);
+    setIsLocating(true);
     setBoothError('');
-    requestLocation({ allowCached: true }).then((loc) => {
-      setSelectedVoter((current) => (
-        current && (current.epicNo === voter.epicNo || current.voterId === voter.voterId)
-          ? { ...current, latitude: loc.latitude, longitude: loc.longitude }
-          : current
-      ));
-    }).catch(() => {});
+    try {
+      const loc = await requestLocation({ allowCached: true });
+      setSelectedVoter({ ...voter, ...loc });
+    } catch (error) {
+      setBoothError(error?.message || 'Location is required to view voter info.');
+    } finally {
+      setIsLocating(false);
+    }
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
@@ -5396,7 +5398,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     setError('');
     setSuccess('');
     try {
-      if (!location?.latitude || !location?.longitude) throw new Error('Location is required. Please capture location before updating.');
+      if (!location?.latitude || !location?.longitude) {
+        throw new Error('Location is required. Please capture location before updating.');
+      }
       if (!familyName.trim()) throw new Error('Family name is required');
       if (!roadName.trim()) throw new Error('Road name is required');
       if (members.length === 0) throw new Error('At least one family member is required');
@@ -5440,8 +5444,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         phone: headPhone || headMember.phone,
         points: parseInt(familyPoints, 10) || 0,
         pointsProvided: 0,
-        latitude: location?.latitude || 0,
-        longitude: location?.longitude || 0,
+        latitude: location.latitude,
+        longitude: location.longitude,
         boothId: parseInt(resolvedBoothId, 10),
         wardId: parseInt(wardIdForCreate, 10),
         headEpicNo: headMember.epic,
