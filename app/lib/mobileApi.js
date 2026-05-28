@@ -15,10 +15,18 @@ export function getAssemblyCode() {
 
   try {
     const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}');
+    const assemblyIds = Array.isArray(userInfo.assemblyIds) ? userInfo.assemblyIds : [];
+    if (assemblyIds.length > 0 && assemblyIds[0] != null && String(assemblyIds[0]).trim() !== '') {
+      return String(assemblyIds[0]).trim();
+    }
+    const assignmentType = String(userInfo.assignmentType || '').toUpperCase();
+    if (assignmentType === 'ASSEMBLY' && userInfo.assignmentId != null && String(userInfo.assignmentId).trim() !== '') {
+      return String(userInfo.assignmentId).trim();
+    }
     return (
       userInfo.assemblyCode ||
       userInfo.assemblyNo ||
-      userInfo.assignmentId ||
+      (assignmentType !== 'WARD' && assignmentType !== 'BOOTH' ? userInfo.assignmentId : null) ||
       DEFAULT_ASSEMBLY_CODE
     );
   } catch {

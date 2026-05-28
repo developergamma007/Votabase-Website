@@ -299,12 +299,20 @@ export const getVoterRelationDisplay = (voter = {}) => {
   return name || type || '';
 };
 
-export const getVoterPhoneDisplay = (voter = {}) => {
+export const maskSensitiveLastFour = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw || raw === 'null' || raw === 'undefined') return '';
+  return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw;
+};
+
+export const getVoterPhoneRaw = (voter = {}) => {
   const raw = voter.mobile ?? voter.mobileNumber ?? voter.phone ?? '';
   const s = String(raw).trim();
   if (!s || s === 'null' || s === 'undefined') return '';
   return s;
 };
+
+export const getVoterPhoneDisplay = (voter = {}) => maskSensitiveLastFour(getVoterPhoneRaw(voter));
 
 export const getVoterHouseDisplay = (voter = {}) => {
   const raw = voter.houseNoEn ?? voter.houseNoLocal ?? voter.house ?? '';
@@ -337,3 +345,19 @@ export const sortFamiliesByNumber = (families = []) =>
 
 /** @deprecated Use sortFamiliesByNumber */
 export const sortFamiliesByName = sortFamiliesByNumber;
+
+/** Turn API error payloads into a user-visible message (includes server validation details). */
+export const formatApiError = (err, fallback = 'Request failed') => {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  const details = err?.data?.error?.details ?? err?.data?.error;
+  if (typeof details === 'string' && details.trim()) {
+    if (err?.message && err.message !== details) {
+      return details;
+    }
+    return details;
+  }
+  if (typeof err?.detail === 'string' && err.detail.trim()) return err.detail;
+  if (err?.message && String(err.message).trim()) return String(err.message);
+  return fallback;
+};

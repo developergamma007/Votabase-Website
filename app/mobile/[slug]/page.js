@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowBackIosNewRounded,
@@ -37,10 +37,12 @@ import {
   sortFamiliesByNumber,
   getVoterRelationDisplay,
   getVoterPhoneDisplay,
+  getVoterPhoneRaw,
   getVoterHouseDisplay,
   getFamilyMemberRelationName,
   resolveFamilyCreateBoothId,
   isMemberBoothInWard,
+  formatApiError,
 } from '../../lib/familyFormHelpers';
 import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
 import {
@@ -54,6 +56,42 @@ import {
 } from '../../lib/osmMap';
 
 const BOOTH_CACHE_KEY = 'boothSnapshotLite';
+const BOOTH_CACHE_SCOPE_KEY = 'boothSnapshotScopeKey';
+
+function collectScopeIds(userInfo, keys, assignmentType) {
+  const ids = [];
+  keys.forEach((key) => {
+    if (Array.isArray(userInfo?.[key])) ids.push(...userInfo[key]);
+  });
+  if ((userInfo?.assignmentType || '').toUpperCase() === assignmentType && userInfo?.assignmentId != null) {
+    String(userInfo.assignmentId)
+      .split(',')
+      .map((val) => val.trim())
+      .filter(Boolean)
+      .forEach((val) => ids.push(val));
+  }
+  return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+}
+
+function boothMatchesUserScope(booth, accessBoothIds, accessWardIds) {
+  if (accessBoothIds.length) {
+    const keys = [
+      String(booth.boothId ?? ''),
+      String(booth.boothNo ?? ''),
+      String(booth.id ?? ''),
+      String(booth.booth_id ?? ''),
+    ].filter(Boolean);
+    return accessBoothIds.some((id) => keys.includes(String(id)));
+  }
+  if (accessWardIds.length) {
+    const wardKeys = [
+      String(booth.wardId ?? ''),
+      String(booth.wardCode ?? booth.ward_code ?? ''),
+    ].filter(Boolean);
+    return accessWardIds.some((id) => wardKeys.includes(String(id)));
+  }
+  return true;
+}
 const PAGE_SIZE = 50;
 
 const MASTER_ROLL_PHASE_LABELS = {
@@ -330,7 +368,10 @@ const dropdownOptions = {
 };
 const JSON_MULTI_FIELDS = new Set(['govtSchemeTracking']);
 
-const fieldGroups = { PRIMARY: ['mobile', 'dob', 'caste', 'community', 'civicIssue', 'natureOfVoter'], ADDITIONAL: ['education', 'motherTongue', 'residenceType', 'ownership', 'voterPoints', 'govtSchemeTracking', 'engagementPotential', 'ifShifted'] };
+const fieldGroups = {
+  PRIMARY: ['mobile', 'dob', 'caste', 'community', 'civicIssue', 'natureOfVoter'],
+  ADDITIONAL: ['education', 'motherTongue', 'residenceType', 'ownership', 'voterPoints', 'govtSchemeTracking', 'engagementPotential', 'ifShifted'],
+};
 const fieldLabels = { mobile: 'Mobile Number (10 Digits)', dob: 'Date of Birth', caste: 'Caste', community: 'Community', civicIssue: 'Civic Issues', natureOfVoter: 'Nature (A/B/C/NA)', education: 'Education', motherTongue: 'Mother Tongue', residenceType: 'Residence Type', ownership: 'Ownership', voterPoints: 'Voter Points', govtSchemeTracking: 'Govt Scheme Tracking', engagementPotential: 'Engagement Potential', ifShifted: 'If shifted - Transport & Booth Details' };
 
 function getDefaultVoterForm(voter = {}) { const parseList = (value) => { if (!value) return []; if (Array.isArray(value)) return value; return String(value).split(',').map((item) => item.trim()).filter(Boolean); }; return { mobile: voter.mobile || '', dob: voter.dob || '', community: voter.community || '', caste: voter.caste || '', motherTongue: voter.motherTongue || '', education: voter.education || '', residenceType: voter.residenceType || '', ownership: voter.ownership || '', voterPoints: voter.voterPoints || '', govtSchemeTracking: Array.isArray(voter.govtSchemeTracking) ? voter.govtSchemeTracking : voter.govtSchemeTracking ? [voter.govtSchemeTracking] : [], engagementPotential: voter.engagementPotential || '', ifShifted: voter.ifShifted || '', status: voter.status || '', civicIssue: voter.civicIssue || '', natureOfVoter: voter.natureOfVoter || '', notes: voter.notes || '', presentAddress: voter.presentAddress || '', newWard: parseList(voter.newWard), newBoothNo: parseList(voter.newBoothNo), newSerialNo: voter.newSerialNo || '', notAvailableReason: voter.notAvailableReason || '' }; }
@@ -347,7 +388,7 @@ function formatBoothTitle(no, label) {
   if (prefixPatterns.some(p => sLabel.startsWith(p))) return sLabel;
   return `${sNo} - ${sLabel}`;
 }
-function normalizeVoter(voter, fallbackBooth) { const boothInfo = voter?.boothInfo || {}; const gender = voter?.gender || voter?.sex || '-'; const genderUpper = String(gender).toUpperCase(); return { ...voter, voterId: voter?.voterId ?? voter?.id ?? voter?.epicNo, serialNo: voter?.sl ?? voter?.srNo ?? voter?.serialNo ?? voter?.slNo ?? '-', epicNo: voter?.epicNo ?? voter?.epic ?? '-', name: voter?.firstMiddleNameEn || voter?.name || voter?.voterName || '-', relationLabel: voter?.relationType || voter?.rel_type || 'Father', relationName: voter?.relationFirstMiddleNameEn || voter?.relationNameEn || voter?.fatherName || voter?.motherName || voter?.relation_name_en || '', houseNo: voter?.houseNoEn ?? voter?.house ?? voter?.house_no_en ?? '-', age: voter?.age ?? '-', gender, genderClass: genderUpper.startsWith('M') ? 'male' : genderUpper.startsWith('F') ? 'female' : 'other', boothLabel: fallbackBooth?.boothLabel || boothInfo?.boothNameEn || voter?.boothNameEn || '', boothId: fallbackBooth?.boothId || boothInfo?.boothId || voter?.boothId || '', boothNo: voter?.boothNo || boothInfo?.boothNo || '', wardCode: (voter?.wardCode ?? fallbackBooth?.wardCode) || boothInfo?.wardCode || '' }; }
+function normalizeVoter(voter, fallbackBooth) { const boothInfo = voter?.boothInfo || {}; const gender = voter?.gender || voter?.sex || '-'; const genderUpper = String(gender).toUpperCase(); return { ...voter, voterId: voter?.voterId ?? voter?.id ?? voter?.epicNo, serialNo: voter?.sl ?? voter?.srNo ?? voter?.serialNo ?? voter?.slNo ?? '-', epicNo: voter?.epicNo ?? voter?.epic ?? '-', name: voter?.firstMiddleNameEn || voter?.name || voter?.voterName || '-', relationLabel: voter?.relationType || voter?.rel_type || 'Father', relationName: voter?.relationFirstMiddleNameEn || voter?.relationNameEn || voter?.fatherName || voter?.motherName || voter?.relation_name_en || '', houseNo: voter?.houseNoEn ?? voter?.house ?? voter?.house_no_en ?? '-', age: voter?.age ?? '-', gender, genderClass: genderUpper.startsWith('M') ? 'male' : genderUpper.startsWith('F') ? 'female' : 'other', boothLabel: fallbackBooth?.boothLabel || boothInfo?.boothNameEn || voter?.boothNameEn || '', boothId: fallbackBooth?.boothId || boothInfo?.boothId || voter?.boothId || '', boothNo: voter?.boothNo || boothInfo?.boothNo || '', wardCode: (voter?.wardCode ?? fallbackBooth?.wardCode) || boothInfo?.wardCode || '', volunteerMet: voterWasMetByVolunteer(voter) }; }
 
 function triggerVoterSlipPrint(voter, booth, template) {
   const iframe = document.createElement('iframe');
@@ -417,7 +458,14 @@ function triggerVoterSlipPrint(voter, booth, template) {
   doc.close();
 }
 function normalizeMobileValue(value) { return String(value || '').replace(/\D/g, '').slice(0, 10); }
-function maskTrailingValue(value) { const raw = String(value || ''); return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw; }
+function maskTrailingValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw;
+}
+function hiddenDobDisplay(value) {
+  return String(value || '').trim() ? '' : '';
+}
 const LOCATION_CACHE_KEY = 'lastKnownLocation';
 const LOCATION_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
 
@@ -537,6 +585,53 @@ function buildVoterPayload(form, customValues) {
   return payload;
 }
 function voterFieldChanged(left, right) { if (Array.isArray(left) || Array.isArray(right)) { const a = (Array.isArray(left) ? left : left ? [left] : []).map(String).sort().join('|'); const b = (Array.isArray(right) ? right : right ? [right] : []).map(String).sort().join('|'); return a !== b; } return String(left ?? '').trim() !== String(right ?? '').trim(); }
+
+const VISITED_VOTER_STORAGE_PREFIX = 'voterVisited:';
+
+function getVoterEpicKey(voter) {
+  return String(voter?.epicNo || voter?.epic || voter?.voterId || '').trim();
+}
+
+function isVoterMarkedVisitedLocally(epic) {
+  if (!epic || typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(`${VISITED_VOTER_STORAGE_PREFIX}${epic}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markVoterVisitedLocally(epic) {
+  if (!epic || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`${VISITED_VOTER_STORAGE_PREFIX}${epic}`, '1');
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+function voterWasMetByVolunteer(voter) {
+  if (!voter) return false;
+  const epic = getVoterEpicKey(voter);
+  if (isVoterMarkedVisitedLocally(epic)) return true;
+  if (voter.volunteerMet) return true;
+  const fields = voter.updatedFields;
+  if (Array.isArray(fields) && fields.length > 0) return true;
+  if (typeof fields === 'string' && fields.trim()) {
+    try {
+      const parsed = JSON.parse(fields);
+      if (Array.isArray(parsed) && parsed.length > 0) return true;
+    } catch {
+      return true;
+    }
+  }
+  if (voter.updatedByName || voter.updatedByPhone) return true;
+  return false;
+}
+
+function emptyVoterForm() {
+  return getDefaultVoterForm({});
+}
 function normalizeBoothLocationLink(booth, templateLink) {
   if (templateLink) return templateLink;
   const lat = booth?.latitude ?? booth?.lat ?? booth?.boothLat ?? booth?.booth_lat;
@@ -653,10 +748,11 @@ function useDropdownDismiss(rootRef, onClose) {
       if (!rootRef.current?.contains(event.target)) onClose();
     };
     document.addEventListener('mousedown', handleOutside);
-    document.addEventListener('touchstart', handleOutside, { passive: true });
+    // Use touchend so a scroll gesture that starts inside the panel does not dismiss on touchstart.
+    document.addEventListener('touchend', handleOutside, { passive: true });
     return () => {
       document.removeEventListener('mousedown', handleOutside);
-      document.removeEventListener('touchstart', handleOutside);
+      document.removeEventListener('touchend', handleOutside);
     };
   }, [rootRef, onClose]);
 }
@@ -697,6 +793,67 @@ function useDropdownDropUp(rootRef, open, panelRef, maxPanelHeight = 260) {
   return dropUp;
 }
 
+const DROPDOWN_TOUCH_MOVE_THRESHOLD_PX = 10;
+
+/** Prevent accidental option selection while scrolling dropdown panels on touch devices. */
+function useDropdownPanelScrollGuard(open) {
+  const guardRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
+
+  useEffect(() => {
+    if (!open) {
+      guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+    }
+  }, [open]);
+
+  const panelTouchHandlers = useMemo(() => ({
+    onTouchStart: (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      guardRef.current = {
+        active: true,
+        moved: false,
+        startX: touch.clientX,
+        startY: touch.clientY,
+      };
+    },
+    onTouchMove: (event) => {
+      if (!guardRef.current.active) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = Math.abs(touch.clientX - guardRef.current.startX);
+      const dy = Math.abs(touch.clientY - guardRef.current.startY);
+      if (dx > DROPDOWN_TOUCH_MOVE_THRESHOLD_PX || dy > DROPDOWN_TOUCH_MOVE_THRESHOLD_PX) {
+        guardRef.current.moved = true;
+      }
+    },
+    onTouchEnd: () => {
+      if (guardRef.current.moved) {
+        window.setTimeout(() => {
+          guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+        }, 100);
+        return;
+      }
+      guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+    },
+    onTouchCancel: () => {
+      guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+    },
+  }), []);
+
+  const shouldIgnoreOptionActivation = useCallback(() => guardRef.current.moved, []);
+
+  return { panelTouchHandlers, shouldIgnoreOptionActivation };
+}
+
+function activateDropdownOption(event, shouldIgnore, onActivate) {
+  if (shouldIgnore()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  onActivate();
+}
+
 function filterNameSuggestions(suggestions, query, limit = 8) {
   const list = Array.isArray(suggestions) ? suggestions.filter(Boolean) : [];
   const q = String(query || '').trim().toLowerCase();
@@ -718,6 +875,7 @@ function FamilySuggestInput({
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 200);
+  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
   useDropdownDismiss(rootRef, () => setOpen(false));
   const filtered = useMemo(
     () => filterNameSuggestions(suggestions, value),
@@ -745,6 +903,7 @@ function FamilySuggestInput({
           ref={panelRef}
           className="mobile-web-suggestion-panel mobile-web-field-suggestions"
           role="listbox"
+          {...panelTouchHandlers}
         >
           <div className="mobile-web-suggestion-list">
             {filtered.map((item) => (
@@ -753,10 +912,11 @@ function FamilySuggestInput({
                 type="button"
                 role="option"
                 className="mobile-web-suggestion-item"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  onChange(item);
-                  setOpen(false);
+                onClick={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                    onChange(item);
+                    setOpen(false);
+                  });
                 }}
               >
                 <div className="mobile-web-suggestion-name">{item}</div>
@@ -768,13 +928,79 @@ function FamilySuggestInput({
     </label>
   );
 }
-function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) { const [open, setOpen] = useState(false); const rootRef = useRef(null); useDropdownDismiss(rootRef, () => setOpen(false)); const optionSet = new Set(options); const isUnknown = !!value && value !== 'Others' && !optionSet.has(value); const showOther = value === 'Others' || isUnknown || !!customValue; const summaryValue = showOther ? 'Others' : value; const otherValue = customValue || (isUnknown ? value : ''); return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel mobile-web-premium-select-panel">{options.map((option) => { const checked = option === 'Others' ? showOther : value === option; return <button key={option} type="button" className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`} onClick={() => { onSelect(option); setOpen(false); }}><span>{option}</span></button>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>; }
+function SingleOptionSelect({ label, options, value, customValue, onSelect, onCustomValueChange, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
+  useDropdownDismiss(rootRef, () => setOpen(false));
+  const optionSet = new Set(options);
+  const isUnknown = !!value && value !== 'Others' && !optionSet.has(value);
+  const showOther = value === 'Others' || isUnknown || !!customValue;
+  const summaryValue = showOther ? 'Others' : value;
+  const otherValue = customValue || (isUnknown ? value : '');
+
+  return (
+    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+      <button
+        className="mobile-web-multiselect-trigger"
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((current) => !current);
+        }}
+      >
+        <span className={summaryValue ? 'has-value' : 'is-placeholder'}>{summaryValue || `Select ${label}`}</span>
+        <ExpandMoreRounded className="mobile-web-select-icon" />
+      </button>
+      {open ? (
+        <div
+          ref={panelRef}
+          className="mobile-web-multiselect-panel mobile-web-premium-select-panel"
+          role="listbox"
+          {...panelTouchHandlers}
+        >
+          {options.map((option) => {
+            const checked = option === 'Others' ? showOther : value === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={checked}
+                className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                onClick={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                    onSelect(option);
+                    setOpen(false);
+                  });
+                }}
+              >
+                <span>{option}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {showOther ? (
+        <input
+          className="mobile-web-input mobile-web-other-input"
+          placeholder={`Enter ${label.toLowerCase()}`}
+          value={otherValue}
+          onChange={(e) => onCustomValueChange(e.target.value)}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 function PremiumSelect({ label, options = [], value, onChange, disabled = false, placeholder = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 240);
+  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
   useDropdownDismiss(rootRef, () => setOpen(false));
 
   const normalized = options.map((option) => (
@@ -805,6 +1031,7 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
           ref={panelRef}
           className="mobile-web-multiselect-panel mobile-web-premium-select-panel"
           role="listbox"
+          {...panelTouchHandlers}
         >
           {normalized.map((option) => {
             const checked = String(option.value) === String(value);
@@ -815,10 +1042,11 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
                 role="option"
                 aria-selected={checked}
                 className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  onChange(option.value);
-                  setOpen(false);
+                onClick={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                    onChange(option.value);
+                    setOpen(false);
+                  });
                 }}
               >
                 <span>{option.label}</span>
@@ -834,6 +1062,8 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
   useDropdownDismiss(rootRef, () => {
     setOpen(false);
     setSearch('');
@@ -853,21 +1083,64 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
     return options.filter(opt => opt.toLowerCase().includes(q));
   }, [options, search]);
 
-  return <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}><button className="mobile-web-multiselect-trigger" type="button" disabled={disabled} onClick={() => { if (disabled) return; setOpen((current) => !current); }}><span className={summaryItems.length ? 'has-value' : 'is-placeholder'}>{summary}</span><ExpandMoreRounded className="mobile-web-select-icon" /></button>{open ? <div className="mobile-web-multiselect-panel">
-    {options.length > 5 && (
-      <div style={{ padding: '0 8px 8px 8px', position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
+  return (
+    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+      <button
+        className="mobile-web-multiselect-trigger"
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((current) => !current);
+        }}
+      >
+        <span className={summaryItems.length ? 'has-value' : 'is-placeholder'}>{summary}</span>
+        <ExpandMoreRounded className="mobile-web-select-icon" />
+      </button>
+      {open ? (
+        <div ref={panelRef} className="mobile-web-multiselect-panel" {...panelTouchHandlers}>
+          {options.length > 5 ? (
+            <div style={{ padding: '0 8px 8px 8px', position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search..."
+                className="mobile-web-input"
+                style={{ minHeight: '40px', padding: '8px 12px' }}
+              />
+            </div>
+          ) : null}
+          {filteredOptions.length === 0 ? (
+            <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No matches found</div>
+          ) : null}
+          {filteredOptions.map((option) => {
+            const checked = option === 'Others' ? showOther : value.includes(option);
+            return (
+              <label
+                key={option}
+                className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}
+                onClick={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => onToggle(option));
+                }}
+              >
+                <input type="checkbox" checked={checked} readOnly tabIndex={-1} />
+                <span>{option}</span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {showOther ? (
         <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search..."
-          className="mobile-web-input"
-          style={{ minHeight: '40px', padding: '8px 12px' }}
+          className="mobile-web-input mobile-web-other-input"
+          placeholder={`Enter ${label.toLowerCase()}`}
+          value={otherValue}
+          onChange={(e) => onCustomValueChange(e.target.value)}
         />
-      </div>
-    )}
-    {filteredOptions.length === 0 ? <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No matches found</div> : null}
-    {filteredOptions.map((option) => { const checked = option === 'Others' ? showOther : value.includes(option); return <label key={option} className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}><input type="checkbox" checked={checked} onChange={() => onToggle(option)} /><span>{option}</span></label>; })}</div> : null}{showOther ? <input className="mobile-web-input mobile-web-other-input" placeholder={`Enter ${label.toLowerCase()}`} value={otherValue} onChange={(e) => onCustomValueChange(e.target.value)} /> : null}</div>;
+      ) : null}
+    </div>
+  );
 }
 function PrintableVoterSlip({ voter, booth, template, isPreview = false }) {
   const election = template?.electionName || 'Election-2024';
@@ -941,6 +1214,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState({ type: '', text: '' });
   const [mobileFocused, setMobileFocused] = useState(false);
+  const [dobFocused, setDobFocused] = useState(false);
   const [whatsAppTemplate, setWhatsAppTemplate] = useState(null);
   const [smsTemplate, setSmsTemplate] = useState(null);
   const [templateChannel, setTemplateChannel] = useState('WHATSAPP');
@@ -949,6 +1223,9 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [bannerUpload, setBannerUpload] = useState({ loading: false, error: '' });
   const lastEpicRef = useRef(null);
   const skipScrollRef = useRef(false);
+  const [visitDisplayMode, setVisitDisplayMode] = useState(() => voterWasMetByVolunteer(voter));
+  const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
+  const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
 
   const [activatedWards, setActivatedWards] = useState({ whatsapp: [], sms: [], print: [] });
   const [voterActivation, setVoterActivation] = useState({ whatsapp: false, sms: false, print: false });
@@ -966,7 +1243,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     }).catch(e => console.error('Failed to load activated wards:', e));
   }, []);
 
-  const baseForm = useMemo(() => getDefaultVoterForm(voter), [voter]);
+  const baseForm = useMemo(
+    () => (isAdminUser ? getDefaultVoterForm(voter) : emptyVoterForm()),
+    [voter, isAdminUser]
+  );
   const basePayload = useMemo(() => buildVoterPayload(baseForm, {}), [baseForm]);
   const currentPayload = useMemo(() => buildVoterPayload(form, customValues), [form, customValues]);
   const hasChanges = useMemo(
@@ -977,9 +1257,20 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   useEffect(() => {
     const currentEpic = voter?.epicNo || voter?.epic || voter?.voterId || '';
     const isSameVoter = lastEpicRef.current && lastEpicRef.current === currentEpic;
-    setForm(getDefaultVoterForm(voter));
+    const visited = voterWasMetByVolunteer(voter);
+    if (isAdminUser) {
+      setForm(getDefaultVoterForm(voter));
+      setVisitDisplayMode(false);
+    } else if (visited) {
+      setForm(emptyVoterForm());
+      setVisitDisplayMode(true);
+    } else {
+      setForm(emptyVoterForm());
+      setVisitDisplayMode(false);
+    }
     setCustomValues({});
     setMobileFocused(false);
+    setDobFocused(false);
     if (!isSameVoter) {
       setBanner({ type: '', text: '' });
       setVoterActivation({ whatsapp: false, sms: false, print: false });
@@ -1002,12 +1293,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
         window.scrollTo({ top: 0, behavior: 'auto' });
       }
     }
-  }, [voter]);
+  }, [voter, isAdminUser]);
 
   const boothNumber = booth?.boothNo || voter?.boothNo || booth?.boothId || voter?.boothId || '';
   const boothTitle = formatBoothTitle(boothNumber, booth?.boothLabel || voter?.boothLabel);
-  const userRole = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : '';
-  const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(userRole.replace('ROLE_', '').toUpperCase());
   const wardId = booth?.wardId || voter?.wardId || voter?.ward_id || voter?.wardCode || '';
   const wardLabel = booth?.wardNameEn || voter?.wardNameEn || voter?.wardLabel || '';
 
@@ -1104,10 +1393,17 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const resetForm = () => {
-    setForm(getDefaultVoterForm(voter));
+    if (visitDisplayMode || voterWasMetByVolunteer(voter)) {
+      setForm(emptyVoterForm());
+      setVisitDisplayMode(true);
+    } else {
+      setForm(getDefaultVoterForm(voter));
+      setVisitDisplayMode(false);
+    }
     setCustomValues({});
     setBanner({ type: '', text: '' });
     setMobileFocused(false);
+    setDobFocused(false);
   };
 
   const getLocation = () => {
@@ -1121,29 +1417,42 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
 
   const saveVoter = async () => {
     if (!hasChanges) return;
-    if (!location?.latitude || !location?.longitude) {
-      setBanner({ type: 'error', text: 'Location is required before updating voter info.' });
-      return;
-    }
     setSaving(true);
     setBanner({ type: '', text: '' });
     try {
-      await mobileApi.updateVoter(
+      const updateRequest = {};
+      Object.keys(currentPayload).forEach((key) => {
+        if (voterFieldChanged(currentPayload[key], basePayload[key])) {
+          updateRequest[key] = currentPayload[key];
+        }
+      });
+      if (location?.latitude && location?.longitude) {
+        updateRequest.latitude = location.latitude;
+        updateRequest.longitude = location.longitude;
+      }
+      const res = await mobileApi.updateVoter(
         voter.epicNo,
-        {
-          updateLocationLat: location?.latitude || 0,
-          updateLocationLng: location?.longitude || 0,
-          updateRequest: {
-            ...currentPayload,
-            latitude: location?.latitude || voter?.latitude || 0,
-            longitude: location?.longitude || voter?.longitude || 0,
-          },
-        },
+        { updateRequest },
         { boothNo: voter?.boothNo, wardCode: voter?.wardCode || booth?.wardCode }
       );
+      const saved = res?.data?.result || res?.result || {};
       setBanner({ type: 'success', text: 'Voter updated successfully.' });
       skipScrollRef.current = true;
-      onSave?.({ ...voter, ...currentPayload, latitude: location?.latitude, longitude: location?.longitude });
+      markVoterVisitedLocally(getVoterEpicKey(voter));
+      setVisitDisplayMode(true);
+      setForm(emptyVoterForm());
+      setCustomValues({});
+      setMobileFocused(false);
+      setDobFocused(false);
+      onSave?.({
+        ...voter,
+        ...saved,
+        ...currentPayload,
+        volunteerMet: true,
+        updatedFields: saved.updatedFields || Object.keys(currentPayload),
+        latitude: location?.latitude ?? saved.latitude ?? voter?.latitude,
+        longitude: location?.longitude ?? saved.longitude ?? voter?.longitude,
+      });
     } catch (error) {
       setBanner({ type: 'error', text: error?.message || error?.detail || 'Update failed' });
     } finally {
@@ -1179,15 +1488,35 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
 
+  const showVisitedBadge = voterWasMetByVolunteer(voter) || visitDisplayMode;
+
+  const getFormDisplayValue = (key) => {
+    if (isAdminUser) return form[key];
+    if (visitDisplayMode) {
+      if (key === 'govtSchemeTracking') return [];
+      return form[key] || '';
+    }
+    return form[key];
+  };
+
+  const resolveSensitiveFieldValue = (key) => {
+    const formValue = String(form[key] || '').trim();
+    if (formValue) return form[key];
+    if (!isAdminUser && visitDisplayMode) return voter?.[key] || '';
+    return '';
+  };
+
   const renderSelect = (key, placeholder, multiple = false) => {
     const options = dropdownOptions[key] || [];
+    const displayValue = getFormDisplayValue(key);
+    const displayCustom = visitDisplayMode && !isAdminUser ? '' : customValues[key];
     if (multiple) {
       return (
         <MultiCheckboxSelect
           label={placeholder}
           options={options}
-          value={form[key]}
-          customValue={customValues[key]}
+          value={displayValue}
+          customValue={displayCustom}
           onToggle={toggleGovtScheme}
           onCustomValueChange={(nextValue) => setCustomValues((prev) => ({ ...prev, [key]: nextValue }))}
         />
@@ -1197,8 +1526,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       <SingleOptionSelect
         label={placeholder}
         options={options}
-        value={form[key]}
-        customValue={customValues[key]}
+        value={displayValue}
+        customValue={displayCustom}
         onSelect={(option) => handleFieldChange(key, option)}
         onCustomValueChange={(nextValue) => setCustomValues((prev) => ({ ...prev, [key]: nextValue }))}
       />
@@ -1207,26 +1536,47 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
 
   const renderField = (key) => {
     if (key === 'mobile') {
+      const storedMobile = resolveSensitiveFieldValue('mobile');
       return (
         <input
           className="mobile-web-input"
           inputMode="numeric"
           maxLength={10}
-          value={mobileFocused ? form.mobile : maskTrailingValue(form.mobile)}
+          value={mobileFocused ? (form.mobile || storedMobile) : maskTrailingValue(storedMobile)}
           placeholder={fieldLabels[key]}
-          onFocus={() => setMobileFocused(true)}
+          onFocus={() => {
+            if (!form.mobile && storedMobile) {
+              setForm((prev) => ({ ...prev, mobile: normalizeMobileValue(storedMobile) }));
+            }
+            setMobileFocused(true);
+          }}
           onBlur={() => setMobileFocused(false)}
           onChange={(e) => handleFieldChange(key, e.target.value)}
         />
       );
     }
     if (key === 'dob') {
+      const storedDob = resolveSensitiveFieldValue('dob');
       return (
         <input
           className="mobile-web-input"
-          type="date"
-          value={form[key]}
-          placeholder={fieldLabels[key]}
+          type={dobFocused ? 'date' : 'text'}
+          readOnly={!dobFocused}
+          value={
+            dobFocused
+              ? (form[key] || storedDob)
+              : visitDisplayMode && storedDob
+                ? hiddenDobDisplay(storedDob)
+                : (form[key] || '')
+          }
+          placeholder={visitDisplayMode && storedDob && !dobFocused ? 'On file — tap to view or edit' : fieldLabels[key]}
+          onFocus={() => {
+            if (!form.dob && storedDob) {
+              setForm((prev) => ({ ...prev, dob: storedDob }));
+            }
+            setDobFocused(true);
+          }}
+          onBlur={() => setDobFocused(false)}
           onChange={(e) => handleFieldChange(key, e.target.value)}
         />
       );
@@ -1362,6 +1712,25 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       {banner.text && banner.type === 'error' ? <div className="mobile-web-error">{banner.text}</div> : null}
       <section className="mobile-web-detail-card">
         <div className="mobile-web-detail-meta p-5">
+          {showVisitedBadge ? (
+            <div className="mobile-web-visited-premium" title="This voter was updated by a volunteer">
+              <span className="mobile-web-visited-premium-icon" aria-hidden="true">
+                ✓
+              </span>
+              <div className="mobile-web-visited-premium-copy">
+                <span className="mobile-web-visited-premium-label">Visited</span>
+                <span className="mobile-web-visited-premium-sub">Survey saved · details hidden for privacy</span>
+              </div>
+            </div>
+          ) : null}
+          {!isAdminUser && visitDisplayMode && resolveSensitiveFieldValue('mobile') ? (
+            <div className="mobile-web-masked-mobile-card">
+              <span className="mobile-web-masked-mobile-label">Mobile Number</span>
+              <span className="mobile-web-masked-mobile-value">
+                {maskTrailingValue(resolveSensitiveFieldValue('mobile'))}
+              </span>
+            </div>
+          ) : null}
           <p>
             <strong>Name</strong>
             <span>{voter?.name || '-'}</span>
@@ -1378,6 +1747,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <strong>Ward</strong>
             <span>{wardLabel || voter?.wardNameEn || '-'}</span>
           </p>
+          {resolveSensitiveFieldValue('dob') && !visitDisplayMode ? (
+            <p>
+              <strong>Date of Birth</strong>
+              <span>{resolveSensitiveFieldValue('dob')}</span>
+            </p>
+          ) : null}
         </div>
         <div className="mobile-web-map-card">
           {mapTarget ? (
@@ -1389,12 +1764,12 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
               referrerPolicy="no-referrer-when-downgrade"
             />
           ) : (
-            <div className="mobile-web-map-placeholder">Capture location to preview map.</div>
+            <div className="mobile-web-map-placeholder">Location optional — capture to preview map.</div>
           )}
         </div>
         <button className="mobile-web-location-btn" onClick={getLocation} type="button">
           <LocationOnOutlined />
-          <span>{location ? 'Location Captured' : 'Get Location'}</span>
+          <span>{location ? 'Location Captured' : 'Get Location (optional)'}</span>
         </button>
         <div className="mobile-web-contact-actions">
           <button
@@ -1448,24 +1823,24 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
               <label>Available</label>
               {renderSelect('status', 'Availability')}
             </div>
-            {(form.status === 'Shifted in the ward' || form.status === 'Shifted outside the ward') && (
+            {(getFormDisplayValue('status') === 'Shifted in the ward' || getFormDisplayValue('status') === 'Shifted outside the ward') && (
               <div className="mobile-web-field">
                 <label>Enter present address</label>
                 <textarea
                   className="mobile-web-input mobile-web-textarea"
-                  value={form.presentAddress}
+                  value={getFormDisplayValue('presentAddress')}
                   onChange={(e) => handleFieldChange('presentAddress', e.target.value)}
                   placeholder="Enter present address"
                 />
               </div>
             )}
-            {form.status === 'Recommend shift to the new ward' && (
+            {getFormDisplayValue('status') === 'Recommend shift to the new ward' && (
               <>
                 <div className="mobile-web-field">
                   <label>Ward</label>
                   <input
                     className="mobile-web-input"
-                    value={form.newWard}
+                    value={getFormDisplayValue('newWard')}
                     onChange={(e) => handleFieldChange('newWard', e.target.value)}
                     placeholder="Enter ward"
                   />
@@ -1474,7 +1849,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
                   <label>Booth No</label>
                   <input
                     className="mobile-web-input"
-                    value={form.newBoothNo}
+                    value={getFormDisplayValue('newBoothNo')}
                     onChange={(e) => handleFieldChange('newBoothNo', e.target.value)}
                     placeholder="Enter booth number"
                   />
@@ -1483,19 +1858,19 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
                   <label>Serial No</label>
                   <input
                     className="mobile-web-input"
-                    value={form.newSerialNo}
+                    value={getFormDisplayValue('newSerialNo')}
                     onChange={(e) => handleFieldChange('newSerialNo', e.target.value)}
                     placeholder="Enter serial number"
                   />
                 </div>
               </>
             )}
-            {form.status === 'Not available' && (
+            {getFormDisplayValue('status') === 'Not available' && (
               <div className="mobile-web-field">
                 <label>Enter the reason</label>
                 <textarea
                   className="mobile-web-input mobile-web-textarea"
-                  value={form.notAvailableReason}
+                  value={getFormDisplayValue('notAvailableReason')}
                   onChange={(e) => handleFieldChange('notAvailableReason', e.target.value)}
                   placeholder="Enter the reason"
                 />
@@ -1505,7 +1880,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
               <label>ENTER NOTES</label>
               <textarea
                 className="mobile-web-input mobile-web-textarea"
-                value={form.notes}
+                value={getFormDisplayValue('notes')}
                 onChange={(e) => handleFieldChange('notes', e.target.value)}
                 placeholder="Enter notes"
               />
@@ -1662,9 +2037,14 @@ function VoterListScreen({
             onClick={() => onSelectVoter?.(voter, booth)}
           >
             <div className="mobile-web-voter-card-head">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>{voter.serialNo ?? '-'}</span>
                 <strong>{voter.epicNo}</strong>
+                {voterWasMetByVolunteer(voter) ? (
+                  <span className="mobile-web-voter-met-badge" title="This voter was updated by a volunteer">
+                    Visited
+                  </span>
+                ) : null}
               </div>
             </div>
             <div className="mobile-web-voter-grid">
@@ -1753,6 +2133,27 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     }
     return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
   }, [userInfo]);
+
+  const accessBoothIds = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(userInfo?.boothIds)) ids.push(...userInfo.boothIds);
+    if (userInfo?.boothId) ids.push(userInfo.boothId);
+    if (userInfo?.booth_id) ids.push(userInfo.booth_id);
+    if ((userInfo?.assignmentType || '').toUpperCase() === 'BOOTH' && userInfo?.assignmentId) {
+      String(userInfo.assignmentId)
+        .split(',')
+        .map((val) => val.trim())
+        .filter(Boolean)
+        .forEach((val) => ids.push(val));
+    }
+    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+  }, [userInfo]);
+
+  useEffect(() => {
+    if (accessBoothIds.length === 1 && !form.boothNumber) {
+      handleChange('boothNumber', accessBoothIds[0]);
+    }
+  }, [accessBoothIds, form.boothNumber]);
 
   useEffect(() => {
     const key = String(assemblyCode || '');
@@ -1880,36 +2281,40 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   };
 
   const handleSaveVoter = (updatedVoter) => {
-    setSelectedVoter(updatedVoter);
+    setSelectedVoter((current) => (
+      current && (current.voterId === updatedVoter.voterId || current.epicNo === updatedVoter.epicNo)
+        ? { ...current, ...updatedVoter, volunteerMet: true }
+        : current
+    ));
     setVoterResults((current) =>
-      current.map((item) => (item.voterId === updatedVoter.voterId ? { ...item, ...updatedVoter } : item))
+      current.map((item) => (
+        item.voterId === updatedVoter.voterId || item.epicNo === updatedVoter.epicNo
+          ? { ...item, ...updatedVoter, volunteerMet: true }
+          : item
+      ))
     );
   };
 
-  const handleSelectVoter = async (voter) => {
+  const handleSelectVoter = (voter) => {
     lastSelectionRef.current = { voter };
-    setIsLocating(true);
-    try {
-      const loc = await requestLocation({ allowCached: false });
-      setSelectedVoter({ ...voter, ...loc });
-      setErrorText('');
-    } catch (error) {
-      setErrorText(error?.message || error?.detail || 'Location is required to view voter info.');
-    } finally {
-      setIsLocating(false);
-    }
+    setSelectedVoter(voter);
+    setErrorText('');
+    requestLocation({ allowCached: true }).then((loc) => {
+      setSelectedVoter((current) => (
+        current && (current.epicNo === voter.epicNo || current.voterId === voter.voterId)
+          ? { ...current, latitude: loc.latitude, longitude: loc.longitude }
+          : current
+      ));
+    }).catch(() => {});
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
-    setIsLocating(true);
     try {
       const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setErrorText('');
     } catch (error) {
-      setErrorText(error?.message || error?.detail || 'Location permission is required.');
-    } finally {
-      setIsLocating(false);
+      setErrorText(error?.message || error?.detail || 'Unable to capture location.');
     }
   };
 
@@ -2013,6 +2418,25 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   const [isLocating, setIsLocating] = useState(false);
   const lastSelectionRef = useRef(null);
 
+  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
+  const accessBoothIds = useMemo(
+    () => collectScopeIds(userInfo, ['boothIds', 'boothId', 'booth_id'], 'BOOTH'),
+    [userInfo]
+  );
+  const accessWardIds = useMemo(
+    () => collectScopeIds(userInfo, ['wardIds', 'wardId', 'ward_id', 'wards'], 'WARD'),
+    [userInfo]
+  );
+  const boothCacheScopeKey = useMemo(
+    () => JSON.stringify({
+      user: userInfo?.userName || '',
+      booths: accessBoothIds,
+      wards: accessWardIds,
+      assembly: assemblyCode,
+    }),
+    [userInfo?.userName, accessBoothIds, accessWardIds, assemblyCode]
+  );
+
   useEffect(() => {
     const run = async () => {
       setLoading(true);
@@ -2023,16 +2447,23 @@ function SearchBoothScreen({ assemblyCodeProp }) {
         return;
       }
       try {
+        const priorScope = localStorage.getItem(BOOTH_CACHE_SCOPE_KEY);
+        if (priorScope && priorScope !== boothCacheScopeKey) {
+          localStorage.removeItem(BOOTH_CACHE_KEY);
+        }
         const response = await mobileApi.loadDataLite(assemblyCode);
         const snapshot = await resolveSnapshot(response);
         setAssemblyData(snapshot);
         localStorage.setItem(BOOTH_CACHE_KEY, JSON.stringify(snapshot));
+        localStorage.setItem(BOOTH_CACHE_SCOPE_KEY, boothCacheScopeKey);
       } catch (error) {
+        const fallbackScope = localStorage.getItem(BOOTH_CACHE_SCOPE_KEY);
         const fallback = localStorage.getItem(BOOTH_CACHE_KEY);
-        if (fallback) {
+        if (fallback && fallbackScope === boothCacheScopeKey) {
           setAssemblyData(JSON.parse(fallback));
           setLoadError('Showing cached booth data.');
         } else {
+          localStorage.removeItem(BOOTH_CACHE_KEY);
           const detail = error?.data?.error || error?.message || 'Unable to load booths';
           setLoadError(detail);
         }
@@ -2041,31 +2472,11 @@ function SearchBoothScreen({ assemblyCodeProp }) {
       }
     };
     run();
-  }, [assemblyCode]);
-
-  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
-  const accessWardIds = useMemo(() => {
-    const ids = [];
-    if (Array.isArray(userInfo?.wardIds)) ids.push(...userInfo.wardIds);
-    if (Array.isArray(userInfo?.wards)) ids.push(...userInfo.wards);
-    if (userInfo?.wardId) ids.push(userInfo.wardId);
-    if (userInfo?.ward_id) ids.push(userInfo.ward_id);
-    if ((userInfo?.assignmentType || '').toUpperCase() === 'WARD' && userInfo?.assignmentId) {
-      String(userInfo.assignmentId)
-        .split(',')
-        .map((val) => val.trim())
-        .filter(Boolean)
-        .forEach((val) => ids.push(val));
-    }
-    return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
-  }, [userInfo]);
+  }, [assemblyCode, boothCacheScopeKey]);
 
   const booths = useMemo(() => {
-    let wards = assemblyData?.assembly?.wards || [];
-    if (accessWardIds.length) {
-      wards = wards.filter(w => accessWardIds.includes(String(w.wardId || w.id)));
-    }
-    return wards.flatMap((ward) =>
+    const wards = assemblyData?.assembly?.wards || [];
+    let list = wards.flatMap((ward) =>
       (ward.booths || []).map((booth) => ({
         ...booth,
         boothId: booth.boothId ?? booth.id ?? booth.booth_id,
@@ -2077,37 +2488,42 @@ function SearchBoothScreen({ assemblyCodeProp }) {
         wardId: ward.wardId,
         wardNameEn: ward.wardNameEn,
       }))
-    ).sort((a, b) => {
+    );
+    if (accessBoothIds.length || accessWardIds.length) {
+      list = list.filter((booth) => boothMatchesUserScope(booth, accessBoothIds, accessWardIds));
+    }
+    return list.sort((a, b) => {
       const aNum = Number.parseInt(String(a.boothNo ?? '').replace(/[^\d]/g, ''), 10);
       const bNum = Number.parseInt(String(b.boothNo ?? '').replace(/[^\d]/g, ''), 10);
       const aVal = Number.isFinite(aNum) ? aNum : Number.POSITIVE_INFINITY;
       const bVal = Number.isFinite(bNum) ? bNum : Number.POSITIVE_INFINITY;
       return aVal - bVal;
     });
-  }, [assemblyData, accessWardIds]);
+  }, [assemblyData, accessBoothIds, accessWardIds]);
 
   const wardOptions = useMemo(() => {
-    let wards = assemblyData?.assembly?.wards || [];
-    if (accessWardIds.length) {
-      wards = wards.filter(w => accessWardIds.includes(String(w.wardId || w.id)));
-    }
-    const list = wards.map(w => w.wardNameEn || `Ward ${w.wardId}`);
-    return accessWardIds.length ? list : ['ALL', ...list];
-  }, [assemblyData, accessWardIds]);
+    const wards = assemblyData?.assembly?.wards || [];
+    const list = wards.map((w) => w.wardNameEn || `Ward ${w.wardId}`);
+    if (list.length <= 1) return list;
+    return ['ALL', ...list];
+  }, [assemblyData]);
 
   useEffect(() => {
-    if (accessWardIds.length > 0 && selectedWardFilter === 'ALL' && wardOptions.length > 0) {
+    if (!wardOptions.length) {
+      if (selectedWardFilter !== 'ALL') setSelectedWardFilter('ALL');
+      return;
+    }
+    if (!wardOptions.includes(selectedWardFilter)) {
+      setSelectedWardFilter(wardOptions.includes('ALL') ? 'ALL' : wardOptions[0]);
+    } else if (wardOptions.length === 1 && selectedWardFilter === 'ALL') {
       setSelectedWardFilter(wardOptions[0]);
     }
-  }, [accessWardIds, wardOptions, selectedWardFilter]);
+  }, [wardOptions, selectedWardFilter]);
 
   const filteredBooths = useMemo(() => {
     let result = booths;
-    if (selectedWardFilter !== 'ALL' && !accessWardIds.length) {
-      result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
-    } else if (accessWardIds.length && selectedWardFilter !== 'ALL') {
-      // if accessWardIds is present, selectedWardFilter might still be used if there are multiple accessible wards
-      result = result.filter(b => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
+    if (selectedWardFilter !== 'ALL') {
+      result = result.filter((b) => b.wardNameEn === selectedWardFilter || `Ward ${b.wardId}` === selectedWardFilter);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -2174,39 +2590,41 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   };
 
   const handleSaveVoter = (updatedVoter) => {
-    setSelectedVoter(updatedVoter);
+    setSelectedVoter((current) => (
+      current && (current.voterId === updatedVoter.voterId || current.epicNo === updatedVoter.epicNo)
+        ? { ...current, ...updatedVoter, volunteerMet: true }
+        : current
+    ));
     setSelectedBoothPayload((current) => ({
       ...(current || {}),
-      voters: (current?.voters || []).map((item) =>
-        item.voterId === updatedVoter.voterId ? { ...item, ...updatedVoter } : item
-      ),
+      voters: (current?.voters || []).map((item) => (
+        item.voterId === updatedVoter.voterId || item.epicNo === updatedVoter.epicNo
+          ? { ...item, ...updatedVoter, volunteerMet: true }
+          : item
+      )),
     }));
   };
 
-  const handleSelectBoothVoter = async (voter) => {
+  const handleSelectBoothVoter = (voter) => {
     lastSelectionRef.current = { voter };
-    setIsLocating(true);
-    try {
-      const loc = await requestLocation({ allowCached: false });
-      setSelectedVoter({ ...voter, ...loc });
-      setBoothError('');
-    } catch (error) {
-      setBoothError(error?.message || error?.detail || 'Location is required to view voter info.');
-    } finally {
-      setIsLocating(false);
-    }
+    setSelectedVoter(voter);
+    setBoothError('');
+    requestLocation({ allowCached: true }).then((loc) => {
+      setSelectedVoter((current) => (
+        current && (current.epicNo === voter.epicNo || current.voterId === voter.voterId)
+          ? { ...current, latitude: loc.latitude, longitude: loc.longitude }
+          : current
+      ));
+    }).catch(() => {});
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
-    setIsLocating(true);
     try {
       const loc = await requestLocation({ allowCached: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setBoothError('');
     } catch (error) {
-      setBoothError(error?.message || error?.detail || 'Location permission is required.');
-    } finally {
-      setIsLocating(false);
+      setBoothError(error?.message || error?.detail || 'Unable to capture location.');
     }
   };
 
@@ -4873,7 +5291,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       name: name || suggestion.epicNo || 'Unknown',
       epic: suggestion.epicNo || '',
       relation: getVoterRelationDisplay(suggestion),
-      phone: getVoterPhoneDisplay(suggestion),
+      phone: getVoterPhoneRaw(suggestion),
       houseNo: getVoterHouseDisplay(suggestion),
       boothId: suggestion.boothInfo?.boothId || suggestion.boothId || suggestion.booth_id || '',
       rawVoter: suggestion,
@@ -4916,7 +5334,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         return {
           ...member,
           name: name || member.name,
-          phone: getVoterPhoneDisplay(updatedVoter) || member.phone,
+          phone: getVoterPhoneRaw(updatedVoter) || member.phone,
           relation: getVoterRelationDisplay(updatedVoter) || member.relation,
           houseNo: getVoterHouseDisplay(updatedVoter) || member.houseNo,
           rawVoter: { ...member.rawVoter, ...updatedVoter },
@@ -5039,7 +5457,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       setFamilies(sortFamiliesByNumber(all));
       resetNewFamilyForm();
     } catch (err) {
-      setError(err?.message || 'Failed to save family');
+      setError(formatApiError(err, 'Failed to save family'));
     } finally {
       setSaving(false);
     }
