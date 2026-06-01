@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowBackIosNewRounded,
   ExpandMoreRounded,
@@ -16,10 +17,14 @@ import {
   VpnKeyOutlined,
   SmsOutlined,
   WhatsApp,
+  CalendarMonthOutlined,
 } from '@mui/icons-material';
 import { getAssemblyCode, mobileApi } from '../../lib/mobileApi';
+import { subtabStorageKey, usePersistedSubtab } from '../../lib/persistedSubtab';
 import {
   FAMILY_AVAILABILITY_OPTIONS,
+  formatFamilyAvailabilityLabel,
+  maskFamilySensitiveValue,
   FAMILY_POINT_OPTIONS,
   FAMILY_ANALYSIS_AVAILABILITY_KEYS,
   FAMILY_MAP_AVAILABILITY_LEGEND,
@@ -30,7 +35,6 @@ import {
   getFamilyNumberPrefix,
   parseWardCodeFromWardRecord,
   hasHouseMarkingFields,
-  buildFamilyMapTooltipHtml,
   getFamilyAvailabilityMapColor,
   normalizeFamilyMapPoint,
   normalizeFamilyMapMember,
@@ -51,6 +55,8 @@ import {
   buildFamilyOsmMap,
   buildPointsOsmMap,
   destroyOsmMap,
+  getGoogleEmbedUrl,
+  getGoogleExternalUrl,
   getOsmEmbedUrl,
   getOsmExternalUrl,
 } from '../../lib/osmMap';
@@ -147,6 +153,7 @@ function applyMasterRollStatus(setter, status) {
 }
 const FAMILY_ANALYSIS_LAZY_STEP = 20;
 const FAMILY_DETAIL_PAGE_SIZE = 30;
+const PENDING_FAMILY_LIST_LAZY_STEP = 25;
 
 function FamilyAvailabilityMapLegend({ compact = false }) {
   return (
@@ -159,6 +166,12 @@ function FamilyAvailabilityMapLegend({ compact = false }) {
       ))}
     </div>
   );
+}
+
+function hasValidFamilyMapLocation(family = {}) {
+  const lat = Number(family?.latitude);
+  const lng = Number(family?.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
 function FamilyAvailabilityFilterChips({ selected, onChange }) {
@@ -198,17 +211,48 @@ function FamilyMapSection({
   wardCode,
   boothId,
   assemblyCode,
-  fullDetails = false,
   mapHeight = '420px',
   title = 'Family map',
   showRefresh = true,
   availabilityFilter = null,
+  onFamilyEdit = null,
+  updatedFrom = '',
+  updatedTo = '',
+  emptyHint = '',
+  infoMessage = '',
+  showMemberDetails = false,
+  allowMapEdit = true,
+  onMapEditBlocked = null,
+  refreshToken = 0,
 }) {
   const mapRef = useRef(null);
   const osmMapRef = useRef(null);
+  const onFamilyEditRef = useRef(onFamilyEdit);
+  const onMapEditBlockedRef = useRef(onMapEditBlocked);
+  const showMemberDetailsRef = useRef(showMemberDetails);
+  const showEditButtonRef = useRef(Boolean(onFamilyEdit));
   const [mapLoading, setMapLoading] = useState(false);
   const [mapError, setMapError] = useState('');
   const [pointCount, setPointCount] = useState(0);
+  const availabilityFilterKey = useMemo(
+    () => (Array.isArray(availabilityFilter)
+      ? availabilityFilter.map((v) => String(v).trim()).sort().join('|')
+      : ''),
+    [availabilityFilter],
+  );
+
+  useEffect(() => {
+    onFamilyEditRef.current = onFamilyEdit;
+    showEditButtonRef.current = Boolean(onFamilyEdit);
+  }, [onFamilyEdit]);
+
+  useEffect(() => {
+    onMapEditBlockedRef.current = onMapEditBlocked;
+  }, [onMapEditBlocked]);
+
+  useEffect(() => {
+    showMemberDetailsRef.current = showMemberDetails;
+  }, [showMemberDetails]);
 
   const cleanupMapInstances = () => {
     if (osmMapRef.current) {
@@ -220,14 +264,24 @@ function FamilyMapSection({
   const buildMap = async (points) => {
     if (!mapRef.current) return;
     cleanupMapInstances();
-    osmMapRef.current = await buildFamilyOsmMap(mapRef.current, points, { fullDetails });
+    osmMapRef.current = await buildFamilyOsmMap(mapRef.current, points, {
+      showMemberDetails: showMemberDetailsRef.current,
+      showEditButton: showEditButtonRef.current,
+    });
   };
 
-  const loadMapPoints = async () => {
+  const loadMapPoints = useCallback(async () => {
     setMapLoading(true);
     setMapError('');
     try {
-      const res = await mobileApi.fetchFamilyLocationPoints(wardId || undefined, boothId || undefined, wardCode, assemblyCode || undefined);
+      const res = await mobileApi.fetchFamilyLocationPoints(
+        wardId || undefined,
+        boothId || undefined,
+        wardCode,
+        assemblyCode || undefined,
+        updatedFrom || undefined,
+        updatedTo || undefined,
+      );
       const payload = res?.data?.result || res?.result || [];
       let points = (Array.isArray(payload) ? payload : [])
         .map(normalizeFamilyMapPoint)
@@ -250,14 +304,43 @@ function FamilyMapSection({
     } finally {
       setMapLoading(false);
     }
-  };
+  }, [
+    wardId,
+    wardCode,
+    boothId,
+    assemblyCode,
+    updatedFrom,
+    updatedTo,
+    availabilityFilterKey,
+    refreshToken,
+  ]);
 
   useEffect(() => {
     loadMapPoints();
     return () => {
       cleanupMapInstances();
     };
-  }, [wardId, wardCode, boothId, assemblyCode, fullDetails, availabilityFilter]);
+  }, [loadMapPoints]);
+
+  useEffect(() => {
+    const container = mapRef.current;
+    if (!container || !onFamilyEdit) return undefined;
+    const onMapClick = (event) => {
+      const button = event.target?.closest?.('[data-family-edit-id]');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const familyId = Number(button.getAttribute('data-family-edit-id'));
+      if (!familyId) return;
+      if (allowMapEdit) {
+        onFamilyEditRef.current?.({ familyId });
+      } else {
+        onMapEditBlockedRef.current?.();
+      }
+    };
+    container.addEventListener('click', onMapClick);
+    return () => container.removeEventListener('click', onMapClick);
+  }, [pointCount, onFamilyEdit, allowMapEdit]);
 
   useEffect(() => {
     const el = mapRef.current;
@@ -268,7 +351,7 @@ function FamilyMapSection({
     }, { threshold: 0.1 });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [mapLoading, pointCount]);
+  }, [pointCount]);
 
   return (
     <div className="mobile-web-family-map-block">
@@ -280,19 +363,14 @@ function FamilyMapSection({
           </button>
         ) : null}
       </div>
-      {fullDetails ? (
-        <p className="mobile-web-info-pill">
-          Assembly / Ward: road, building, family number, flat, family name, and member lines (voter name | EPIC | relation name | relation type) on marker hover.
-        </p>
-      ) : (
-        <p className="mobile-web-info-pill">Pending work map: status and address only (member details hidden).</p>
-      )}
+      {infoMessage ? <p className="mobile-web-info-pill">{infoMessage}</p> : null}
       <FamilyAvailabilityMapLegend compact={mapHeight !== '420px'} />
       {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
-      {mapLoading ? <div className="mobile-web-empty">Loading map...</div> : null}
+      {mapLoading && pointCount === 0 ? <div className="mobile-web-empty">Loading map...</div> : null}
       {!mapLoading && pointCount === 0 && !mapError ? (
         <div className="mobile-web-empty">
-          {wardId || wardCode ? 'No family locations found for this ward.' : 'No family locations found for the current filters.'}
+          {emptyHint
+            || (wardId || wardCode ? 'No families with GPS on the map for this ward.' : 'No families with GPS on the map for the current filters.')}
         </div>
       ) : null}
       <div className="mobile-web-map-container" ref={mapRef} style={{ height: mapHeight, minHeight: mapHeight }} />
@@ -459,9 +537,40 @@ function triggerVoterSlipPrint(voter, booth, template) {
 }
 function normalizeMobileValue(value) { return String(value || '').replace(/\D/g, '').slice(0, 10); }
 function maskTrailingValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  return raw.length > 4 ? `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}` : raw;
+  return maskFamilySensitiveValue(value);
+}
+
+function MaskedFamilyField({
+  label,
+  value,
+  onChange,
+  mask = false,
+  placeholder = '',
+  inputMode,
+  type = 'text',
+  readOnly = false,
+}) {
+  const [focused, setFocused] = useState(false);
+  const displayValue = mask && !focused ? maskFamilySensitiveValue(value) : value;
+  return (
+    <label className="mobile-web-field">
+      <span>{label}</span>
+      <input
+        className="mobile-web-input"
+        type={type}
+        placeholder={placeholder}
+        value={displayValue}
+        readOnly={readOnly || (mask && !focused)}
+        inputMode={inputMode}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(e) => {
+          if (mask && !focused) return;
+          onChange(e.target.value);
+        }}
+      />
+    </label>
+  );
 }
 function hiddenDobDisplay(value) {
   return String(value || '').trim() ? '' : '';
@@ -601,6 +710,15 @@ function isVoterMarkedVisitedLocally(epic) {
   }
 }
 
+function isProtectedVolunteerLogin(volunteer = {}) {
+  const level = String(volunteer.workingLevel || volunteer.assignmentType || '').toUpperCase();
+  const role = String(volunteer.role || '').replace(/^ROLE_/, '').toUpperCase();
+  const protectedLevels = new Set(['SUPER_ADMIN', 'ASSEMBLY', 'WARD']);
+  return protectedLevels.has(level) || protectedLevels.has(role);
+}
+
+const isAssemblyOrWardVolunteerLogin = isProtectedVolunteerLogin;
+
 function markVoterVisitedLocally(epic) {
   if (!epic || typeof window === 'undefined') return;
   try {
@@ -637,7 +755,7 @@ function normalizeBoothLocationLink(booth, templateLink) {
   const lat = booth?.latitude ?? booth?.lat ?? booth?.boothLat ?? booth?.booth_lat;
   const lng = booth?.longitude ?? booth?.lng ?? booth?.boothLng ?? booth?.booth_long;
   if (!lat || !lng) return '';
-  return getOsmExternalUrl(lat, lng);
+  return getGoogleExternalUrl(lat, lng);
 }
 function buildWhatsAppMessage(voter, booth, template) {
   const authority = template?.authorityName || 'Greater Bengaluru Authority';
@@ -742,19 +860,51 @@ function buildSMSMessage(voter, booth, template) {
 function getWardOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const labels = wards.map((ward) => ward.wardNameEn || `Ward ${ward.wardId}`); const unique = Array.from(new Set(labels.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function getBoothOptionsFromCache() { try { const raw = localStorage.getItem(BOOTH_CACHE_KEY); const parsed = JSON.parse(raw || '{}'); const wards = parsed?.assembly?.wards || []; const booths = wards.flatMap((ward) => (ward.booths || []).map((booth) => booth.boothNameEn || booth.nameEn || booth.booth_add_en || `Booth ${booth.boothId ?? booth.id ?? booth.booth_no ?? ''}`)); const unique = Array.from(new Set(booths.filter(Boolean))); if (!unique.includes('Others')) unique.push('Others'); return unique; } catch { return ['Others']; } }
 function MobileHeader({ title, subtitle, onBack, hideAvatar = false }) { return <div className={`mobile-web-list-topbar ${hideAvatar ? 'no-avatar' : ''}`}><button className="mobile-web-back-btn" onClick={onBack} type="button"><ArrowBackIosNewRounded fontSize="small" /></button><div className="mobile-web-header-copy"><h2>{title}</h2>{subtitle ? <div className="mobile-web-header-subtitle">{subtitle}</div> : null}</div>{hideAvatar ? <div /> : <div className="mobile-web-avatar"><PersonOutlineRounded /></div>}</div>; }
-function useDropdownDismiss(rootRef, onClose) {
+
+const MOBILE_WEB_CLOSE_DROPDOWNS_EVENT = 'mobile-web-close-dropdowns';
+
+function closeAllMobileWebDropdowns() {
+  if (typeof document !== 'undefined') {
+    document.dispatchEvent(new Event(MOBILE_WEB_CLOSE_DROPDOWNS_EVENT));
+  }
+}
+
+function openNativeDatePicker(input) {
+  if (!input) return;
+  if (typeof input.showPicker === 'function') {
+    try {
+      input.showPicker();
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  input.focus();
+  input.click();
+}
+
+function useDropdownDismiss(rootRef, onClose, panelRef) {
   useEffect(() => {
     const handleOutside = (event) => {
-      if (!rootRef.current?.contains(event.target)) onClose();
+      const target = event.target;
+      if (!target || !(target instanceof Node)) return;
+      const root = rootRef.current;
+      const panel = panelRef?.current;
+      if (root?.contains(target) || panel?.contains(target)) return;
+      onClose();
     };
+    const handleGlobalClose = () => onClose();
     document.addEventListener('mousedown', handleOutside);
-    // Use touchend so a scroll gesture that starts inside the panel does not dismiss on touchstart.
-    document.addEventListener('touchend', handleOutside, { passive: true });
+    document.addEventListener('pointerdown', handleOutside);
+    document.addEventListener('touchstart', handleOutside, { passive: true });
+    document.addEventListener(MOBILE_WEB_CLOSE_DROPDOWNS_EVENT, handleGlobalClose);
     return () => {
       document.removeEventListener('mousedown', handleOutside);
-      document.removeEventListener('touchend', handleOutside);
+      document.removeEventListener('pointerdown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+      document.removeEventListener(MOBILE_WEB_CLOSE_DROPDOWNS_EVENT, handleGlobalClose);
     };
-  }, [rootRef, onClose]);
+  }, [rootRef, panelRef, onClose]);
 }
 
 /** Open dropdown upward when there is not enough viewport space below the trigger. */
@@ -851,7 +1001,27 @@ function activateDropdownOption(event, shouldIgnore, onActivate) {
     event.stopPropagation();
     return;
   }
+  event.preventDefault();
+  event.stopPropagation();
   onActivate();
+}
+
+function FeatureUnavailableScreen({ message = 'This feature will be available soon.' }) {
+  const router = useRouter();
+  return (
+    <ScreenFrame accent="light">
+      <div className="mobile-web-feature-unavailable">
+        <p>{message}</p>
+        <button
+          type="button"
+          className="mobile-web-feature-unavailable__btn"
+          onClick={() => router.push('/mobile/search-voter')}
+        >
+          Check again
+        </button>
+      </div>
+    </ScreenFrame>
+  );
 }
 
 function filterNameSuggestions(suggestions, query, limit = 8) {
@@ -874,9 +1044,10 @@ function FamilySuggestInput({
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
+  const inputRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 200);
   const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
-  useDropdownDismiss(rootRef, () => setOpen(false));
+  useDropdownDismiss(rootRef, () => setOpen(false), panelRef);
   const filtered = useMemo(
     () => filterNameSuggestions(suggestions, value),
     [suggestions, value],
@@ -889,6 +1060,7 @@ function FamilySuggestInput({
     >
       <span>{label}{required ? '' : ''}</span>
       <input
+        ref={inputRef}
         className="mobile-web-input"
         placeholder={placeholder}
         value={value}
@@ -897,6 +1069,9 @@ function FamilySuggestInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 180);
+        }}
       />
       {open && filtered.length > 0 ? (
         <div
@@ -912,10 +1087,11 @@ function FamilySuggestInput({
                 type="button"
                 role="option"
                 className="mobile-web-suggestion-item"
-                onClick={(event) => {
+                onPointerUp={(event) => {
                   activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
                     onChange(item);
                     setOpen(false);
+                    inputRef.current?.blur();
                   });
                 }}
               >
@@ -933,7 +1109,7 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
-  useDropdownDismiss(rootRef, () => setOpen(false));
+  useDropdownDismiss(rootRef, () => setOpen(false), panelRef);
   const optionSet = new Set(options);
   const isUnknown = !!value && value !== 'Others' && !optionSet.has(value);
   const showOther = value === 'Others' || isUnknown || !!customValue;
@@ -970,6 +1146,12 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
                 role="option"
                 aria-selected={checked}
                 className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                onPointerUp={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                    onSelect(option);
+                    setOpen(false);
+                  });
+                }}
                 onClick={(event) => {
                   activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
                     onSelect(option);
@@ -989,6 +1171,7 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
           placeholder={`Enter ${label.toLowerCase()}`}
           value={otherValue}
           onChange={(e) => onCustomValueChange(e.target.value)}
+          onBlur={() => setOpen(false)}
         />
       ) : null}
     </div>
@@ -1001,7 +1184,7 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
   const panelRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 240);
   const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
-  useDropdownDismiss(rootRef, () => setOpen(false));
+  useDropdownDismiss(rootRef, () => setOpen(false), panelRef);
 
   const normalized = options.map((option) => (
     typeof option === 'string' ? { value: option, label: option } : option
@@ -1042,6 +1225,12 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
                 role="option"
                 aria-selected={checked}
                 className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                onPointerUp={(event) => {
+                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                    onChange(option.value);
+                    setOpen(false);
+                  });
+                }}
                 onClick={(event) => {
                   activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
                     onChange(option.value);
@@ -1067,7 +1256,7 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
   useDropdownDismiss(rootRef, () => {
     setOpen(false);
     setSearch('');
-  });
+  }, panelRef);
   const optionSet = new Set(options);
   const selectedLabels = value.filter((item) => item !== 'Others' && optionSet.has(item));
   const unknownLabels = value.filter((item) => item !== 'Others' && !optionSet.has(item));
@@ -1205,7 +1394,15 @@ function PrintableVoterSlip({ voter, booth, template, isPreview = false }) {
 }
 
 function VoterInfoScreen({ voter, booth, onBack, onSave }) {
-  const [activeTab, setActiveTab] = useState('PRIMARY');
+  const voterSubtabKey = useMemo(
+    () => subtabStorageKey('voter-info', voter?.epicNo || voter?.epic || voter?.voterId || 'unknown'),
+    [voter?.epicNo, voter?.epic, voter?.voterId],
+  );
+  const [activeTab, setActiveTab] = usePersistedSubtab(voterSubtabKey, 'PRIMARY', [
+    'PRIMARY',
+    'ADDITIONAL',
+    'NOTES',
+  ]);
   const [form, setForm] = useState(() => getDefaultVoterForm(voter));
   const [customValues, setCustomValues] = useState({});
   const [location, setLocation] = useState(
@@ -1214,7 +1411,6 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState({ type: '', text: '' });
   const [mobileFocused, setMobileFocused] = useState(false);
-  const [dobFocused, setDobFocused] = useState(false);
   const [whatsAppTemplate, setWhatsAppTemplate] = useState(null);
   const [smsTemplate, setSmsTemplate] = useState(null);
   const [templateChannel, setTemplateChannel] = useState('WHATSAPP');
@@ -1270,7 +1466,6 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     }
     setCustomValues({});
     setMobileFocused(false);
-    setDobFocused(false);
     if (!isSameVoter) {
       setBanner({ type: '', text: '' });
       setVoterActivation({ whatsapp: false, sms: false, print: false });
@@ -1374,9 +1569,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     if (!lat || !lng) return null;
     return { latitude: lat, longitude: lng };
   }, [location, voter]);
-  const mapSrc = mapTarget ? getOsmEmbedUrl(mapTarget.latitude, mapTarget.longitude) : '';
+  const mapSrc = mapTarget ? getGoogleEmbedUrl(mapTarget.latitude, mapTarget.longitude) : '';
 
   const handleFieldChange = (key, value) => {
+    closeAllMobileWebDropdowns();
     const nextValue = key === 'mobile' ? normalizeMobileValue(value) : value;
     setForm((prev) => ({ ...prev, [key]: nextValue }));
     if (nextValue !== 'Others') setCustomValues((prev) => ({ ...prev, [key]: prev[key] || '' }));
@@ -1403,7 +1599,6 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setCustomValues({});
     setBanner({ type: '', text: '' });
     setMobileFocused(false);
-    setDobFocused(false);
   };
 
   const getLocation = () => {
@@ -1443,7 +1638,6 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
       setForm(emptyVoterForm());
       setCustomValues({});
       setMobileFocused(false);
-      setDobFocused(false);
       onSave?.({
         ...voter,
         ...saved,
@@ -1557,28 +1751,40 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     }
     if (key === 'dob') {
       const storedDob = resolveSensitiveFieldValue('dob');
+      const showHiddenPlaceholder = visitDisplayMode && storedDob && !form.dob;
+      const dateValue = form.dob || (!showHiddenPlaceholder ? storedDob : '') || '';
       return (
-        <input
-          className="mobile-web-input"
-          type={dobFocused ? 'date' : 'text'}
-          readOnly={!dobFocused}
-          value={
-            dobFocused
-              ? (form[key] || storedDob)
-              : visitDisplayMode && storedDob
-                ? hiddenDobDisplay(storedDob)
-                : (form[key] || '')
-          }
-          placeholder={visitDisplayMode && storedDob && !dobFocused ? 'On file — tap to view or edit' : fieldLabels[key]}
-          onFocus={() => {
-            if (!form.dob && storedDob) {
-              setForm((prev) => ({ ...prev, dob: storedDob }));
-            }
-            setDobFocused(true);
-          }}
-          onBlur={() => setDobFocused(false)}
-          onChange={(e) => handleFieldChange(key, e.target.value)}
-        />
+        <div className={`mobile-web-date-field ${showHiddenPlaceholder ? 'is-masked' : ''}`}>
+          {showHiddenPlaceholder ? (
+            <span className="mobile-web-date-placeholder" aria-hidden="true">
+              On file — tap calendar to pick date
+            </span>
+          ) : null}
+          <input
+            ref={dobInputRef}
+            className="mobile-web-input mobile-web-date-input"
+            type="date"
+            value={dateValue}
+            max={new Date().toISOString().slice(0, 10)}
+            aria-label={fieldLabels[key]}
+            onChange={(e) => handleFieldChange(key, e.target.value)}
+            onClick={(e) => {
+              closeAllMobileWebDropdowns();
+              openNativeDatePicker(e.currentTarget);
+            }}
+          />
+          <button
+            type="button"
+            className="mobile-web-date-picker-btn"
+            aria-label="Open date of birth picker"
+            onClick={() => {
+              closeAllMobileWebDropdowns();
+              openNativeDatePicker(dobInputRef.current);
+            }}
+          >
+            <CalendarMonthOutlined fontSize="small" />
+          </button>
+        </div>
       );
     }
     if (key === 'ifShifted') {
@@ -1596,8 +1802,11 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const handleTabChange = (tab) => {
+    closeAllMobileWebDropdowns();
     setActiveTab(tab);
   };
+
+  const dobInputRef = useRef(null);
 
   const [printTemplate, setPrintTemplate] = useState(null);
   useEffect(() => {
@@ -1767,14 +1976,24 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
             <div className="mobile-web-map-placeholder">Location optional — capture to preview map.</div>
           )}
         </div>
-        <button className="mobile-web-location-btn" onClick={getLocation} type="button">
+        <button
+          className="mobile-web-location-btn"
+          onClick={() => {
+            closeAllMobileWebDropdowns();
+            getLocation();
+          }}
+          type="button"
+        >
           <LocationOnOutlined />
           <span>{location ? 'Location Captured' : 'Get Location (optional)'}</span>
         </button>
         <div className="mobile-web-contact-actions">
           <button
             className={`mobile-web-contact-btn ${!canSendSms ? 'is-disabled' : ''}`}
-            onClick={openSms}
+            onClick={() => {
+              closeAllMobileWebDropdowns();
+              openSms();
+            }}
             type="button"
             disabled={!canSendSms}
           >
@@ -1783,14 +2002,24 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           </button>
           <button
             className={`mobile-web-contact-btn ${!canSendWhatsApp ? 'is-disabled' : ''}`}
-            onClick={openWhatsApp}
+            onClick={() => {
+              closeAllMobileWebDropdowns();
+              openWhatsApp();
+            }}
             type="button"
             disabled={!canSendWhatsApp}
           >
             <WhatsApp />
             <span>WhatsApp</span>
           </button>
-          <button className="mobile-web-contact-btn" onClick={openCall} type="button">
+          <button
+            className="mobile-web-contact-btn"
+            onClick={() => {
+              closeAllMobileWebDropdowns();
+              openCall();
+            }}
+            type="button"
+          >
             <PhoneOutlined />
             <span>Call</span>
           </button>
@@ -2107,7 +2336,11 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     relationName: '',
     houseNumber: '',
   });
-  const [view, setView] = useState('search');
+  const searchVoterSubtabKey = useMemo(
+    () => subtabStorageKey('search-voter', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const [view, setView] = usePersistedSubtab(searchVoterSubtabKey, 'search', ['search', 'list']);
   const [voterResults, setVoterResults] = useState([]);
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [page, setPage] = useState(0);
@@ -2789,10 +3022,14 @@ function PromotionsScreen({ assemblyCodeProp }) {
 
   const parseLatLng = (link) => {
     if (!link) return null;
+    const googleQ = link.match(/[?&]q=([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
+    if (googleQ) return { lat: parseFloat(googleQ[1]), lng: parseFloat(googleQ[2]) };
     const osmMatch = link.match(/mlat=([-+]?\d*\.?\d+)[^&]*(?:&|&amp;)mlon=([-+]?\d*\.?\d+)/);
     if (osmMatch) return { lat: parseFloat(osmMatch[1]), lng: parseFloat(osmMatch[2]) };
     const match = link.match(/query=([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
     if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+    const centerMatch = link.match(/center=([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
+    if (centerMatch) return { lat: parseFloat(centerMatch[1]), lng: parseFloat(centerMatch[2]) };
     const hashMatch = link.match(/#map=\d+\/([-+]?\d*\.?\d+)\/([-+]?\d*\.?\d+)/);
     if (hashMatch) return { lat: parseFloat(hashMatch[1]), lng: parseFloat(hashMatch[2]) };
     const simple = link.match(/([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)/);
@@ -2815,7 +3052,7 @@ function PromotionsScreen({ assemblyCodeProp }) {
         onPositionChange: (lat, lng) => {
           setForm((prev) => ({
             ...prev,
-            boothLocationLink: getOsmExternalUrl(lat, lng),
+            boothLocationLink: getGoogleExternalUrl(lat, lng),
           }));
         },
       });
@@ -3905,6 +4142,14 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
     setSaving(true);
     setFeedback({ error: '', success: '' });
     try {
+      if (isEditing && isProtectedVolunteerLogin(form)) {
+        setFeedback({
+          error: 'Super Admin, Assembly, and Ward level logins cannot be updated. Contact an administrator.',
+          success: '',
+        });
+        setSaving(false);
+        return;
+      }
       const assignment = resolveAssignment();
       if (!assignment) {
         setFeedback({ error: 'Please complete the assignment selection.', success: '' });
@@ -4111,7 +4356,18 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
           </div>
           <div className="mobile-web-actions">
             <button className="mobile-web-secondary-btn" type="button" onClick={handleReset}>Reset</button>
-            <button className="mobile-web-primary-btn" type="button" onClick={handleSubmit} disabled={saving}>{saving ? (isEditing ? 'Updating...' : 'Submitting...') : (isEditing ? 'Update' : 'Submit')}</button>
+            <button
+              className="mobile-web-primary-btn"
+              type="button"
+              onClick={handleSubmit}
+              disabled={saving || (isEditing && isProtectedVolunteerLogin(form))}
+              title={isEditing && isProtectedVolunteerLogin(form) ? 'Super Admin, Assembly, and Ward logins cannot be updated here' : undefined}
+            >
+              {saving ? (isEditing ? 'Updating...' : 'Submitting...') : (isEditing ? 'Update' : 'Submit')}
+            </button>
+          {isEditing && isProtectedVolunteerLogin(form) ? (
+            <p className="mobile-web-form-hint-row">Super Admin, Assembly, and Ward level logins are read-only. Contact an administrator to change these accounts.</p>
+          ) : null}
           </div>
           {feedback.error ? <div className="mobile-web-error">{feedback.error}</div> : null}
           {feedback.success ? <div className="mobile-web-success">{feedback.success}</div> : null}
@@ -4301,6 +4557,13 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
 
   const handleEdit = (v) => {
     if (typeof window === 'undefined') return;
+    if (isProtectedVolunteerLogin(v)) {
+      setFeedback({
+        error: 'Super Admin, Assembly, and Ward level logins cannot be edited here. Contact an administrator.',
+        success: '',
+      });
+      return;
+    }
     const assignmentType = (v.workingLevel || v.assignmentType || 'ASSEMBLY').toUpperCase();
     const assignmentIds = String(v.assignmentId || '').split(',').map((val) => val.trim()).filter(Boolean);
     const payload = {
@@ -4502,13 +4765,22 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
                         </div>
                       </div>
                       <div className="mobile-web-volunteer-inline-actions">
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(v)}
-                          className="px-4 py-2 text-sm font-medium text-white rounded-lg transition bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
-                        >
-                          Edit
-                        </button>
+                        {!isProtectedVolunteerLogin(v) ? (
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(v)}
+                            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+                          >
+                            Edit
+                          </button>
+                        ) : (
+                          <span
+                            className="px-4 py-2 text-sm font-medium text-slate-500 rounded-lg border border-slate-200 bg-slate-50 cursor-not-allowed"
+                            title="Super Admin, Assembly, and Ward logins cannot be edited"
+                          >
+                            Edit disabled
+                          </span>
+                        )}
                         {/* <button className="mobile-web-secondary-btn" type="button" onClick={() => handleDelete(v.userName, !deleted)} disabled={actionLoading[`delete-${v.userName}`]}>
                           {actionLoading[`delete-${v.userName}`] ? <span className="mobile-web-spinner" /> : null}
                           {deleted ? 'Undelete' : 'Delete'}
@@ -4628,7 +4900,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [location, setLocation] = useState(null);
-  const [activeTab, setActiveTab] = useState('NEW'); // NEW | PENDING_MAP | LIST | MAP
   const [families, setFamilies] = useState([]);
   const searchTimerRef = useRef(null);
   const [mounted, setMounted] = useState(false);
@@ -4651,11 +4922,25 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const [familyDetailFrom, setFamilyDetailFrom] = useState('');
   const [familyDetailTo, setFamilyDetailTo] = useState('');
   const [analysisVisibleCount, setAnalysisVisibleCount] = useState(FAMILY_ANALYSIS_LAZY_STEP);
+  const [pendingListVisibleCount, setPendingListVisibleCount] = useState(PENDING_FAMILY_LIST_LAZY_STEP);
+  const [familyDataRefreshToken, setFamilyDataRefreshToken] = useState(0);
   const [familyDetailPage, setFamilyDetailPage] = useState(0);
   const [familyDetailHasMore, setFamilyDetailHasMore] = useState(false);
   const [familyDetailLoadingMore, setFamilyDetailLoadingMore] = useState(false);
   const [familyDetailTotal, setFamilyDetailTotal] = useState(0);
+  const [editingFamilyId, setEditingFamilyId] = useState(null);
+  const [editingFamilyMeta, setEditingFamilyMeta] = useState(null);
+  const [editFamilyLoading, setEditFamilyLoading] = useState(false);
+  const [editFamilySourceTab, setEditFamilySourceTab] = useState('PENDING_MAP');
   const userInfo = useMemo(() => (mounted ? getUserInfoSafe() : {}), [mounted]);
+
+  const familyAvailabilitySelectOptions = useMemo(
+    () => FAMILY_AVAILABILITY_OPTIONS.map((item) => ({
+      value: item,
+      label: formatFamilyAvailabilityLabel(item),
+    })),
+    [],
+  );
 
   const accessWardIds = useMemo(() => {
     const ids = [];
@@ -4683,6 +4968,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     ['ASSEMBLY', 'WARD'].includes(role) ||
     (Boolean(assemblyCodeProp) && isAdminUser);
 
+  const canViewFamilyMapMemberDetails = canViewFamilyMapTab;
+
   const familySectionTabs = useMemo(() => {
     const tabs = [
       { id: 'NEW', label: 'New Family' },
@@ -4692,6 +4979,32 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     if (canViewFamilyMapTab) tabs.push({ id: 'MAP', label: 'Family Analysis - Map' });
     return tabs;
   }, [canViewFamiliesList, canViewFamilyMapTab]);
+
+  const familyTabIds = useMemo(() => familySectionTabs.map((tab) => tab.id), [familySectionTabs]);
+  const familySubtabKey = useMemo(
+    () => subtabStorageKey('voters-family', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const [activeTab, setActiveTab] = usePersistedSubtab(familySubtabKey, 'NEW', familyTabIds);
+
+  const isFamilyEditMode = Boolean(editingFamilyId) && activeTab === 'NEW';
+
+  const canEditFamilyRecord = role === 'BOOTH';
+
+  const FAMILY_EDIT_DENIED_MSG = 'Access denied. Editable by booth level users only.';
+
+  const handleFamilyEditBlocked = useCallback(() => {
+    setError(FAMILY_EDIT_DENIED_MSG);
+    setSuccess('');
+  }, []);
+
+  const tryOpenFamilyEdit = useCallback((familyId, sourceTab = 'PENDING_MAP') => {
+    if (!canEditFamilyRecord) {
+      handleFamilyEditBlocked();
+      return;
+    }
+    openFamilyEditRef.current?.(familyId, sourceTab);
+  }, [canEditFamilyRecord, handleFamilyEditBlocked]);
 
   const selectedWard = useMemo(() => {
     if (selectedWardId) {
@@ -4710,6 +5023,18 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     () => [{ value: '', label: 'All Wards' }, ...wardItems],
     [wardItems]
   );
+
+  const newFamilyWardSelectOptions = useMemo(() => {
+    const base = wardItems.map((ward) => ({ value: ward.value, label: ward.label }));
+    if (!editingFamilyId || !editingFamilyMeta?.wardId) return base;
+    const wardIdStr = String(editingFamilyMeta.wardId);
+    if (base.some((item) => item.value === wardIdStr)) return base;
+    const fromList = wardItems.find((w) => w.value === wardIdStr);
+    const label = fromList?.label
+      || editingFamilyMeta.wardLabel
+      || (editingFamilyMeta.wardCode ? `Ward ${editingFamilyMeta.wardCode}` : `Ward ${wardIdStr}`);
+    return [{ value: wardIdStr, label }, ...base];
+  }, [wardItems, editingFamilyId, editingFamilyMeta]);
 
   const effectiveAnalysisWardId = selectedWardId || undefined;
 
@@ -4845,6 +5170,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       setFamilies([]);
       return undefined;
     }
+    if (activeTab !== 'NEW' && activeTab !== 'PENDING_MAP' && activeTab !== 'LIST' && activeTab !== 'MAP') {
+      return undefined;
+    }
     let cancelled = false;
     mobileApi.fetchAllFamilies(undefined, undefined, wardIdForFetch, assemblyCodeForFamily || undefined)
       .then((all) => {
@@ -4858,10 +5186,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!wardItems.length) return;
-    if (activeTab === 'NEW' && !selectedWardId) {
+    if (activeTab === 'NEW' && !selectedWardId && !editingFamilyId && !editFamilyLoading) {
       setSelectedWardId(wardItems[0].value);
     }
-  }, [activeTab, wardItems, selectedWardId]);
+  }, [activeTab, wardItems, selectedWardId, editingFamilyId, editFamilyLoading]);
 
   useEffect(() => {
     setMounted(true);
@@ -4872,6 +5200,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   }, []);
 
   const resetNewFamilyForm = () => {
+    setEditingFamilyId(null);
+    setEditingFamilyMeta(null);
     setFamilyName('');
     setRoadName('');
     setBuildingNumber('');
@@ -4900,9 +5230,27 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     setSuccess('');
   };
 
+  const handleFamilySubtabChange = useCallback((tabId) => {
+    if (tabId === 'NEW' && activeTab === 'NEW' && editingFamilyId) {
+      resetNewFamilyForm();
+      if (wardItems[0]?.value) setSelectedWardId(wardItems[0].value);
+      return;
+    }
+    if (tabId !== 'NEW' && editingFamilyId) {
+      resetNewFamilyForm();
+    }
+    setActiveTab(tabId);
+  }, [activeTab, editingFamilyId, setActiveTab, wardItems]);
+
+  useEffect(() => {
+    if (activeTab !== 'NEW' && editingFamilyId) {
+      resetNewFamilyForm();
+    }
+  }, [activeTab]);
+
   useEffect(() => {
     if (!mounted || !assemblyCodeProp) return undefined;
-    if (activeTab !== 'NEW') return undefined;
+    if (activeTab !== 'NEW' && !editingFamilyId) return undefined;
     const wardId = selectedWardId || wardItems[0]?.value || '';
     if (!wardId) {
       setBoothItems([{ value: '', label: 'All Booths' }]);
@@ -4923,7 +5271,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       if (active) setBoothItems([{ value: '', label: 'All Booths' }]);
     });
     return () => { active = false; };
-  }, [mounted, assemblyCodeProp, selectedWardId, wardItems, activeTab]);
+  }, [mounted, assemblyCodeProp, selectedWardId, wardItems, activeTab, editingFamilyId]);
 
   const loadFamilyAnalysis = async () => {
     setAnalysisLoading(true);
@@ -4961,6 +5309,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     'headEpicNo',
     'memberCount',
     'familyAvailability',
+    'updatedByName',
+    'updatedByPhone',
   ];
 
   const normalizeDetailMembers = (members) =>
@@ -5049,11 +5399,21 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
-    if (activeTab === 'LIST' && mounted) {
+    if (!mounted) return;
+    if (activeTab === 'LIST') {
       loadFamilyAnalysis();
+      loadFamilyDetails(true);
+    } else if (activeTab === 'PENDING_MAP') {
       loadFamilyDetails(true);
     }
   }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily]);
+
+  useEffect(() => {
+    if (activeTab !== 'NEW') {
+      setError('');
+      setSuccess('');
+    }
+  }, [activeTab]);
 
   const analysisViewOptions = [
     { label: 'Agent wise', value: 'agent' },
@@ -5102,6 +5462,72 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     return familyDetailRows.filter((row) => allowed.has(String(row.familyAvailability || '').trim()));
   }, [familyDetailRows, analysisAvailabilityFilter]);
 
+  const pendingFilteredDetailRows = useMemo(() => {
+    const allowed = new Set(pendingAvailabilityFilter.map((v) => String(v).trim()));
+    if (!allowed.size || allowed.size >= FAMILY_AVAILABILITY_OPTIONS.length) return familyDetailRows;
+    return familyDetailRows.filter((row) => allowed.has(String(row.familyAvailability || '').trim()));
+  }, [familyDetailRows, pendingAvailabilityFilter]);
+
+  const pendingFilteredOnMapRows = useMemo(
+    () => pendingFilteredDetailRows.filter((row) => hasValidFamilyMapLocation(row)),
+    [pendingFilteredDetailRows],
+  );
+
+  const pendingFilteredNoMapRows = useMemo(
+    () => pendingFilteredDetailRows.filter((row) => !hasValidFamilyMapLocation(row)),
+    [pendingFilteredDetailRows],
+  );
+
+  const pendingListVisibleSections = useMemo(() => {
+    const onMap = pendingFilteredOnMapRows;
+    const noMap = pendingFilteredNoMapRows;
+    const onMapShown = onMap.slice(0, pendingListVisibleCount);
+    const remaining = Math.max(0, pendingListVisibleCount - onMapShown.length);
+    const noMapShown = remaining > 0 ? noMap.slice(0, remaining) : [];
+    return { onMapShown, noMapShown, total: onMap.length + noMap.length };
+  }, [pendingFilteredOnMapRows, pendingFilteredNoMapRows, pendingListVisibleCount]);
+
+  const canLoadMorePendingList =
+    pendingListVisibleSections.onMapShown.length + pendingListVisibleSections.noMapShown.length
+    < pendingListVisibleSections.total;
+
+  const loadMorePendingListRows = useCallback(() => {
+    setPendingListVisibleCount((count) =>
+      Math.min(count + PENDING_FAMILY_LIST_LAZY_STEP, pendingListVisibleSections.total),
+    );
+  }, [pendingListVisibleSections.total]);
+
+  const pendingListLazySentinelRef = useInfiniteTrigger(
+    canLoadMorePendingList && !familyDetailLoading,
+    loadMorePendingListRows,
+  );
+
+  useEffect(() => {
+    setPendingListVisibleCount(PENDING_FAMILY_LIST_LAZY_STEP);
+  }, [selectedWardId, pendingAvailabilityFilter.join('|'), activeTab]);
+
+  useEffect(() => {
+    if (!editingFamilyId || editFamilyLoading || !wardItems.length || editingFamilyMeta?.wardId == null) {
+      return;
+    }
+    const wardIdStr = String(editingFamilyMeta.wardId);
+    const match = wardItems.find((w) => w.value === wardIdStr)
+      || (editingFamilyMeta.wardCode
+        ? wardItems.find((w) => String(w.wardCode) === String(editingFamilyMeta.wardCode))
+        : null);
+    const next = match?.value || wardIdStr;
+    setSelectedWardId((current) => (current === next ? current : next));
+  }, [editingFamilyId, editFamilyLoading, wardItems, editingFamilyMeta]);
+
+  const pendingMapEmptyHint = useMemo(() => {
+    if (pendingFilteredOnMapRows.length > 0) return '';
+    if (pendingFilteredNoMapRows.length > 0) {
+      const n = pendingFilteredNoMapRows.length;
+      return `${n} famil${n === 1 ? 'y' : 'ies'} in this ward have no GPS yet — they appear in the list below. Tap Edit and capture household location to show on the map.`;
+    }
+    return '';
+  }, [pendingFilteredOnMapRows.length, pendingFilteredNoMapRows.length]);
+
   const visibleAnalysisRows = useMemo(
     () => sortedAnalysisRows.slice(0, analysisVisibleCount),
     [sortedAnalysisRows, analysisVisibleCount],
@@ -5117,6 +5543,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     canLoadMoreAnalysis && !analysisLoading,
     loadMoreAnalysisRows,
   );
+
+  const refreshFamilyAnalysisData = () => {
+    setFamilyDataRefreshToken((token) => token + 1);
+    loadFamilyAnalysis();
+    loadFamilyDetails(true);
+  };
 
   const familyDetailLazySentinelRef = useInfiniteTrigger(
     familyDetailHasMore && !familyDetailLoading && !familyDetailLoadingMore,
@@ -5157,6 +5589,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     latitude: 'Latitude',
     longitude: 'Longitude',
     lastUpdatedAt: 'Last Updated At',
+    updatedByName: 'Updated By Name',
+    updatedByPhone: 'Updated By Number',
   }[key] || (familyDetailFields.find((f) => f.key === key)?.label) || key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()));
 
   const buildFamilyAnalysisExport = () => {
@@ -5256,6 +5690,199 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const downloadFamilyAnalysisXls = () =>
     runFamilyExport(buildFamilyAnalysisExport, downloadXlsFile, 'families-analysis.xls');
 
+  const renderPendingFamilyMapFilters = (availabilityFilter, setAvailabilityFilter) => (
+    <>
+      <div className="mobile-web-form-grid mobile-web-pending-map-filters mobile-web-family-ward-row" style={{ marginBottom: '12px' }}>
+        <label className="mobile-web-field">
+          <span>Ward</span>
+          <PremiumSelect
+            label="Ward"
+            options={familyWardSelectOptions}
+            value={selectedWardId}
+            onChange={setSelectedWardId}
+          />
+        </label>
+      </div>
+      <FamilyAvailabilityFilterChips
+        selected={availabilityFilter}
+        onChange={setAvailabilityFilter}
+      />
+    </>
+  );
+
+  const renderFamilyAnalysisFilters = (availabilityFilter, setAvailabilityFilter) => (
+    <>
+      <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
+        <label className="mobile-web-field">
+          <span>Ward</span>
+          <PremiumSelect
+            label="Ward"
+            options={familyWardSelectOptions}
+            value={selectedWardId}
+            onChange={setSelectedWardId}
+          />
+        </label>
+        <label className="mobile-web-field">
+          <span>View</span>
+          <PremiumSelect
+            label="View"
+            options={analysisViewOptions}
+            value={analysisViewMode}
+            onChange={setAnalysisViewMode}
+          />
+        </label>
+        {analysisViewMode === 'agent' ? (
+          <label className="mobile-web-field">
+            <span>Sort By</span>
+            <PremiumSelect
+              label="Sort By"
+              options={analysisSortOptions}
+              value={analysisSortMode}
+              onChange={setAnalysisSortMode}
+            />
+          </label>
+        ) : null}
+        <label className="mobile-web-field">
+          <span>Updated From</span>
+          <input className="mobile-web-input" type="date" value={familyDetailFrom} onChange={(e) => setFamilyDetailFrom(e.target.value)} />
+        </label>
+        <label className="mobile-web-field">
+          <span>Updated To</span>
+          <input className="mobile-web-input" type="date" value={familyDetailTo} onChange={(e) => setFamilyDetailTo(e.target.value)} />
+        </label>
+      </div>
+      <FamilyAvailabilityFilterChips
+        selected={availabilityFilter}
+        onChange={setAvailabilityFilter}
+      />
+      <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
+        <button
+          type="button"
+          className="mobile-web-primary-btn"
+          onClick={refreshFamilyAnalysisData}
+          disabled={analysisLoading || familyDetailLoading}
+        >
+          {analysisLoading || familyDetailLoading ? 'Refreshing...' : 'Get Latest Data'}
+        </button>
+        <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisCsv} disabled={!sortedAnalysisRows.length}>
+          Download CSV
+        </button>
+        <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisXls} disabled={!sortedAnalysisRows.length}>
+          Download Excel
+        </button>
+      </div>
+    </>
+  );
+
+  const renderFamilyAnalysisSummaryTable = (activeFields) => {
+    if (analysisLoading) return <div className="mobile-web-empty">Loading family analysis...</div>;
+    if (!sortedAnalysisRows.length) return <div className="mobile-web-empty">No family analysis data found.</div>;
+    return (
+      <div className="mobile-web-analysis-table-wrap mobile-web-analysis-table-scroll" style={{ marginBottom: '16px' }}>
+        <table className="mobile-web-analysis-table">
+          <thead>
+            <tr>
+              <th>S No</th>
+              {analysisViewMode === 'agent' ? (
+                <>
+                  <th>Agent Name</th>
+                  <th>Agent Mobile</th>
+                </>
+              ) : null}
+              {analysisViewMode === 'date' ? (
+                <>
+                  <th>Date</th>
+                  <th>Agents Worked</th>
+                  <th>Booths Covered</th>
+                </>
+              ) : null}
+              {analysisViewMode === 'ward' ? (
+                <>
+                  <th>Ward</th>
+                  <th>Agents</th>
+                  <th>Booths</th>
+                </>
+              ) : null}
+              {analysisViewMode === 'booth' ? (
+                <>
+                  <th>Booth No.</th>
+                  <th>Agents</th>
+                </>
+              ) : null}
+              <th>Total Buildings visited</th>
+              <th>Total Families visited</th>
+              {activeFields.map((field) => (
+                <th key={field.key}>{formatFamilyAvailabilityLabel(field.label)}</th>
+              ))}
+              <th>Last Updated At</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleAnalysisRows.map((row, index) => (
+              <tr key={row.userId || row.groupKey || row.label || `${index}-${row.agentName}`}>
+                <td>{index + 1}</td>
+                {analysisViewMode === 'agent' ? (
+                  <>
+                    <td>{row.agentName || '-'}</td>
+                    <td>{row.phone || '-'}</td>
+                  </>
+                ) : null}
+                {analysisViewMode === 'date' ? (
+                  <>
+                    <td>{row.label || row.groupKey || '-'}</td>
+                    <td>{row.agentsWorked ?? 0}</td>
+                    <td>{row.boothsCovered ?? 0}</td>
+                  </>
+                ) : null}
+                {analysisViewMode === 'ward' ? (
+                  <>
+                    <td>{row.label || row.groupKey || '-'}</td>
+                    <td>{row.agentsWorked ?? 0}</td>
+                    <td>{row.boothsCovered ?? 0}</td>
+                  </>
+                ) : null}
+                {analysisViewMode === 'booth' ? (
+                  <>
+                    <td>{row.label || row.groupKey || '-'}</td>
+                    <td>{row.agentsWorked ?? 0}</td>
+                  </>
+                ) : null}
+                <td>{row.totalBuildings ?? 0}</td>
+                <td>{row.totalFamilies ?? 0}</td>
+                {activeFields.map((field) => (
+                  <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
+                ))}
+                <td>{formatFamilyDateTime(row.lastUpdatedAt)}</td>
+              </tr>
+            ))}
+            {analysisViewMode === 'agent' ? (
+              <tr className="mobile-web-analysis-total">
+                <td>Total</td>
+                <td>-</td>
+                <td>-</td>
+                <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalBuildings) || 0), 0)}</td>
+                <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalFamilies) || 0), 0)}</td>
+                {activeFields.map((field) => (
+                  <td key={`total-${field.key}`}>
+                    {sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
+                  </td>
+                ))}
+                <td>-</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+        {canLoadMoreAnalysis ? (
+          <div ref={analysisLazySentinelRef} className="mobile-web-lazy-load-sentinel">
+            {analysisLoading ? null : (
+              <span>Scroll for more ({visibleAnalysisRows.length} of {sortedAnalysisRows.length})</span>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   const downloadFamilyDetailCsv = () =>
     runFamilyExport(buildFamilyDetailExport, downloadCsvFile, 'families-details.csv');
 
@@ -5266,6 +5893,174 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     if (key === 'lastUpdatedAt') return formatFamilyDateTime(row?.[key]);
     if (typeof row?.[key] === 'boolean') return row[key] ? 'Yes' : 'No';
     return row?.[key] ?? '-';
+  };
+
+  const populateFormFromFamilyDto = (fam = {}) => {
+    const headMember = (fam.members || []).find((m) => m.head || m.is_head) || (fam.members || [])[0];
+    const mappedMembers = (fam.members || []).map((m, index) => ({
+      id: `${m.epicNo || m.voterName || 'member'}-${index}`,
+      name: m.voterName || m.epicNo || 'Member',
+      epic: m.epicNo || '',
+      relation: m.relationName || m.rel_eng || '',
+      phone: '',
+      houseNo: '',
+      boothId: fam.boothId || '',
+      rawVoter: { epicNo: m.epicNo, firstMiddleNameEn: m.voterName },
+    }));
+    setFamilyName(fam.familyName || '');
+    setRoadName(fam.roadName || '');
+    setBuildingNumber(fam.buildingNumber || '');
+    setBuildingName(fam.buildingName || '');
+    setFlatNumber(fam.flatNumber || '');
+    setFamilyNumber(fam.familyNumber || '');
+    setTagLeader(fam.tagLeader || '');
+    setFamilyAvailability(fam.familyAvailability || 'Available');
+    setBuildingAddress(fam.buildingAddress || fam.familyAddress || '');
+    setHasAssociation(Boolean(fam.hasAssociation));
+    setAssociationName(fam.associationName || '');
+    setAssociationHeadName(fam.associationHeadName || '');
+    setAssociationHeadPhone(fam.associationHeadPhone || '');
+    setHeadPhone(fam.phone || '');
+    setEconomicStatus(fam.economicStatus || 'NA');
+    setFamilyNature(fam.familyNature || 'NA');
+    setFamilyPoints(String(fam.points ?? '5'));
+    setMembers(mappedMembers);
+    const headId = mappedMembers.find((m) => m.epic === (fam.headEpicNo || headMember?.epicNo))?.id
+      || mappedMembers[0]?.id
+      || '';
+    setHeadOfFamily(headId);
+    if (fam.latitude != null && fam.longitude != null) {
+      setLocation({ latitude: Number(fam.latitude), longitude: Number(fam.longitude) });
+    } else {
+      setLocation(null);
+    }
+    const wardIdFromFamily = fam.wardId ?? fam.ward_id;
+    const wardCodeFromFamily = fam.wardCode ?? fam.ward_code;
+    let resolvedWardId = wardIdFromFamily != null ? String(wardIdFromFamily) : '';
+    if (!resolvedWardId && wardCodeFromFamily && wardItems.length) {
+      const byCode = wardItems.find((w) => String(w.wardCode) === String(wardCodeFromFamily));
+      if (byCode) resolvedWardId = byCode.value;
+    }
+    if (resolvedWardId) setSelectedWardId(resolvedWardId);
+    const matchedWard = wardItems.find((w) => w.value === resolvedWardId);
+    setEditingFamilyMeta({
+      familyId: fam.familyId,
+      boothId: fam.boothId,
+      wardId: wardIdFromFamily ?? (resolvedWardId ? Number(resolvedWardId) : null),
+      wardCode: wardCodeFromFamily || matchedWard?.wardCode,
+      wardLabel: matchedWard?.label,
+      familyNumber: fam.familyNumber,
+    });
+  };
+
+  const openFamilyEditRef = useRef(null);
+
+  const openFamilyEdit = async (familyId, sourceTab = 'PENDING_MAP') => {
+    const id = Number(familyId);
+    if (!id) return;
+    if (!canEditFamilyRecord) {
+      handleFamilyEditBlocked();
+      return;
+    }
+    setEditFamilySourceTab(sourceTab);
+    setActiveTab('NEW');
+    setEditFamilyLoading(true);
+    setError('');
+    setSuccess('');
+    setEditingFamilyId(id);
+    try {
+      const res = await mobileApi.fetchFamilyById(id);
+      const fam = res?.data?.result || res?.data || res?.result || res;
+      if (!fam?.familyId) throw new Error('Family not found.');
+      populateFormFromFamilyDto(fam);
+      setEditingFamilyId(fam.familyId);
+    } catch (err) {
+      setEditingFamilyId(null);
+      setEditingFamilyMeta(null);
+      setError(formatApiError(err, 'Unable to load family for edit.'));
+    } finally {
+      setEditFamilyLoading(false);
+    }
+  };
+  openFamilyEditRef.current = openFamilyEdit;
+
+  const handlePendingMapFamilyEdit = useCallback((point) => {
+    tryOpenFamilyEdit(point?.familyId, 'PENDING_MAP');
+  }, [tryOpenFamilyEdit]);
+
+  const handleAnalysisMapFamilyEdit = useCallback((point) => {
+    tryOpenFamilyEdit(point?.familyId, 'MAP');
+  }, [tryOpenFamilyEdit]);
+
+  const closeFamilyEdit = () => {
+    const tab = editFamilySourceTab;
+    resetNewFamilyForm();
+    setActiveTab(tab);
+  };
+
+  const handleSaveFamilyEdit = async () => {
+    if (!editingFamilyId || !editingFamilyMeta) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      if (!location?.latitude || !location?.longitude) {
+        throw new Error('Location is required. Please capture location before updating.');
+      }
+      if (!familyName.trim()) throw new Error('Family name is required');
+      if (!roadName.trim()) throw new Error('Road name is required');
+      if (members.length === 0) throw new Error('At least one family member is required');
+      if (!headOfFamily) throw new Error('Please pick a head of family');
+      const headMember = members.find((m) => m.id === headOfFamily);
+      if (!headMember?.epic) throw new Error('Invalid head of family selected');
+      if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
+        throw new Error('Building/Apartment Number, Building/Apartment Name, and Flat Number are required');
+      }
+      const wardIdForUpdate = editingFamilyMeta.wardId || selectedWardId || wardItems[0]?.value;
+      const boothIdForUpdate = editingFamilyMeta.boothId
+        || members.map((m) => m.boothId).find(Boolean)
+        || resolveFamilyCreateBoothId(boothItems, '');
+      if (!wardIdForUpdate || !boothIdForUpdate) {
+        throw new Error('Ward and booth are required to update this family.');
+      }
+      const payload = {
+        familyName: familyName.trim(),
+        roadName: roadName.trim(),
+        buildingNumber: buildingNumber.trim() || null,
+        buildingName: buildingName.trim() || null,
+        flatNumber: flatNumber.trim() || null,
+        familyNumber: editingFamilyMeta.familyNumber || familyNumber.trim() || null,
+        tagLeader: tagLeader.trim() || null,
+        familyAvailability,
+        buildingAddress: buildingAddress.trim() || null,
+        hasAssociation,
+        associationName: hasAssociation ? associationName.trim() || null : null,
+        associationHeadName: hasAssociation ? associationHeadName.trim() || null : null,
+        associationHeadPhone: hasAssociation ? associationHeadPhone.trim() || null : null,
+        phone: headPhone || headMember.phone,
+        points: parseInt(familyPoints, 10) || 0,
+        pointsProvided: 0,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        boothId: parseInt(boothIdForUpdate, 10),
+        wardId: parseInt(wardIdForUpdate, 10),
+        headEpicNo: headMember.epic,
+        memberEpicNos: members.map((m) => m.epic).filter(Boolean),
+        economicStatus,
+        familyNature,
+      };
+      await mobileApi.updateFamily(editingFamilyId, payload);
+      setSuccess('Family updated successfully.');
+      const wardIdForRefresh = selectedWardId || undefined;
+      const all = await mobileApi.fetchAllFamilies(undefined, undefined, wardIdForRefresh, assemblyCodeForFamily || undefined);
+      setFamilies(sortFamiliesByNumber(all));
+      refreshFamilyAnalysisData();
+      closeFamilyEdit();
+    } catch (err) {
+      setError(formatApiError(err, 'Failed to update family'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCaptureLocation = async () => {
@@ -5459,6 +6254,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       loadSuggestions();
       const all = await mobileApi.fetchAllFamilies(undefined, undefined, wardIdForCreate, assemblyCodeForFamily || undefined);
       setFamilies(sortFamiliesByNumber(all));
+      refreshFamilyAnalysisData();
       resetNewFamilyForm();
     } catch (err) {
       setError(formatApiError(err, 'Failed to save family'));
@@ -5483,37 +6279,56 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   return (
     <ScreenFrame accent="light">
       <section className="mobile-web-card mobile-web-family-shell">
+        {isFamilyEditMode ? (
+          <div className="mobile-web-family-edit-banner">
+            <div className="mobile-web-section-title">Edit family</div>
+            <button type="button" className="mobile-web-secondary-btn" onClick={closeFamilyEdit} disabled={editFamilyLoading || saving}>
+              Back
+            </button>
+          </div>
+        ) : null}
         <div className="mobile-web-subtabs mobile-web-family-subtabs mb-6" role="tablist" aria-label="Voters family sections">
-          {familySectionTabs.map((tab) => (
+          {familySectionTabs.map((tab) => {
+            const tabLabel = tab.id === 'NEW' && isFamilyEditMode ? 'Edit family' : tab.label;
+            return (
             <button
               key={tab.id}
               type="button"
               role="tab"
               aria-selected={activeTab === tab.id}
               className={`mobile-web-subtab ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleFamilySubtabChange(tab.id)}
             >
-              {tab.label}
+              {tabLabel}
             </button>
-          ))}
+            );
+          })}
         </div>
 
         {activeTab === 'NEW' ? (
           <>
-            <div className="mobile-web-family-grid mt-3">
+            {editFamilyLoading ? <div className="mobile-web-empty">Loading family...</div> : null}
+            {!editFamilyLoading ? (
+            <>
+            <div className="mobile-web-family-grid mobile-web-family-ward-row mt-3">
               <label className="mobile-web-field">
                 <span>Ward</span>
-                {wardItems.length > 1 ? (
+                {newFamilyWardSelectOptions.length > 1 ? (
                   <PremiumSelect
                     label="Ward"
-                    options={wardItems.map((ward) => ({ value: ward.value, label: ward.label }))}
+                    options={newFamilyWardSelectOptions}
                     value={selectedWardId}
                     onChange={setSelectedWardId}
                   />
                 ) : (
                   <input
                     className="mobile-web-input"
-                    value={selectedWard?.label || 'Ward'}
+                    value={
+                      selectedWard?.label
+                      || editingFamilyMeta?.wardLabel
+                      || (editingFamilyMeta?.wardCode ? `Ward ${editingFamilyMeta.wardCode}` : '')
+                      || 'Ward'
+                    }
                     readOnly
                   />
                 )}
@@ -5541,7 +6356,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               />
               <label className="mobile-web-field">
                 <span>Family Number</span>
-                <input className="mobile-web-input" placeholder={wardNumberPrefix ? `${wardNumberPrefix}-1` : 'Ward required'} value={familyNumber} readOnly />
+                <input
+                  className="mobile-web-input"
+                  placeholder={editingFamilyId ? '' : (wardNumberPrefix ? `${wardNumberPrefix}-1` : 'Ward required')}
+                  value={familyNumber}
+                  readOnly
+                />
               </label>
             </div>
 
@@ -5630,7 +6450,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 <span>Family Availability</span>
                 <PremiumSelect
                   label="Family Availability"
-                  options={FAMILY_AVAILABILITY_OPTIONS}
+                  options={familyAvailabilitySelectOptions}
                   value={familyAvailability}
                   onChange={setFamilyAvailability}
                 />
@@ -5643,7 +6463,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   <iframe
                     className="mobile-web-map-frame"
                     title="Family location map"
-                    src={getOsmEmbedUrl(location.latitude, location.longitude)}
+                    src={getGoogleEmbedUrl(location.latitude, location.longitude)}
                     loading="lazy"
                   />
                 ) : (
@@ -5791,44 +6611,128 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
             {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
             <div className="mobile-web-actions">
-              <button className="mobile-web-primary-btn" type="button" onClick={handleUpdate} disabled={saving}>
-                {saving ? 'Saving...' : 'Save Family'}
+              <button
+                className="mobile-web-primary-btn"
+                type="button"
+                onClick={editingFamilyId ? handleSaveFamilyEdit : handleUpdate}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : (editingFamilyId ? 'Save Changes' : 'Save Family')}
               </button>
             </div>
+            </>
+            ) : null}
           </>
         ) : activeTab === 'PENDING_MAP' ? (
           <div className="mobile-web-family-pending-map-tab">
-            <div className="mobile-web-family-grid mt-3">
-              <label className="mobile-web-field">
-                <span>Ward</span>
-                <PremiumSelect
-                  label="Ward"
-                  options={familyWardSelectOptions}
-                  value={selectedWardId}
-                  onChange={setSelectedWardId}
-                />
-              </label>
-            </div>
+            {renderPendingFamilyMapFilters(pendingAvailabilityFilter, setPendingAvailabilityFilter)}
+            {error ? <div className="mobile-web-error">{error}</div> : null}
             <div className="mobile-web-family-pending-map mt-3">
-              <FamilyAvailabilityFilterChips
-                selected={pendingAvailabilityFilter}
-                onChange={setPendingAvailabilityFilter}
-              />
               <FamilyMapSection
-                key={`pending-map-${selectedWardId || 'all'}-${pendingAvailabilityFilter.join('|')}`}
+                key={`pending-map-${selectedWardId || 'all'}-${pendingAvailabilityFilter.join('|')}-${familyDataRefreshToken}`}
+                refreshToken={familyDataRefreshToken}
                 title="Pending work map"
                 wardId={effectiveAnalysisWardId}
                 wardCode={mapWardCode}
                 assemblyCode={assemblyCodeForFamily}
-                fullDetails={false}
+                showMemberDetails={false}
                 mapHeight="420px"
                 availabilityFilter={pendingAvailabilityFilter}
+                infoMessage="Pending work map: tap any coloured dot for status and address (family voter details hidden)."
+                emptyHint={pendingMapEmptyHint}
+                allowMapEdit={canEditFamilyRecord}
+                onMapEditBlocked={handleFamilyEditBlocked}
+                onFamilyEdit={handlePendingMapFamilyEdit}
               />
+            </div>
+            <div className="mobile-web-stack" style={{ marginTop: '16px' }}>
+              <div className="mobile-web-section-title">Edit family</div>
+              {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
+              {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
+              {!familyDetailLoading && pendingFilteredDetailRows.length === 0 ? (
+                <div className="mobile-web-empty">No families match the selected filters.</div>
+              ) : null}
+              {!familyDetailLoading && pendingFilteredDetailRows.length > 0 ? (
+                <div className="mobile-web-family-pending-list">
+                  {pendingFilteredOnMapRows.length > 0 ? (
+                    <>
+                      <div className="mobile-web-muted" style={{ fontSize: '0.8rem', marginBottom: '6px', fontWeight: 600 }}>
+                        On map ({pendingFilteredOnMapRows.length})
+                      </div>
+                      {pendingListVisibleSections.onMapShown.map((family) => (
+                        <div key={family.familyId} className="mobile-web-family-pending-row">
+                          <div>
+                            <div style={{ fontWeight: 600 }}>
+                              {String(family.familyAvailability || '').trim() === 'Available'
+                                ? maskFamilySensitiveValue(family.familyName || 'Unnamed family')
+                                : (family.familyName || 'Unnamed family')}
+                            </div>
+                            <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
+                              {formatFamilyAvailabilityLabel(family.familyAvailability || 'Available')}
+                              {family.roadName ? ` · ${family.roadName}` : ''}
+                              {family.familyNumber ? ` · ${family.familyNumber}` : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="mobile-web-secondary-btn"
+                            onClick={() => tryOpenFamilyEdit(family.familyId, 'PENDING_MAP')}
+                            disabled={editFamilyLoading}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  ) : null}
+                  {pendingFilteredNoMapRows.length > 0 ? (
+                    <>
+                      <div className="mobile-web-muted" style={{ fontSize: '0.8rem', margin: '12px 0 6px', fontWeight: 600 }}>
+                        No map pin — capture location ({pendingFilteredNoMapRows.length})
+                      </div>
+                      {pendingListVisibleSections.noMapShown.map((family) => (
+                        <div key={family.familyId} className="mobile-web-family-pending-row mobile-web-family-pending-row--no-gps">
+                          <div>
+                            <div style={{ fontWeight: 600 }}>
+                              {String(family.familyAvailability || '').trim() === 'Available'
+                                ? maskFamilySensitiveValue(family.familyName || 'Unnamed family')
+                                : (family.familyName || 'Unnamed family')}
+                            </div>
+                            <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
+                              {formatFamilyAvailabilityLabel(family.familyAvailability || 'Available')}
+                              {family.roadName ? ` · ${family.roadName}` : ''}
+                              {family.familyNumber ? ` · ${family.familyNumber}` : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="mobile-web-primary-btn"
+                            onClick={() => tryOpenFamilyEdit(family.familyId, 'PENDING_MAP')}
+                            disabled={editFamilyLoading}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  ) : null}
+                  {canLoadMorePendingList ? (
+                    <div ref={pendingListLazySentinelRef} className="mobile-web-lazy-load-sentinel">
+                      <span>
+                        Scroll for more families (
+                        {pendingListVisibleSections.onMapShown.length + pendingListVisibleSections.noMapShown.length}
+                        {' '}
+                        of {pendingListVisibleSections.total})
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : activeTab === 'MAP' ? (
           <div className="mobile-web-families-map-tab">
-            <div className="mobile-web-family-grid mt-3">
+            <div className="mobile-web-family-grid mobile-web-family-ward-row mt-3">
               <label className="mobile-web-field">
                 <span>Ward</span>
                 <PremiumSelect
@@ -5844,190 +6748,26 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               onChange={setMapAvailabilityFilter}
             />
             <FamilyMapSection
-              key={`family-map-${selectedWardId || 'all'}-${mapAvailabilityFilter.join('|')}`}
+              key={`family-map-${selectedWardId || 'all'}-${mapAvailabilityFilter.join('|')}-${familyDataRefreshToken}`}
+              refreshToken={familyDataRefreshToken}
               title="Family map"
               wardId={effectiveAnalysisWardId}
               wardCode={mapWardCode}
               assemblyCode={assemblyCodeForFamily}
-              fullDetails
+              showMemberDetails={canViewFamilyMapMemberDetails}
               mapHeight="480px"
               availabilityFilter={mapAvailabilityFilter}
+              infoMessage="Family map (assembly / ward): tap a dot for address and member lines — Voter name | EPIC | Relation name | Relation type."
+              allowMapEdit={canEditFamilyRecord}
+              onMapEditBlocked={handleFamilyEditBlocked}
+              onFamilyEdit={handleAnalysisMapFamilyEdit}
             />
           </div>
         ) : (
           <div className="mobile-web-families-list">
-            <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
-              <label className="mobile-web-field">
-                <span>Ward</span>
-                <PremiumSelect
-                  label="Ward"
-                  options={familyWardSelectOptions}
-                  value={selectedWardId}
-                  onChange={setSelectedWardId}
-                />
-              </label>
-              <label className="mobile-web-field">
-                <span>View</span>
-                <PremiumSelect
-                  label="View"
-                  options={analysisViewOptions}
-                  value={analysisViewMode}
-                  onChange={setAnalysisViewMode}
-                />
-              </label>
-              {analysisViewMode === 'agent' ? (
-                <label className="mobile-web-field">
-                  <span>Sort By</span>
-                  <PremiumSelect
-                    label="Sort By"
-                    options={analysisSortOptions}
-                    value={analysisSortMode}
-                    onChange={setAnalysisSortMode}
-                  />
-                </label>
-              ) : null}
-              <label className="mobile-web-field">
-                <span>Updated From</span>
-                <input className="mobile-web-input" type="date" value={familyDetailFrom} onChange={(e) => setFamilyDetailFrom(e.target.value)} />
-              </label>
-              <label className="mobile-web-field">
-                <span>Updated To</span>
-                <input className="mobile-web-input" type="date" value={familyDetailTo} onChange={(e) => setFamilyDetailTo(e.target.value)} />
-              </label>
-            </div>
-
-            <FamilyAvailabilityFilterChips
-              selected={analysisAvailabilityFilter}
-              onChange={setAnalysisAvailabilityFilter}
-            />
-
-            <div className="mobile-web-action-row" style={{ marginBottom: '12px' }}>
-              <button
-                type="button"
-                className="mobile-web-primary-btn"
-                onClick={() => {
-                  loadFamilyAnalysis();
-                  loadFamilyDetails(true);
-                }}
-                disabled={analysisLoading || familyDetailLoading}
-              >
-                {analysisLoading || familyDetailLoading ? 'Refreshing...' : 'Get Latest Data'}
-              </button>
-              <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisCsv} disabled={!sortedAnalysisRows.length}>
-                Download CSV
-              </button>
-              <button type="button" className="mobile-web-secondary-btn" onClick={downloadFamilyAnalysisXls} disabled={!sortedAnalysisRows.length}>
-                Download Excel
-              </button>
-            </div>
-
+            {renderFamilyAnalysisFilters(analysisAvailabilityFilter, setAnalysisAvailabilityFilter)}
             {error ? <div className="mobile-web-error">{error}</div> : null}
-            {analysisLoading ? <div className="mobile-web-empty">Loading family analysis...</div> : null}
-            {!analysisLoading && sortedAnalysisRows.length === 0 ? <div className="mobile-web-empty">No family analysis data found.</div> : null}
-            {!analysisLoading && sortedAnalysisRows.length > 0 ? (
-              <div className="mobile-web-analysis-table-wrap mobile-web-analysis-table-scroll">
-                <table className="mobile-web-analysis-table">
-                  <thead>
-                    <tr>
-                      <th>S No</th>
-                      {analysisViewMode === 'agent' ? (
-                        <>
-                          <th>Agent Name</th>
-                          <th>Agent Mobile</th>
-                        </>
-                      ) : null}
-                      {analysisViewMode === 'date' ? (
-                        <>
-                          <th>Date</th>
-                          <th>Agents Worked</th>
-                          <th>Booths Covered</th>
-                        </>
-                      ) : null}
-                      {analysisViewMode === 'ward' ? (
-                        <>
-                          <th>Ward</th>
-                          <th>Agents</th>
-                          <th>Booths</th>
-                        </>
-                      ) : null}
-                      {analysisViewMode === 'booth' ? (
-                        <>
-                          <th>Booth No.</th>
-                          <th>Agents</th>
-                        </>
-                      ) : null}
-                      <th>Total Buildings visited</th>
-                      <th>Total Families visited</th>
-                      {activeAnalysisAvailabilityFields.map((field) => (
-                        <th key={field.key}>{field.label}</th>
-                      ))}
-                      <th>Last Updated At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleAnalysisRows.map((row, index) => (
-                      <tr key={row.userId || row.groupKey || row.label || `${index}-${row.agentName}`}>
-                        <td>{index + 1}</td>
-                        {analysisViewMode === 'agent' ? (
-                          <>
-                            <td>{row.agentName || '-'}</td>
-                            <td>{row.phone || '-'}</td>
-                          </>
-                        ) : null}
-                        {analysisViewMode === 'date' ? (
-                          <>
-                            <td>{row.label || row.groupKey || '-'}</td>
-                            <td>{row.agentsWorked ?? 0}</td>
-                            <td>{row.boothsCovered ?? 0}</td>
-                          </>
-                        ) : null}
-                        {analysisViewMode === 'ward' ? (
-                          <>
-                            <td>{row.label || row.groupKey || '-'}</td>
-                            <td>{row.agentsWorked ?? 0}</td>
-                            <td>{row.boothsCovered ?? 0}</td>
-                          </>
-                        ) : null}
-                        {analysisViewMode === 'booth' ? (
-                          <>
-                            <td>{row.label || row.groupKey || '-'}</td>
-                            <td>{row.agentsWorked ?? 0}</td>
-                          </>
-                        ) : null}
-                        <td>{row.totalBuildings ?? 0}</td>
-                        <td>{row.totalFamilies ?? 0}</td>
-                        {activeAnalysisAvailabilityFields.map((field) => (
-                          <td key={`${row.userId || row.groupKey}-${field.key}`}>{row.counts?.[field.key] ?? 0}</td>
-                        ))}
-                        <td>{formatFamilyDateTime(row.lastUpdatedAt)}</td>
-                      </tr>
-                    ))}
-                    {analysisViewMode === 'agent' ? (
-                      <tr className="mobile-web-analysis-total">
-                        <td>Total</td>
-                        <td>-</td>
-                        <td>-</td>
-                        <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalBuildings) || 0), 0)}</td>
-                        <td>{sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.totalFamilies) || 0), 0)}</td>
-                        {activeAnalysisAvailabilityFields.map((field) => (
-                          <td key={`total-${field.key}`}>
-                            {sortedAnalysisRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
-                          </td>
-                        ))}
-                        <td>-</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-                {canLoadMoreAnalysis ? (
-                  <div ref={analysisLazySentinelRef} className="mobile-web-lazy-load-sentinel">
-                    {analysisLoading ? null : (
-                      <span>Scroll for more agents ({visibleAnalysisRows.length} of {sortedAnalysisRows.length})</span>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {renderFamilyAnalysisSummaryTable(activeAnalysisAvailabilityFields)}
 
             <div className="mobile-web-stack" style={{ marginTop: '16px' }}>
               <div className="mobile-web-field">
@@ -6056,6 +6796,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                         {familyDetailColumns.map((key) => (
                           <th key={key}>{familyDetailLabel(key)}</th>
                         ))}
+                        <th style={{ width: '72px' }}>Edit</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -6084,10 +6825,23 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                                   )}
                                 </td>
                               ))}
+                              <td>
+                                <button
+                                  type="button"
+                                  className="mobile-web-secondary-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    tryOpenFamilyEdit(row.familyId, 'LIST');
+                                  }}
+                                  disabled={editFamilyLoading}
+                                >
+                                  Edit
+                                </button>
+                              </td>
                             </tr>
                             {isExpanded ? (
                               <tr>
-                                <td colSpan={familyDetailColumns.length + 1} style={{ background: '#f8fafc', padding: '12px 16px' }}>
+                                <td colSpan={familyDetailColumns.length + 2} style={{ background: '#f8fafc', padding: '12px 16px' }}>
                                   {row.members?.length ? (
                                     <div>
                                       <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Family Members</div>
@@ -6150,8 +6904,16 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [meetingMessage, setMeetingMessage] = useState('');
   const [newMeetingChannels, setNewMeetingChannels] = useState({ appAlert: true, whatsapp: false });
-  const [activeMeetingTab, setActiveMeetingTab] = useState('list');
-  const [activeSubTab, setActiveSubTab] = useState('details');
+  const meetingsMainSubtabKey = useMemo(
+    () => subtabStorageKey('meetings', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const meetingsListSubtabKey = useMemo(
+    () => subtabStorageKey('meetings-list', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const [activeMeetingTab, setActiveMeetingTab] = usePersistedSubtab(meetingsMainSubtabKey, 'list', ['list', 'new']);
+  const [activeSubTab, setActiveSubTab] = usePersistedSubtab(meetingsListSubtabKey, 'details', ['details', 'attendance']);
   const [mounted, setMounted] = useState(false);
 
   const role = useMemo(() => {
@@ -6362,8 +7124,8 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
     if (!newOsmMarkerRef.current) return;
     const lat = Number(newMeeting.latitude) || 12.9716;
     const lng = Number(newMeeting.longitude) || 77.5946;
-    newOsmMarkerRef.current.setLatLng([lat, lng]);
-    newOsmMapRef.current?.panTo([lat, lng]);
+    newOsmMarkerRef.current.setPosition({ lat, lng });
+    newOsmMapRef.current?.panTo({ lat, lng });
   }, [newMeeting.latitude, newMeeting.longitude]);
 
   const handleUseMyLocation = () => {
@@ -6690,7 +7452,11 @@ function isPollNotVotedStatus(status) {
 }
 
 function PollDayScreen({ assemblyCodeProp, isSuperAdmin }) {
-  const [tab, setTab] = useState('ALL');
+  const pollDaySubtabKey = useMemo(
+    () => subtabStorageKey('poll-day', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const [tab, setTab] = usePersistedSubtab(pollDaySubtabKey, 'ALL', ['ALL', 'VOTED', 'NOT VOTED']);
   const [natureFilter, setNatureFilter] = useState('');
   const [pollQuery, setPollQuery] = useState('');
   const [pollRelationQuery, setPollRelationQuery] = useState('');
@@ -7862,6 +8628,27 @@ function PrintScreen({ assemblyCodeProp }) {
   );
 }
 
+const volunteerAnalysisSummaryFieldLabel = (field = {}) => {
+  const key = String(field?.key || '').trim();
+  const label = String(field?.label || '').trim();
+  if (label) return label;
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+};
+
+const volunteerEnrichmentColumnLabel = (key) => ({
+  serialNumber: 'Sr No',
+  wardName: 'Ward Name',
+  name: 'Voter Name',
+  epicNo: 'Voter EPIC No',
+  boothNo: 'Booth No',
+  voterSerialNo: 'Voter Serial No.',
+  mobile: 'Voter Mobile',
+  updatedByName: 'Agent Name',
+  updatedByPhone: 'Agent Number',
+  lastUpdatedAt: 'Last Updated At',
+  wardCode: 'Ward Code',
+}[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()));
+
 function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [rows, setRows] = useState([]);
   const [fields, setFields] = useState([]);
@@ -7869,7 +8656,13 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [error, setError] = useState('');
   const [sortMode, setSortMode] = useState('name-asc');
   const [viewMode, setViewMode] = useState('agent');
-  const [activeTab, setActiveTab] = useState('table');
+  const volunteerAnalysisSubtabKey = useMemo(
+    () => subtabStorageKey('volunteer-analysis', assemblyCodeProp || 'default'),
+    [assemblyCodeProp],
+  );
+  const [activeTab, setActiveTab] = usePersistedSubtab(volunteerAnalysisSubtabKey, 'table', ['table', 'map']);
+  const [tableDataMode, setTableDataMode] = useState('families');
+  const [mapDataMode, setMapDataMode] = useState('families');
   const [detailRows, setDetailRows] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -8050,12 +8843,23 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 
   const summaryTotals = useMemo(() => {
     if (viewMode === 'agent') return null;
+    const visitKey = tableDataMode === 'families' ? 'totalFamilies' : 'total';
     return {
       agentsWorked: sortedRows.reduce((sum, row) => sum + (Number(row.agentsWorked) || 0), 0),
       boothsCovered: sortedRows.reduce((sum, row) => sum + (Number(row.boothsCovered) || 0), 0),
-      votersMet: sortedRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0),
+      votersMet: sortedRows.reduce((sum, row) => sum + (Number(row[visitKey]) || 0), 0),
     };
-  }, [sortedRows, viewMode]);
+  }, [sortedRows, viewMode, tableDataMode]);
+
+  const groupedVisitCount = (row) => (
+    tableDataMode === 'families' ? (row.totalFamilies ?? 0) : (row.total ?? 0)
+  );
+
+  const analysisFieldLabel = (field) => (
+    tableDataMode === 'families'
+      ? formatFamilyAvailabilityLabel(field.label)
+      : volunteerAnalysisSummaryFieldLabel(field)
+  );
 
   const formatDateTime = (value) => {
     if (!value) return '-';
@@ -8068,11 +8872,11 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   };
 
   const buildExportRows = () => {
-    const baseHeaders = fields.map((f) => f.label);
+    const baseHeaders = fields.map((f) => volunteerAnalysisSummaryFieldLabel(f));
     const getRowTotalUpdates = (row) => fields.reduce((sum, f) => sum + (Number(row.counts?.[f.key]) || 0), 0);
 
     if (viewMode === 'agent') {
-      const headers = ['Agent Name', 'Mobile No', ...baseHeaders, 'Last Updated At'];
+      const headers = ['Agent Name', 'Agent Number', ...baseHeaders, 'Last Updated At'];
       const dataRows = sortedRows.map((row) => [
         row.agentName || '',
         row.phone || '',
@@ -8452,14 +9256,23 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setLoading(true);
     setError('');
     try {
-      const res = await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode, effectiveAssemblyCode || undefined);
+      const res = tableDataMode === 'families'
+        ? await mobileApi.fetchFamilyAnalysis(
+          effectiveWard || undefined,
+          undefined,
+          viewMode,
+          undefined,
+          undefined,
+          effectiveAssemblyCode || undefined,
+        )
+        : await mobileApi.fetchVolunteerAnalysis(effectiveWard || undefined, viewMode, effectiveAssemblyCode || undefined);
       if (fetchId !== currentFetchId.current) return;
       const payload = res?.data?.result || res?.result || {};
       setRows(payload?.rows || []);
       setFields(payload?.fields || []);
     } catch (err) {
       if (fetchId !== currentFetchId.current) return;
-      setError(err?.message || 'Unable to load volunteer analysis.');
+      setError(err?.message || 'Unable to load analysis.');
     } finally {
       if (fetchId === currentFetchId.current) setLoading(false);
     }
@@ -8470,7 +9283,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     if (wardItems.length === 0) return;
     if (accessWardIds.length > 0 && !effectiveWard) return;
     loadAnalysis();
-  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode]);
+  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode, tableDataMode]);
 
   const buildMap = async (points) => {
     if (!mapRef.current) return;
@@ -8518,7 +9331,14 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setMapLoading(true);
     setMapError('');
     try {
-      const res = await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined, effectiveAssemblyCode || undefined);
+      const res = mapDataMode === 'families'
+        ? await mobileApi.fetchFamilyLocationPoints(
+          effectiveWard || undefined,
+          undefined,
+          undefined,
+          effectiveAssemblyCode || undefined,
+        )
+        : await mobileApi.fetchVolunteerLocationPoints(effectiveWard || undefined, effectiveAssemblyCode || undefined);
       const payload = res?.data?.result || res?.result || [];
       const points = Array.isArray(payload) ? payload : [];
       const normalized = points
@@ -8526,15 +9346,18 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           latitude: Number(item.latitude),
           longitude: Number(item.longitude),
           gender: item.gender || item.sex || '',
-          name: item.name || '',
-          epic: item.epic || '',
+          name: item.name || item.familyName || '',
+          epic: item.epic || item.epicNo || '',
           relationName: item.relationName || '',
-          mobile: item.mobile || '',
+          mobile: item.mobile || item.phone || '',
           familyName: item.familyName || item.name || '',
+          familyAvailability: item.familyAvailability || '',
           familyAddress: item.familyAddress || item.addressEn || item.address || '',
           roadName: item.roadName || '',
           familyNumber: item.familyNumber || '',
           flatNumber: item.flatNumber || '',
+          buildingNumber: item.buildingNumber || '',
+          buildingName: item.buildingName || '',
           headOfFamily: item.headOfFamily || item.headName || '',
           phone: item.phone || item.mobile || '',
           members: item.members || [],
@@ -8542,7 +9365,21 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         }))
         .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
       setMapPoints(normalized);
-      await buildMap(normalized);
+      if (mapDataMode === 'families') {
+        if (osmMapRef.current) {
+          destroyOsmMap(osmMapRef.current);
+          osmMapRef.current = null;
+        }
+        if (mapRef.current) {
+          osmMapRef.current = await buildFamilyOsmMap(
+            mapRef.current,
+            normalized.map(normalizeFamilyMapPoint),
+            { showMemberDetails: true, showEditButton: false },
+          );
+        }
+      } else {
+        await buildMap(normalized);
+      }
     } catch (err) {
       setMapError(err?.message || 'Unable to load map points.');
       setMapPoints([]);
@@ -8560,10 +9397,9 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         osmMapRef.current = null;
       }
     };
-  }, [activeTab, effectiveWard]);
+  }, [activeTab, effectiveWard, mapDataMode, effectiveAssemblyCode]);
 
   const detailColumns = useMemo(() => {
-    if (!detailRows.length) return [];
     const excluded = new Set([
       'firstMiddleNameEn',
       'lastNameEn',
@@ -8580,13 +9416,26 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       'addressLocal',
       'team',
       'updatedFields',
+    ]);
+    const keysFromRows = detailRows.length
+      ? Object.keys(detailRows[0] || {}).filter((key) => !excluded.has(key))
+      : [];
+    const preferredOrder = [
+      'serialNumber',
+      'wardName',
+      'name',
+      'epicNo',
+      'boothNo',
+      'voterSerialNo',
+      'mobile',
       'updatedByName',
       'updatedByPhone',
-    ]);
-    const keys = Object.keys(detailRows[0] || {}).filter((key) => !excluded.has(key));
-    const preferredOrder = ['serialNumber', 'wardName', 'name', 'epicNo', 'boothNo', 'voterSerialNo', 'lastUpdatedAt'];
-    const ordered = preferredOrder.filter((key) => keys.includes(key));
-    keys.forEach((key) => {
+      'lastUpdatedAt',
+    ];
+    const alwaysShowKeys = new Set(['updatedByName', 'updatedByPhone', 'voterSerialNo', 'mobile']);
+    const ordered = preferredOrder.filter((key) => keysFromRows.includes(key) || alwaysShowKeys.has(key));
+    keysFromRows.forEach((key) => {
+      if (key === 'mobile') return;
       if (!ordered.includes(key)) ordered.push(key);
     });
     if (ordered.includes('lastUpdatedAt')) {
@@ -8626,12 +9475,13 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 
   const buildDetailExport = (exportRows) => {
     if (!exportRows.length) return { headers: [], dataRows: [] };
-    const headers = detailColumns;
+    const columnKeys = detailColumns;
+    const headers = columnKeys.map((key) => volunteerEnrichmentColumnLabel(key));
     const sortedExportRows = getSortedRows(exportRows).map((row, index) => ({
       ...row,
       serialNumber: index + 1
     }));
-    const dataRows = sortedExportRows.map((row) => headers.map((key) => {
+    const dataRows = sortedExportRows.map((row) => columnKeys.map((key) => {
       if (key === 'lastUpdatedAt') return formatDateTime(row?.[key]);
       if (key === 'name' && !row?.[key]) {
         const fallback = [row?.firstMiddleNameEn, row?.lastNameEn].filter(Boolean).join(' ').trim();
@@ -8708,6 +9558,28 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           ) : null}
 
         </div>
+        {activeTab === 'table' ? (
+          <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
+            <div className="mobile-web-field mobile-web-field-span-2">
+              <label>Data</label>
+              <div className="mobile-web-chip-row">
+                {[
+                  { label: 'Family visits', value: 'families' },
+                  { label: 'Voter updates', value: 'voters' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`mobile-web-chip${tableDataMode === opt.value ? ' active' : ''}`}
+                    onClick={() => setTableDataMode(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="mobile-web-tab-strip mobile-web-analysis-tabs">
           {['TABLE', 'MAP'].map((tab) => (
             <button
@@ -8731,7 +9603,22 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
               </button>
             </>
           ) : (
-            <div className="mobile-web-map-controls">
+            <div className="mobile-web-map-controls" style={{ flexWrap: 'wrap', gap: '8px' }}>
+              <div className="mobile-web-chip-row">
+                {[
+                  { label: 'Families', value: 'families' },
+                  { label: 'Users', value: 'volunteers' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`mobile-web-chip${mapDataMode === opt.value ? ' active' : ''}`}
+                    onClick={() => setMapDataMode(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
               <button type="button" className="mobile-web-primary-btn mobile-web-map-refresh-btn" onClick={loadMapPoints} disabled={mapLoading}>
                 {mapLoading ? 'Loading Map...' : 'Refresh Map'}
               </button>
@@ -8755,7 +9642,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                     ) : (
                       <span>Total Agents: <strong>{summaryTotals.agentsWorked}</strong></span>
                     )}
-                    <span>Total Voters Met: <strong>{summaryTotals.votersMet}</strong></span>
+                    <span>Total {tableDataMode === 'families' ? 'Families' : 'Voters'} Met: <strong>{summaryTotals.votersMet}</strong></span>
                   </div>
                 ) : null}
                 <table className="mobile-web-analysis-table">
@@ -8764,7 +9651,13 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                       {viewMode === 'agent' ? (
                         <>
                           <th>Agent Name</th>
-                          <th>Mobile No</th>
+                          <th>Agent Number</th>
+                          {tableDataMode === 'families' ? (
+                            <>
+                              <th>Total Buildings visited</th>
+                              <th>Total Families visited</th>
+                            </>
+                          ) : null}
                         </>
                       ) : null}
                       {viewMode === 'date' ? (
@@ -8772,7 +9665,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                           <th>Date</th>
                           <th>Agents Worked</th>
                           <th>Booths Covered</th>
-                          <th>Voters Met</th>
+                          <th>{tableDataMode === 'families' ? 'Families' : 'Voters'} Met</th>
                         </>
                       ) : null}
                       {viewMode === 'ward' ? (
@@ -8780,18 +9673,18 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                           <th>Ward</th>
                           <th>Agents</th>
                           <th>Booths</th>
-                          <th>Voters Met</th>
+                          <th>{tableDataMode === 'families' ? 'Families' : 'Voters'} Met</th>
                         </>
                       ) : null}
                       {viewMode === 'booth' ? (
                         <>
                           <th>Booth No.</th>
                           <th>Agents</th>
-                          <th>Voters Met</th>
+                          <th>{tableDataMode === 'families' ? 'Families' : 'Voters'} Met</th>
                         </>
                       ) : null}
                       {fields.map((field) => (
-                        <th key={field.key}>{field.label}</th>
+                        <th key={field.key}>{analysisFieldLabel(field)}</th>
                       ))}
                       {['date', 'booth', 'ward'].includes(viewMode) ? <th>Total Updates</th> : null}
                       <th>Updated At</th>
@@ -8804,6 +9697,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                           <>
                             <td>{row.agentName || '-'}</td>
                             <td>{row.phone || '-'}</td>
+                            {tableDataMode === 'families' ? (
+                              <>
+                                <td>{row.totalBuildings ?? 0}</td>
+                                <td>{row.totalFamilies ?? 0}</td>
+                              </>
+                            ) : null}
                           </>
                         ) : null}
                         {viewMode === 'date' ? (
@@ -8811,7 +9710,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                             <td>{row.label || row.groupKey || '-'}</td>
                             <td>{row.agentsWorked ?? 0}</td>
                             <td>{row.boothsCovered ?? 0}</td>
-                            <td>{row.total ?? 0}</td>
+                            <td>{groupedVisitCount(row)}</td>
                           </>
                         ) : null}
                         {viewMode === 'ward' ? (
@@ -8819,14 +9718,14 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                             <td>{row.label || row.groupKey || '-'}</td>
                             <td>{row.agentsWorked ?? 0}</td>
                             <td>{row.boothsCovered ?? 0}</td>
-                            <td>{row.total ?? 0}</td>
+                            <td>{groupedVisitCount(row)}</td>
                           </>
                         ) : null}
                         {viewMode === 'booth' ? (
                           <>
                             <td>{row.label || row.groupKey || '-'}</td>
                             <td>{row.agentsWorked ?? 0}</td>
-                            <td>{row.total ?? 0}</td>
+                            <td>{groupedVisitCount(row)}</td>
                           </>
                         ) : null}
                         {fields.map((field) => (
@@ -8844,7 +9743,12 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                       <tr className="mobile-web-analysis-total">
                         <td>Total</td>
                         <td>-</td>
-                        <td>-</td>
+                        {tableDataMode === 'families' ? (
+                          <>
+                            <td>{sortedRows.reduce((sum, row) => sum + (Number(row.totalBuildings) || 0), 0)}</td>
+                            <td>{sortedRows.reduce((sum, row) => sum + (Number(row.totalFamilies) || 0), 0)}</td>
+                          </>
+                        ) : null}
                         {fields.map((field) => (
                           <td key={`total-${field.key}`}>
                             {sortedRows.reduce((sum, row) => sum + (Number(row.counts?.[field.key]) || 0), 0)}
@@ -8863,11 +9767,15 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             {mapError ? <div className="mobile-web-error">{mapError}</div> : null}
             {mapLoading ? <div className="mobile-web-empty">Loading map points...</div> : null}
             {!mapLoading && mapPoints.length === 0 ? <div className="mobile-web-empty">No captured locations found.</div> : null}
-            <div className="mobile-web-map-legend">
-              <span><i className="legend-dot male" /> Male</span>
-              <span><i className="legend-dot female" /> Female</span>
-              <span><i className="legend-dot unknown" /> Other</span>
-            </div>
+            {mapDataMode === 'families' ? (
+              <FamilyAvailabilityMapLegend compact />
+            ) : (
+              <div className="mobile-web-map-legend">
+                <span><i className="legend-dot male" /> Male</span>
+                <span><i className="legend-dot female" /> Female</span>
+                <span><i className="legend-dot unknown" /> Other</span>
+              </div>
+            )}
             <div className="mobile-web-map-container" ref={mapRef} />
           </div>
         )}
@@ -8989,19 +9897,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
                   <thead>
                     <tr>
                       {detailColumns.map((key) => {
-                        const friendlyLabel = {
-                          serialNumber: 'Sr No',
-                          wardName: 'Ward Name',
-                          name: 'Name',
-                          epicNo: 'Epic No',
-                          boothNo: 'Booth No',
-                          voterSerialNo: 'Voter Serial No',
-                          lastUpdatedAt: 'Last Updated At',
-                          updatedByName: 'Updated By',
-                          updatedByPhone: 'Agent Phone',
-                          wardCode: 'Ward Code',
-                        }[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
-                        return <th key={key}>{friendlyLabel}</th>;
+                        return <th key={key}>{volunteerEnrichmentColumnLabel(key)}</th>;
                       })}
                     </tr>
                   </thead>
@@ -9128,12 +10024,12 @@ export default function MobileDetailPage({ params }) {
 
   const renderScreen = () => {
     const commonProps = { assemblyCodeProp: selectedAssembly };
+    if (slug === 'meetings' || slug === 'poll-day' || slug === 'print') {
+      return <FeatureUnavailableScreen />;
+    }
     if (slug === 'search-voter') return <SearchVoterScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'search-booth') return <SearchBoothScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'voters-family') return <VotersFamilyScreen key={assemblyKey} {...commonProps} />;
-    if (slug === 'meetings') return <MeetingsScreen key={assemblyKey} userRole={userRole} {...commonProps} />;
-    if (slug === 'poll-day') return <PollDayScreen key={assemblyKey} isSuperAdmin={isSuperAdmin} {...commonProps} />;
-    if (slug === 'print') return <PrintScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'extract') return <ExtractScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'add-volunteer') return <AddVolunteerScreen key={assemblyKey} />;
     if (slug === 'my-volunteers') return <MyVolunteersScreen key={assemblyKey} {...commonProps} />;

@@ -494,7 +494,7 @@ export const mobileApi = {
       throw error;
     }
   },
-  fetchFamilyLocationPoints: async (wardId, boothId, wardCode, assemblyCode) => {
+  fetchFamilyLocationPoints: async (wardId, boothId, wardCode, assemblyCode, updatedFrom, updatedTo) => {
     const wardIdStr = wardId != null && String(wardId).trim() !== '' ? String(wardId) : '';
     const wardCodeStr = wardCode != null && String(wardCode).trim() !== '' ? String(wardCode).trim() : '';
     const filterPoints = (rows) =>
@@ -512,6 +512,8 @@ export const mobileApi = {
       if (wardIdStr) params.set('wardId', wardIdStr);
       if (boothId != null && String(boothId).trim() !== '') params.set('boothId', String(boothId));
       if (assemblyCode != null && String(assemblyCode).trim() !== '') params.set('assemblyCode', String(assemblyCode));
+      if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
+      if (updatedTo) params.set('updatedTo', String(updatedTo));
       const query = params.toString();
       const res = await request(`/votebase/v1/api/families/map-points${query ? `?${query}` : ''}`);
       const payload = res?.data?.result ?? res?.result ?? [];
@@ -693,6 +695,15 @@ export const mobileApi = {
       });
     } catch (error) {
       console.log('Error while creating family:', error);
+      throw error;
+    }
+  },
+
+  fetchFamilyById: async (id) => {
+    try {
+      return await request(`/votebase/v1/api/family/${encodeURIComponent(id)}`);
+    } catch (error) {
+      console.log('Error while fetching family:', error);
       throw error;
     }
   },

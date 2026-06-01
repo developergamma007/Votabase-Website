@@ -1,20 +1,10 @@
 /** User-facing hint when Google rejects the Maps JavaScript API key. */
 export const GOOGLE_MAPS_USER_ERROR =
-  'Google Maps could not load. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in .env, enable Maps JavaScript API + billing in Google Cloud, and allow this origin in key restrictions (e.g. http://localhost:3001/*). Open the browser console for the exact Google error (RefererNotAllowedMapError, etc.).';
+  'Google Maps could not load. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in .env, enable Maps JavaScript API + billing in Google Cloud, and allow this origin in key restrictions (e.g. http://localhost:3001/*, https://votabase.iswot.in/*). Maps Embed API is not required.';
 
-/** Shared project key (user-provided). */
-export const GOOGLE_MAPS_SHARED_KEY = 'AIzaSyC1mpEeQmwXHFmrgamIfncX3g_hmOw_8WQ';
-
-/** Legacy / alternate key kept as fallback. */
-export const GOOGLE_MAPS_LEGACY_KEY = 'AIzaSyDiHCsapzJETTnhBIC7hFhTwmlWJJfnEg0';
-
-/** Env first, then shared, then legacy — deduped. */
+/** Env-only — never commit API keys to the repository. */
 export function getGoogleMapsApiKeys() {
-  const keys = [
-    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
-    GOOGLE_MAPS_SHARED_KEY,
-    GOOGLE_MAPS_LEGACY_KEY,
-  ]
+  const keys = [process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY]
     .map((k) => String(k || '').trim())
     .filter(Boolean);
   return [...new Set(keys)];
@@ -81,9 +71,7 @@ function loadScriptWithKey(key) {
   });
 }
 
-/**
- * Load Maps JavaScript API once per page. Tries env key, then shared, then legacy.
- */
+/** Load Maps JavaScript API once per page. */
 export function loadGoogleMapsScript() {
   const keys = getGoogleMapsApiKeys();
   if (!keys.length) {

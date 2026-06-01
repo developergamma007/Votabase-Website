@@ -1,6 +1,5 @@
-/** @deprecated Import from ./osmMap.js */
+/** @deprecated Import from ./googleMap.js */
 export {
-  loadLeaflet,
-  destroyOsmMap,
-  buildFamilyOsmMap,
-} from './osmMap';
+  buildFamilyGoogleMap as buildFamilyOsmMap,
+  buildFamilyGoogleMap,
+} from './googleMap';

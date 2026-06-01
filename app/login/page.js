@@ -211,7 +211,7 @@ export default function LoginPage() {
               Terms of Service
             </a>{' '}
             &{' '}
-            <a href="#" className="login-legal__link">
+            <a href="/ui/privacy" className="login-legal__link">
               Privacy Policy
             </a>
           </p>

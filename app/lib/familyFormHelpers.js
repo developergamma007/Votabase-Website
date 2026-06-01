@@ -6,6 +6,29 @@ export const FAMILY_AVAILABILITY_OPTIONS = [
   'Door Closed',
 ];
 
+/** Emoji suffixes for availability status chips and legends */
+export const FAMILY_AVAILABILITY_EMOJI = {
+  Available: '🔵',
+  'Not Available': '🟠',
+  'Entry Denied': '🟡',
+  'Data not Given': '🟣',
+  'Door Closed': '🔴',
+};
+
+export const formatFamilyAvailabilityLabel = (label) => {
+  const key = String(label || '').trim();
+  const emoji = FAMILY_AVAILABILITY_EMOJI[key];
+  return emoji ? `${key} ${emoji}` : key;
+};
+
+/** Mask sensitive text: show only last 4 characters (letters or digits). */
+export const maskFamilySensitiveValue = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (raw.length <= 4) return raw;
+  return `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}`;
+};
+
 /** Map marker colours by family availability status */
 export const FAMILY_AVAILABILITY_MAP_COLORS = {
   Available: '#2563eb',
@@ -36,6 +59,8 @@ export const getFamilyMemberRelationName = (member = {}) => {
   const name = String(
     member.relationName
     || member.relation_name
+    || member.relName
+    || member.rel_name
     || fromParts
     || fromLocal
     || member.relationNameEn
@@ -49,6 +74,9 @@ export const getFamilyMemberRelationName = (member = {}) => {
   ).trim();
   return name || '-';
 };
+
+export const getFamilyMapStatusLabel = (availability) =>
+  String(availability || 'Available').trim() || 'Available';
 
 export const normalizeFamilyMapMember = (member = {}) => ({
   ...member,
@@ -84,47 +112,92 @@ export const normalizeFamilyMapPoint = (item = {}) => ({
   members: (Array.isArray(item.members) ? item.members : []).map(normalizeFamilyMapMember),
 });
 
-export const buildFamilyMapTooltipLimitedHtml = (point = {}) => {
-  const status = point.familyAvailability || 'Available';
+const escapeFamilyMapHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const isFamilyMapPointAvailable = (point = {}) =>
+  String(point.familyAvailability || '').trim() === 'Available';
+
+/** Display value in map popup; mask Available families (last 4 chars). */
+export const familyMapDisplayValue = (point = {}, value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '-';
+  if (isFamilyMapPointAvailable(point)) {
+    return escapeFamilyMapHtml(maskFamilySensitiveValue(raw));
+  }
+  return escapeFamilyMapHtml(raw);
+};
+
+export const formatFamilyMapMemberLineForPoint = (point = {}, member = {}, index = 0) => {
+  if (!isFamilyMapPointAvailable(point)) {
+    return escapeFamilyMapHtml(formatFamilyMapMemberLine(member, index));
+  }
+  const normalized = normalizeFamilyMapMember(member);
+  const parts = [normalized.voterName, normalized.epicNo, normalized.relationName, normalized.relationType].map(
+    (part) => escapeFamilyMapHtml(maskFamilySensitiveValue(String(part || '').trim()) || '-'),
+  );
+  return `${index + 1}. ${parts.join(' | ')}`;
+};
+
+const buildFamilyMapEditButtonHtml = (point = {}, showEditButton = false) => {
+  if (!showEditButton || !point.familyId) return '';
+  return `
+    <div style="margin-top: 12px;">
+      <button
+        type="button"
+        data-family-edit-id="${Number(point.familyId)}"
+        style="width: 100%; padding: 8px 12px; background: #0f766e; color: #fff; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px;"
+      >Edit family</button>
+    </div>
+  `;
+};
+
+const buildFamilyMapAddressBlockHtml = (point = {}) => `
+  <div style="font-size: 13px; line-height: 1.55;">
+    <div><strong>Road name:</strong> ${familyMapDisplayValue(point, point.roadName)}</div>
+    <div><strong>Building/Apartment Number:</strong> ${familyMapDisplayValue(point, point.buildingNumber)}</div>
+    <div><strong>Building/Apartment Name:</strong> ${familyMapDisplayValue(point, point.buildingName)}</div>
+    <div><strong>Family number:</strong> ${familyMapDisplayValue(point, point.familyNumber)}</div>
+    <div><strong>Family Name:</strong> ${familyMapDisplayValue(point, point.familyName)}</div>
+    <div><strong>Flat No:</strong> ${familyMapDisplayValue(point, point.flatNumber)}</div>
+  </div>
+`;
+
+export const buildFamilyMapTooltipLimitedHtml = (point = {}, options = {}) => {
+  const status = escapeFamilyMapHtml(getFamilyMapStatusLabel(point.familyAvailability));
   return `
     <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 260px; max-width: 320px;">
       <div style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #0f172a;">${status}</div>
-      <div style="font-size: 13px; line-height: 1.55;">
-        <div><strong>Road name:</strong> ${point.roadName || '-'}</div>
-        <div><strong>Building/Apartment Number:</strong> ${point.buildingNumber || '-'}</div>
-        <div><strong>Building/Apartment Name:</strong> ${point.buildingName || '-'}</div>
-        <div><strong>Family number:</strong> ${point.familyNumber || '-'}</div>
-        <div><strong>Family Name:</strong> ${point.familyName || '-'}</div>
-        <div><strong>Flat No:</strong> ${point.flatNumber || '-'}</div>
-      </div>
+      ${buildFamilyMapAddressBlockHtml(point)}
+      ${buildFamilyMapEditButtonHtml(point, options.showEditButton)}
     </div>
   `;
 };
 
 export const buildFamilyMapTooltipHtml = (point = {}, options = {}) => {
-  const full = options.full !== false;
-  if (!full) return buildFamilyMapTooltipLimitedHtml(point);
+  const showMembers = options.showMemberDetails ?? (options.full !== false);
+  if (!showMembers) return buildFamilyMapTooltipLimitedHtml(point, options);
 
   const members = Array.isArray(point.members) ? point.members : [];
   const memberLines = members.length
-    ? members.map((m, index) => `<div style="margin: 4px 0;">${formatFamilyMapMemberLine(m, index)}</div>`).join('')
+    ? members
+      .map((m, index) => `<div style="margin: 4px 0;">${formatFamilyMapMemberLineForPoint(point, m, index)}</div>`)
+      .join('')
     : '<div style="margin: 4px 0;">No members listed</div>';
 
-  const status = point.familyAvailability || 'Available';
+  const status = escapeFamilyMapHtml(getFamilyMapStatusLabel(point.familyAvailability));
 
   return `
     <div style="padding: 12px; color: #1e293b; font-family: sans-serif; min-width: 300px; max-width: 400px;">
       <div style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #0f172a;">${status}</div>
-      <div style="font-size: 13px; line-height: 1.5;">
-        <div><strong>Road name:</strong> ${point.roadName || '-'}</div>
-        <div><strong>Building/Apartment Number:</strong> ${point.buildingNumber || '-'}</div>
-        <div><strong>Building/Apartment Name:</strong> ${point.buildingName || '-'}</div>
-        <div><strong>Family number:</strong> ${point.familyNumber || '-'}</div>
-        <div><strong>Family Name:</strong> ${point.familyName || '-'}</div>
-        <div><strong>Flat No:</strong> ${point.flatNumber || '-'}</div>
-        <div style="margin-top: 8px; font-weight: 700;">Family members details:</div>
-        ${memberLines}
-      </div>
+      ${buildFamilyMapAddressBlockHtml(point)}
+      <div style="margin-top: 8px; font-weight: 700;">Family members details:</div>
+      ${memberLines}
+      ${buildFamilyMapEditButtonHtml(point, options.showEditButton)}
     </div>
   `;
 };
