@@ -7,6 +7,63 @@ function getToken() {
   return localStorage.getItem('X_INIT_TOKEN') || localStorage.getItem('token') || '';
 }
 
+export function getUserInfoFromStorage() {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem('userInfo') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function userHasAssignmentScope(userInfo = {}) {
+  const role = String(userInfo.role || '').replace('ROLE_', '').toUpperCase();
+  if (['SUPER_ADMIN', 'ADMIN'].includes(role)) return true;
+  if (Array.isArray(userInfo.wardIds) && userInfo.wardIds.length > 0) return true;
+  if (Array.isArray(userInfo.boothIds) && userInfo.boothIds.length > 0) return true;
+  if (Array.isArray(userInfo.assemblyIds) && userInfo.assemblyIds.length > 0) return true;
+  if (userInfo.wardId != null && String(userInfo.wardId).trim() !== '') return true;
+  if (userInfo.boothId != null && String(userInfo.boothId).trim() !== '') return true;
+  if (userInfo.assignmentId != null && String(userInfo.assignmentId).trim() !== '') return true;
+  return false;
+}
+
+let profileBootstrapPromise = null;
+
+/** Load /me when login storage lacks ward/booth scope (first open after login). */
+export async function ensureUserProfileReady() {
+  if (typeof window === 'undefined') return getUserInfoFromStorage();
+  const cached = getUserInfoFromStorage();
+  if (!cached?.token) return cached;
+  if (userHasAssignmentScope(cached)) return cached;
+  if (!profileBootstrapPromise) {
+    profileBootstrapPromise = request('/votebase/v1/api/me')
+      .then((res) => {
+        const updated = res?.data?.result || res?.result || res;
+        if (updated && typeof updated === 'object') {
+          const merged = { ...cached, ...updated };
+          localStorage.setItem('userInfo', JSON.stringify(merged));
+          return merged;
+        }
+        return cached;
+      })
+      .catch(() => cached)
+      .finally(() => {
+        profileBootstrapPromise = null;
+      });
+  }
+  return profileBootstrapPromise;
+}
+
+export function parseVoterSearchResponse(payload) {
+  const data = payload?.data ?? payload ?? {};
+  const results = Array.isArray(data?.result)
+    ? data.result
+    : (Array.isArray(data) ? data : (Array.isArray(payload?.result) ? payload.result : []));
+  const meta = data?.meta ?? payload?.meta ?? {};
+  return { results, meta };
+}
+
 export function getAssemblyCode() {
   if (typeof window === 'undefined') return DEFAULT_ASSEMBLY_CODE;
 
@@ -14,7 +71,7 @@ export function getAssemblyCode() {
   if (explicit) return explicit;
 
   try {
-    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}');
+    const userInfo = getUserInfoFromStorage();
     const assemblyIds = Array.isArray(userInfo.assemblyIds) ? userInfo.assemblyIds : [];
     if (assemblyIds.length > 0 && assemblyIds[0] != null && String(assemblyIds[0]).trim() !== '') {
       return String(assemblyIds[0]).trim();
@@ -455,7 +512,8 @@ export const mobileApi = {
       if (wardId) params.set('wardId', String(wardId));
       if (boothId) params.set('boothId', String(boothId));
       if (mode) params.set('mode', String(mode));
-      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
+      // Ward filter is enough; skip assembly when ward is set (matches backend list logic).
+      if (assemblyCode && !wardId) params.set('assemblyCode', String(assemblyCode));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       const query = params.toString();
@@ -470,7 +528,7 @@ export const mobileApi = {
       const params = new URLSearchParams();
       if (wardId) params.set('wardId', String(wardId));
       if (boothId) params.set('boothId', String(boothId));
-      if (assemblyCode) params.set('assemblyCode', String(assemblyCode));
+      if (assemblyCode && !wardId) params.set('assemblyCode', String(assemblyCode));
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       if (page !== undefined) params.set('page', String(page));
@@ -511,7 +569,9 @@ export const mobileApi = {
       const params = new URLSearchParams();
       if (wardIdStr) params.set('wardId', wardIdStr);
       if (boothId != null && String(boothId).trim() !== '') params.set('boothId', String(boothId));
-      if (assemblyCode != null && String(assemblyCode).trim() !== '') params.set('assemblyCode', String(assemblyCode));
+      if (assemblyCode != null && String(assemblyCode).trim() !== '' && !wardIdStr) {
+        params.set('assemblyCode', String(assemblyCode));
+      }
       if (updatedFrom) params.set('updatedFrom', String(updatedFrom));
       if (updatedTo) params.set('updatedTo', String(updatedTo));
       const query = params.toString();

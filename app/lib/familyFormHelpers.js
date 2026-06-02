@@ -29,6 +29,56 @@ export const maskFamilySensitiveValue = (value) => {
   return `${'*'.repeat(raw.length - 4)}${raw.slice(-4)}`;
 };
 
+export const maskEpicLastFour = maskFamilySensitiveValue;
+
+/** Mask names: show only first 4 letters (booth / Available families). */
+export const maskFamilyNameLeading = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (raw.length <= 4) return raw;
+  return `${raw.slice(0, 4)}${'*'.repeat(raw.length - 4)}`;
+};
+
+export const normalizeFamilyRole = (role) => String(role || '').replace(/^ROLE_/, '').toUpperCase();
+
+/** Ward / Assembly / Admin see full family data; booth volunteers get masking on Available families. */
+export const canViewFullFamilySensitiveData = (role) => {
+  const r = normalizeFamilyRole(role);
+  return ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD'].includes(r);
+};
+
+export const isBoothFamilyRole = (role) => {
+  const r = normalizeFamilyRole(role);
+  return r === 'BOOTH' || r === 'USER';
+};
+
+export const shouldMaskAvailableFamilyForRole = (role, availability) => {
+  if (canViewFullFamilySensitiveData(role)) return false;
+  if (!isBoothFamilyRole(role)) return false;
+  return String(availability || '').trim() === 'Available';
+};
+
+export const displayPendingFamilyListName = (family, role) => {
+  const name = family?.familyName || 'Unnamed family';
+  if (!shouldMaskAvailableFamilyForRole(role, family?.familyAvailability)) return name;
+  return maskFamilyNameLeading(name);
+};
+
+export const maskMemberNameForDisplay = (role, availability, name) => {
+  if (!shouldMaskAvailableFamilyForRole(role, availability)) return name || '-';
+  return maskFamilyNameLeading(name || '');
+};
+
+export const maskMemberEpicForDisplay = (role, availability, epic) => {
+  if (!shouldMaskAvailableFamilyForRole(role, availability)) return epic || '-';
+  return maskEpicLastFour(epic || '');
+};
+
+export const maskMemberPhoneForDisplay = (role, availability, phone) => {
+  if (!shouldMaskAvailableFamilyForRole(role, availability)) return phone || '-';
+  return maskEpicLastFour(phone || '');
+};
+
 /** Map marker colours by family availability status */
 export const FAMILY_AVAILABILITY_MAP_COLORS = {
   Available: '#2563eb',
@@ -122,24 +172,32 @@ const escapeFamilyMapHtml = (value) =>
 const isFamilyMapPointAvailable = (point = {}) =>
   String(point.familyAvailability || '').trim() === 'Available';
 
-/** Display value in map popup; mask Available families (last 4 chars). */
-export const familyMapDisplayValue = (point = {}, value) => {
+/** Display value in map popup; mask Available families for booth (name: first 4 letters, else last 4). */
+export const familyMapDisplayValue = (point = {}, value, field = 'generic') => {
   const raw = String(value ?? '').trim();
   if (!raw) return '-';
-  if (isFamilyMapPointAvailable(point)) {
-    return escapeFamilyMapHtml(maskFamilySensitiveValue(raw));
+  const mask = point.__maskAvailable !== false && isFamilyMapPointAvailable(point);
+  if (!mask) return escapeFamilyMapHtml(raw);
+  if (field === 'name' || field === 'familyName') {
+    return escapeFamilyMapHtml(maskFamilyNameLeading(raw));
   }
-  return escapeFamilyMapHtml(raw);
+  if (field === 'epic') {
+    return escapeFamilyMapHtml(maskEpicLastFour(raw));
+  }
+  return escapeFamilyMapHtml(maskEpicLastFour(raw));
 };
 
 export const formatFamilyMapMemberLineForPoint = (point = {}, member = {}, index = 0) => {
-  if (!isFamilyMapPointAvailable(point)) {
+  if (!isFamilyMapPointAvailable(point) || point.__maskAvailable === false) {
     return escapeFamilyMapHtml(formatFamilyMapMemberLine(member, index));
   }
   const normalized = normalizeFamilyMapMember(member);
-  const parts = [normalized.voterName, normalized.epicNo, normalized.relationName, normalized.relationType].map(
-    (part) => escapeFamilyMapHtml(maskFamilySensitiveValue(String(part || '').trim()) || '-'),
-  );
+  const parts = [
+    escapeFamilyMapHtml(maskFamilyNameLeading(String(normalized.voterName || '').trim()) || '-'),
+    escapeFamilyMapHtml(maskEpicLastFour(String(normalized.epicNo || '').trim()) || '-'),
+    escapeFamilyMapHtml(maskEpicLastFour(String(normalized.relationName || '').trim()) || '-'),
+    escapeFamilyMapHtml(maskEpicLastFour(String(normalized.relationType || '').trim()) || '-'),
+  ];
   return `${index + 1}. ${parts.join(' | ')}`;
 };
 
@@ -162,7 +220,7 @@ const buildFamilyMapAddressBlockHtml = (point = {}) => `
     <div><strong>Building/Apartment Number:</strong> ${familyMapDisplayValue(point, point.buildingNumber)}</div>
     <div><strong>Building/Apartment Name:</strong> ${familyMapDisplayValue(point, point.buildingName)}</div>
     <div><strong>Family number:</strong> ${familyMapDisplayValue(point, point.familyNumber)}</div>
-    <div><strong>Family Name:</strong> ${familyMapDisplayValue(point, point.familyName)}</div>
+    <div><strong>Family Name:</strong> ${familyMapDisplayValue(point, point.familyName, 'name')}</div>
     <div><strong>Flat No:</strong> ${familyMapDisplayValue(point, point.flatNumber)}</div>
   </div>
 `;

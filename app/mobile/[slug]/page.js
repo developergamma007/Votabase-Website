@@ -19,12 +19,25 @@ import {
   WhatsApp,
   CalendarMonthOutlined,
 } from '@mui/icons-material';
-import { getAssemblyCode, mobileApi } from '../../lib/mobileApi';
+import {
+  ensureUserProfileReady,
+  getAssemblyCode,
+  getUserInfoFromStorage,
+  mobileApi,
+  parseVoterSearchResponse,
+} from '../../lib/mobileApi';
 import { subtabStorageKey, usePersistedSubtab } from '../../lib/persistedSubtab';
 import {
   FAMILY_AVAILABILITY_OPTIONS,
   formatFamilyAvailabilityLabel,
   maskFamilySensitiveValue,
+  maskFamilyNameLeading,
+  canViewFullFamilySensitiveData,
+  shouldMaskAvailableFamilyForRole,
+  displayPendingFamilyListName,
+  maskMemberNameForDisplay,
+  maskMemberEpicForDisplay,
+  maskMemberPhoneForDisplay,
   FAMILY_POINT_OPTIONS,
   FAMILY_ANALYSIS_AVAILABILITY_KEYS,
   FAMILY_MAP_AVAILABILITY_LEGEND,
@@ -224,6 +237,7 @@ function FamilyMapSection({
   allowMapEdit = true,
   onMapEditBlocked = null,
   refreshToken = 0,
+  maskAvailableSensitive = true,
 }) {
   const mapRef = useRef(null);
   const osmMapRef = useRef(null);
@@ -285,6 +299,7 @@ function FamilyMapSection({
       const payload = res?.data?.result || res?.result || [];
       let points = (Array.isArray(payload) ? payload : [])
         .map(normalizeFamilyMapPoint)
+        .map((p) => ({ ...p, __maskAvailable: maskAvailableSensitive }))
         .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
       if (Array.isArray(availabilityFilter) && availabilityFilter.length) {
         const allowed = new Set(availabilityFilter.map((v) => String(v).trim()));
@@ -313,6 +328,7 @@ function FamilyMapSection({
     updatedTo,
     availabilityFilterKey,
     refreshToken,
+    maskAvailableSensitive,
   ]);
 
   useEffect(() => {
@@ -545,13 +561,15 @@ function MaskedFamilyField({
   value,
   onChange,
   mask = false,
+  maskMode = 'trailing',
   placeholder = '',
   inputMode,
   type = 'text',
   readOnly = false,
 }) {
   const [focused, setFocused] = useState(false);
-  const displayValue = mask && !focused ? maskFamilySensitiveValue(value) : value;
+  const maskFn = maskMode === 'leading' ? maskFamilyNameLeading : maskFamilySensitiveValue;
+  const displayValue = mask && !focused ? maskFn(value) : value;
   return (
     <label className="mobile-web-field">
       <span>{label}</span>
@@ -710,11 +728,11 @@ function isVoterMarkedVisitedLocally(epic) {
   }
 }
 
+/** Only platform super-admin logins are read-only in Manage/Add Volunteer (all other levels are editable). */
 function isProtectedVolunteerLogin(volunteer = {}) {
   const level = String(volunteer.workingLevel || volunteer.assignmentType || '').toUpperCase();
   const role = String(volunteer.role || '').replace(/^ROLE_/, '').toUpperCase();
-  const protectedLevels = new Set(['SUPER_ADMIN', 'ASSEMBLY', 'WARD']);
-  return protectedLevels.has(level) || protectedLevels.has(role);
+  return level === 'SUPER_ADMIN' || role === 'SUPER_ADMIN';
 }
 
 const isAssemblyOrWardVolunteerLogin = isProtectedVolunteerLogin;
@@ -894,14 +912,12 @@ function useDropdownDismiss(rootRef, onClose, panelRef) {
       onClose();
     };
     const handleGlobalClose = () => onClose();
-    document.addEventListener('mousedown', handleOutside);
-    document.addEventListener('pointerdown', handleOutside);
-    document.addEventListener('touchstart', handleOutside, { passive: true });
+    document.addEventListener('mousedown', handleOutside, true);
+    document.addEventListener('pointerdown', handleOutside, true);
     document.addEventListener(MOBILE_WEB_CLOSE_DROPDOWNS_EVENT, handleGlobalClose);
     return () => {
-      document.removeEventListener('mousedown', handleOutside);
-      document.removeEventListener('pointerdown', handleOutside);
-      document.removeEventListener('touchstart', handleOutside);
+      document.removeEventListener('mousedown', handleOutside, true);
+      document.removeEventListener('pointerdown', handleOutside, true);
       document.removeEventListener(MOBILE_WEB_CLOSE_DROPDOWNS_EVENT, handleGlobalClose);
     };
   }, [rootRef, panelRef, onClose]);
@@ -943,7 +959,7 @@ function useDropdownDropUp(rootRef, open, panelRef, maxPanelHeight = 260) {
   return dropUp;
 }
 
-const DROPDOWN_TOUCH_MOVE_THRESHOLD_PX = 10;
+const DROPDOWN_TOUCH_MOVE_THRESHOLD_PX = 14;
 
 /** Prevent accidental option selection while scrolling dropdown panels on touch devices. */
 function useDropdownPanelScrollGuard(open) {
@@ -1252,16 +1268,18 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
   const [search, setSearch] = useState('');
   const rootRef = useRef(null);
   const panelRef = useRef(null);
+  const dropUp = useDropdownDropUp(rootRef, open, panelRef, 300);
   const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
   useDropdownDismiss(rootRef, () => {
     setOpen(false);
     setSearch('');
   }, panelRef);
+  const safeValue = Array.isArray(value) ? value : [];
   const optionSet = new Set(options);
-  const selectedLabels = value.filter((item) => item !== 'Others' && optionSet.has(item));
-  const unknownLabels = value.filter((item) => item !== 'Others' && !optionSet.has(item));
+  const selectedLabels = safeValue.filter((item) => item !== 'Others' && optionSet.has(item));
+  const unknownLabels = safeValue.filter((item) => item !== 'Others' && !optionSet.has(item));
   const otherValue = customValue || unknownLabels.join(', ');
-  const showOther = value.includes('Others') || unknownLabels.length > 0 || !!customValue;
+  const showOther = safeValue.includes('Others') || unknownLabels.length > 0 || !!customValue;
   const summaryItems = selectedLabels.length ? selectedLabels.slice() : [];
   if (showOther) summaryItems.push('Others');
   const summary = summaryItems.length ? `${summaryItems[0]}${summaryItems.length > 1 ? ` +${summaryItems.length - 1}` : ''}` : `Select ${label}`;
@@ -1272,8 +1290,15 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
     return options.filter(opt => opt.toLowerCase().includes(q));
   }, [options, search]);
 
+  const activateToggle = (option, event, shouldIgnore) => {
+    activateDropdownOption(event, shouldIgnore, () => onToggle(option));
+  };
+
   return (
-    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+    <div
+      className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${dropUp ? 'drop-up' : ''} ${disabled ? 'is-disabled' : ''}`}
+      ref={rootRef}
+    >
       <button
         className="mobile-web-multiselect-trigger"
         type="button"
@@ -1287,37 +1312,52 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
         <ExpandMoreRounded className="mobile-web-select-icon" />
       </button>
       {open ? (
-        <div ref={panelRef} className="mobile-web-multiselect-panel" {...panelTouchHandlers}>
+        <div ref={panelRef} className="mobile-web-multiselect-panel mobile-web-multiselect-panel--checkbox">
           {options.length > 5 ? (
-            <div style={{ padding: '0 8px 8px 8px', position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
+            <div
+              className="mobile-web-multiselect-search"
+              onPointerDown={(event) => event.stopPropagation()}
+              onTouchStart={(event) => event.stopPropagation()}
+            >
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search..."
+                placeholder="Search schemes..."
                 className="mobile-web-input"
                 style={{ minHeight: '40px', padding: '8px 12px' }}
               />
             </div>
           ) : null}
-          {filteredOptions.length === 0 ? (
-            <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No matches found</div>
-          ) : null}
-          {filteredOptions.map((option) => {
-            const checked = option === 'Others' ? showOther : value.includes(option);
-            return (
-              <label
-                key={option}
-                className={`mobile-web-multiselect-option ${checked ? 'checked' : ''}`}
-                onClick={(event) => {
-                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => onToggle(option));
-                }}
-              >
-                <input type="checkbox" checked={checked} readOnly tabIndex={-1} />
-                <span>{option}</span>
-              </label>
-            );
-          })}
+          <div className="mobile-web-multiselect-options" {...panelTouchHandlers}>
+            {filteredOptions.length === 0 ? (
+              <div className="mobile-web-multiselect-empty">No matches found</div>
+            ) : null}
+            {filteredOptions.map((option) => {
+              const checked = option === 'Others' ? showOther : safeValue.includes(option);
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={checked}
+                  className={`mobile-web-multiselect-option mobile-web-multiselect-option-btn ${checked ? 'checked' : ''}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onPointerUp={(event) => {
+                    activateToggle(option, event, shouldIgnoreOptionActivation);
+                  }}
+                  onClick={(event) => {
+                    activateToggle(option, event, shouldIgnoreOptionActivation);
+                  }}
+                >
+                  <span className="mobile-web-multiselect-check" aria-hidden="true">
+                    {checked ? '✓' : ''}
+                  </span>
+                  <span className="mobile-web-multiselect-option-label">{option}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
       {showOther ? (
@@ -1705,12 +1745,16 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     const displayValue = getFormDisplayValue(key);
     const displayCustom = visitDisplayMode && !isAdminUser ? '' : customValues[key];
     if (multiple) {
+      const multiValue = Array.isArray(displayValue)
+        ? displayValue
+        : (displayValue ? String(displayValue).split(',').map((item) => item.trim()).filter(Boolean) : []);
       return (
         <MultiCheckboxSelect
           label={placeholder}
           options={options}
-          value={displayValue}
+          value={multiValue}
           customValue={displayCustom}
+          disabled={visitDisplayMode && !isAdminUser}
           onToggle={toggleGovtScheme}
           onCustomValueChange={(nextValue) => setCustomValues((prev) => ({ ...prev, [key]: nextValue }))}
         />
@@ -1916,7 +1960,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   return (
-    <div className="mobile-web-stack">
+    <div className="mobile-web-stack mobile-web-voter-info-shell">
       <MobileHeader title="Voter Info" onBack={onBack} />
       {banner.text && banner.type === 'error' ? <div className="mobile-web-error">{banner.text}</div> : null}
       <section className="mobile-web-detail-card">
@@ -2320,7 +2364,13 @@ function VoterListScreen({
 }
 function SearchVoterScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
-  const assemblyCode = useMemo(() => assemblyCodeProp || (hasHydrated ? getAssemblyCode() : ''), [hasHydrated, assemblyCodeProp]);
+  const [sessionReady, setSessionReady] = useState(false);
+  const assemblyCode = useMemo(() => {
+    const fromProp = assemblyCodeProp ? String(assemblyCodeProp).trim() : '';
+    if (fromProp) return fromProp;
+    if (typeof window === 'undefined') return '';
+    return getAssemblyCode() || '';
+  }, [assemblyCodeProp, hasHydrated]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [wardItems, setWardItems] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -2347,9 +2397,31 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   const [hasMore, setHasMore] = useState(false);
   const [resultMeta, setResultMeta] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
-  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
+  const userInfo = useMemo(
+    () => (sessionReady || hasHydrated ? getUserInfoFromStorage() : {}),
+    [sessionReady, hasHydrated]
+  );
   const lastWardLoadRef = useRef('');
   const lastSelectionRef = useRef(null);
+  const clearedStaleListViewRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    ensureUserProfileReady().then(() => {
+      if (active) setSessionReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (clearedStaleListViewRef.current) return;
+    if (view === 'list' && voterResults.length === 0 && !searching) {
+      setView('search');
+    }
+    clearedStaleListViewRef.current = true;
+  }, [view, voterResults.length, searching, setView]);
 
   const accessWardIds = useMemo(() => {
     const ids = [];
@@ -2389,11 +2461,12 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   }, [accessBoothIds, form.boothNumber]);
 
   useEffect(() => {
-    const key = String(assemblyCode || '');
-    if (lastWardLoadRef.current === key && wardItems.length > 0) return;
+    if (!assemblyCode) return undefined;
+    const key = `${String(assemblyCode)}|${sessionReady ? 'ready' : 'pending'}`;
+    if (lastWardLoadRef.current === key && wardItems.length > 0) return undefined;
     let active = true;
     setErrorText('');
-    const assemblyId = getAssemblyCode();
+    const assemblyId = assemblyCode || getAssemblyCode();
     mobileApi.fetchWards(assemblyId).then((res) => {
       if (!active) return;
       const wards = Array.isArray(res)
@@ -2432,7 +2505,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     return () => {
       active = false;
     };
-  }, [assemblyCode, wardItems.length]);
+  }, [assemblyCode, sessionReady, accessWardIds.length]);
 
   useEffect(() => {
     if (accessWardIds.length > 0 && !form.wards && wardItems.length > 0) {
@@ -2462,8 +2535,10 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   };
 
   const runSearch = async (nextPage = 0) => {
+    await ensureUserProfileReady();
+    const resolvedAssembly = assemblyCode || getAssemblyCode();
     const response = await mobileApi.searchVoters({
-      assemblyCode,
+      assemblyCode: resolvedAssembly,
       searchQuery: form.searchQuery,
       wardId: form.wards || undefined,
       boothNumber: form.boothNumber,
@@ -2474,8 +2549,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
       page: nextPage,
       size: PAGE_SIZE,
     });
-    const nextResults = response?.data?.result || [];
-    const meta = response?.data?.meta || {};
+    const { results: nextResults, meta } = parseVoterSearchResponse(response);
     setResultMeta(meta);
     setHasMore(Boolean(meta?.hasMore));
     setPage(nextPage);
@@ -2487,7 +2561,14 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     setSearching(true);
     setErrorText('');
     setSuccessText('');
-    if (!assemblyCode) {
+    try {
+      await ensureUserProfileReady();
+      setSessionReady(true);
+    } catch {
+      // continue with cached profile
+    }
+    const resolvedAssembly = assemblyCode || getAssemblyCode();
+    if (!resolvedAssembly) {
       setErrorText('No assembly code is configured for this user/environment.');
       setSearching(false);
       return;
@@ -2637,7 +2718,13 @@ function SearchVoterScreen({ assemblyCodeProp }) {
 
 function SearchBoothScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
-  const assemblyCode = useMemo(() => assemblyCodeProp || (hasHydrated ? getAssemblyCode() : ''), [hasHydrated, assemblyCodeProp]);
+  const [sessionReady, setSessionReady] = useState(false);
+  const assemblyCode = useMemo(() => {
+    const fromProp = assemblyCodeProp ? String(assemblyCodeProp).trim() : '';
+    if (fromProp) return fromProp;
+    if (typeof window === 'undefined') return '';
+    return getAssemblyCode() || '';
+  }, [assemblyCodeProp, hasHydrated]);
   const [search, setSearch] = useState('');
   const [assemblyData, setAssemblyData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2652,7 +2739,10 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   const [isLocating, setIsLocating] = useState(false);
   const lastSelectionRef = useRef(null);
 
-  const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
+  const userInfo = useMemo(
+    () => (sessionReady || hasHydrated ? getUserInfoFromStorage() : {}),
+    [sessionReady, hasHydrated]
+  );
   const accessBoothIds = useMemo(
     () => collectScopeIds(userInfo, ['boothIds', 'boothId', 'booth_id'], 'BOOTH'),
     [userInfo]
@@ -2672,10 +2762,22 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   );
 
   useEffect(() => {
+    let active = true;
+    ensureUserProfileReady().then(() => {
+      if (active) setSessionReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionReady) return undefined;
     const run = async () => {
       setLoading(true);
       setLoadError('');
-      if (!assemblyCode) {
+      const resolvedAssembly = assemblyCode || getAssemblyCode();
+      if (!resolvedAssembly) {
         setLoadError('No assembly code is configured for this user/environment.');
         setLoading(false);
         return;
@@ -2685,7 +2787,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
         if (priorScope && priorScope !== boothCacheScopeKey) {
           localStorage.removeItem(BOOTH_CACHE_KEY);
         }
-        const response = await mobileApi.loadDataLite(assemblyCode);
+        const response = await mobileApi.loadDataLite(resolvedAssembly);
         const snapshot = await resolveSnapshot(response);
         setAssemblyData(snapshot);
         localStorage.setItem(BOOTH_CACHE_KEY, JSON.stringify(snapshot));
@@ -2706,7 +2808,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
       }
     };
     run();
-  }, [assemblyCode, boothCacheScopeKey]);
+  }, [sessionReady, assemblyCode, boothCacheScopeKey]);
 
   const booths = useMemo(() => {
     const wards = assemblyData?.assembly?.wards || [];
@@ -4144,7 +4246,7 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
     try {
       if (isEditing && isProtectedVolunteerLogin(form)) {
         setFeedback({
-          error: 'Super Admin, Assembly, and Ward level logins cannot be updated. Contact an administrator.',
+          error: 'Super Admin logins cannot be updated here. Contact a platform administrator.',
           success: '',
         });
         setSaving(false);
@@ -4361,12 +4463,12 @@ function AddVolunteerScreen({ assemblyCodeProp }) {
               type="button"
               onClick={handleSubmit}
               disabled={saving || (isEditing && isProtectedVolunteerLogin(form))}
-              title={isEditing && isProtectedVolunteerLogin(form) ? 'Super Admin, Assembly, and Ward logins cannot be updated here' : undefined}
+              title={isEditing && isProtectedVolunteerLogin(form) ? 'Super Admin logins cannot be updated here' : undefined}
             >
               {saving ? (isEditing ? 'Updating...' : 'Submitting...') : (isEditing ? 'Update' : 'Submit')}
             </button>
           {isEditing && isProtectedVolunteerLogin(form) ? (
-            <p className="mobile-web-form-hint-row">Super Admin, Assembly, and Ward level logins are read-only. Contact an administrator to change these accounts.</p>
+            <p className="mobile-web-form-hint-row">Super Admin logins are read-only here. Contact a platform administrator to change these accounts.</p>
           ) : null}
           </div>
           {feedback.error ? <div className="mobile-web-error">{feedback.error}</div> : null}
@@ -4383,7 +4485,6 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
   const [search, setSearch] = useState('');
   const [workingLevel, setWorkingLevel] = useState('');
   const [sortMode, setSortMode] = useState('latest');
-  const [showDeleted, setShowDeleted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState([]);
   const [actionLoading, setActionLoading] = useState({});
@@ -4393,6 +4494,13 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
   const role = userInfo?.role || 'ADMIN';
+  const managerLevel = useMemo(() => {
+    const r = String(role || '').replace('ROLE_', '').toUpperCase();
+    const assignmentType = String(userInfo?.assignmentType || userInfo?.assignment_type || '').toUpperCase();
+    if (r === 'SUPER_ADMIN' || r === 'ADMIN') return r;
+    if (assignmentType === 'ASSEMBLY' || assignmentType === 'WARD') return assignmentType;
+    return r;
+  }, [role, userInfo]);
 
   useEffect(() => {
     let active = true;
@@ -4506,7 +4614,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
         sortConfig.sortBy,
         sortConfig.direction,
         workingLevel,
-        showDeleted ? 'true' : 'false',
+        'false',
         selectedAssembly
       );
       const list = res?.content ?? [];
@@ -4520,7 +4628,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     loadVolunteers();
-  }, [search, workingLevel, sortMode, showDeleted, selectedAssembly]);
+  }, [search, workingLevel, sortMode, selectedAssembly]);
 
   const toggleSelect = (email) => {
     setSelected((prev) => (prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]));
@@ -4559,7 +4667,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
     if (typeof window === 'undefined') return;
     if (isProtectedVolunteerLogin(v)) {
       setFeedback({
-        error: 'Super Admin, Assembly, and Ward level logins cannot be edited here. Contact an administrator.',
+        error: 'Super Admin logins cannot be edited here. Contact a platform administrator.',
         success: '',
       });
       return;
@@ -4610,12 +4718,17 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
     }
   };
 
-  const levelOptions = [
-    { label: 'All Levels', value: '' },
-    { label: 'Assembly', value: 'ASSEMBLY' },
-    { label: 'Ward', value: 'WARD' },
-    { label: 'Booth', value: 'BOOTH' },
-  ];
+  const levelOptions = useMemo(() => {
+    const all = [
+      { label: 'All Levels', value: '' },
+      { label: 'Assembly', value: 'ASSEMBLY' },
+      { label: 'Ward', value: 'WARD' },
+      { label: 'Booth', value: 'BOOTH' },
+    ];
+    if (managerLevel === 'WARD') return all.filter((item) => item.value === '' || item.value === 'BOOTH');
+    if (managerLevel === 'ASSEMBLY') return all.filter((item) => item.value !== 'ASSEMBLY');
+    return all;
+  }, [managerLevel]);
   const selectedLevelLabel = levelOptions.find((item) => item.value === workingLevel)?.label || '';
   const sortOptions = [
     { label: 'Latest Created', value: 'latest' },
@@ -4625,24 +4738,18 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
   ];
   const selectedSortLabel = sortOptions.find((item) => item.value === sortMode)?.label || '';
 
-  const stats = volunteers.reduce(
+  const isVolunteerDeleted = (v) => v.deleted === true || v.deleted === 'true' || v.deleted === 1;
+  const visibleVolunteers = volunteers.filter((v) => !isVolunteerDeleted(v));
+  const stats = visibleVolunteers.reduce(
     (acc, v) => {
-      const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
       const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
-      if (deleted) {
-        acc.deleted += 1;
-      } else {
-        if (blocked) acc.blocked += 1;
-        else acc.active += 1;
-        acc.total += 1; // Total only counts non-deleted
-      }
+      acc.total += 1;
+      if (blocked) acc.blocked += 1;
+      else acc.active += 1;
       return acc;
     },
-    { total: 0, active: 0, blocked: 0, deleted: 0 }
+    { total: 0, active: 0, blocked: 0 }
   );
-  const visibleVolunteers = showDeleted
-    ? volunteers.filter((v) => v.deleted === true || v.deleted === 'true' || v.deleted === 1)
-    : volunteers.filter((v) => !(v.deleted === true || v.deleted === 'true' || v.deleted === 1));
 
   const renderDropdownList = (items, placeholder) => {
     if (!items || items.length === 0) return <strong>{placeholder || '-'}</strong>;
@@ -4687,15 +4794,6 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
               <div className="mobile-web-volunteer-pill total">Total <strong>{stats.total}</strong></div>
               <div className="mobile-web-volunteer-pill active">Active <strong>{stats.active}</strong></div>
               <div className="mobile-web-volunteer-pill blocked">Blocked <strong>{stats.blocked}</strong></div>
-              <button
-                type="button"
-                className={`mobile-web-volunteer-pill deleted${showDeleted ? ' active-pill' : ''}`}
-                onClick={() => setShowDeleted((current) => !current)}
-                title={showDeleted ? 'Click to hide deleted volunteers' : 'Click to show deleted volunteers'}
-                style={{ cursor: 'pointer', border: 'none', background: 'none', padding: 0 }}
-              >
-                Deleted <strong>{stats.deleted}</strong>
-              </button>
             </div>
           </div>
 
@@ -4704,11 +4802,10 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
           {!loading && visibleVolunteers.length > 0 ? (
             <div className="mobile-web-stack">
               {visibleVolunteers.map((v) => {
-                const deleted = v.deleted === true || v.deleted === 'true' || v.deleted === 1;
                 const blocked = v.blocked === true || v.blocked === 'true' || v.blocked === 1;
                 const name = `${v.firstName || ''} ${v.lastName || ''}`.trim() || v.userName || 'Volunteer';
-                const levelLabel = (v.assignmentType || '-').toUpperCase();
-                const statusLabel = deleted ? 'Deleted' : blocked ? 'Blocked' : 'Active';
+                const levelLabel = (v.assignmentType || v.workingLevel || '-').toUpperCase();
+                const statusLabel = blocked ? 'Blocked' : 'Active';
                 const assignmentType = String(v.assignmentType || v.workingLevel || '').toUpperCase();
                 const assignmentIds = String(v.assignmentId || '')
                   .split(',')
@@ -4727,7 +4824,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
                   ? v.boothNames
                   : boothIds.map((id) => boothLookup[String(id)] || `Booth ${id}`).filter(Boolean);
                 return (
-                  <div key={v.userName || v.phone || name} className="mobile-web-volunteer-card" style={{ opacity: blocked || deleted ? 0.5 : 1 }}>
+                  <div key={v.userName || v.phone || name} className="mobile-web-volunteer-card" style={{ opacity: blocked ? 0.5 : 1 }}>
                     <div className="mobile-web-volunteer-head">
                       <div className="mobile-web-volunteer-avatar">{name.slice(0, 1).toUpperCase()}</div>
                       <div className="mobile-web-volunteer-meta">
@@ -4776,7 +4873,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
                         ) : (
                           <span
                             className="px-4 py-2 text-sm font-medium text-slate-500 rounded-lg border border-slate-200 bg-slate-50 cursor-not-allowed"
-                            title="Super Admin, Assembly, and Ward logins cannot be edited"
+                            title="Super Admin logins cannot be edited"
                           >
                             Edit disabled
                           </span>
@@ -4787,18 +4884,14 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
                         </button> */}
                         <button
                           type="button"
-                          onClick={() => handleDelete(v.userName, !deleted)}
+                          onClick={() => handleDelete(v.userName, false)}
                           disabled={actionLoading[`delete-${v.userName}`]}
-                          className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition
-                              ${deleted
-                              ? "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
-                              : "bg-gray-600 hover:bg-gray-700 active:bg-gray-800"}
-                              disabled:opacity-50 disabled:cursor-not-allowed`}
+                          className="px-4 py-2 text-sm font-medium text-white rounded-lg transition bg-gray-600 hover:bg-gray-700 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {actionLoading[`delete-${v.userName}`] && (
                             <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
                           )}
-                          {deleted ? (showDeleted ? "Restore" : "Delete") : "Delete"}
+                          Delete
                         </button>
                         <button
                           type="button"
@@ -4962,13 +5055,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const isSuperAdmin = role === 'SUPER_ADMIN';
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(role);
-  const canViewFamiliesList = ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD'].includes(role);
+  const canViewFamiliesList = ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD', 'BOOTH'].includes(role);
   // Assembly / Ward volunteers; admins with assembly context in premium console can view maps too.
   const canViewFamilyMapTab =
     ['ASSEMBLY', 'WARD'].includes(role) ||
     (Boolean(assemblyCodeProp) && isAdminUser);
 
-  const canViewFamilyMapMemberDetails = canViewFamilyMapTab;
+  const canViewFamilyMapMemberDetails = canViewFullFamilySensitiveData(role);
 
   const familySectionTabs = useMemo(() => {
     const tabs = [
@@ -4990,8 +5083,14 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const isFamilyEditMode = Boolean(editingFamilyId) && activeTab === 'NEW';
 
   const canEditFamilyRecord = role === 'BOOTH';
+  const canViewFullFamilyData = canViewFullFamilySensitiveData(role);
+  const maskAvailableSensitive = !canViewFullFamilyData;
+
+  const shouldMaskAvailableInEdit = isFamilyEditMode
+    && shouldMaskAvailableFamilyForRole(role, familyAvailability);
 
   const FAMILY_EDIT_DENIED_MSG = 'Access denied. Editable by booth level users only.';
+  const FAMILY_VIEW_DENIED_MSG = 'Voter details are hidden for Available families to protect data.';
 
   const handleFamilyEditBlocked = useCallback(() => {
     setError(FAMILY_EDIT_DENIED_MSG);
@@ -5036,7 +5135,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     return [{ value: wardIdStr, label }, ...base];
   }, [wardItems, editingFamilyId, editingFamilyMeta]);
 
-  const effectiveAnalysisWardId = selectedWardId || undefined;
+  const effectiveAnalysisWardId =
+    selectedWardId !== '' && selectedWardId != null ? selectedWardId : undefined;
 
   const assemblyCodeForFamily = useMemo(
     () => assemblyCodeProp || (mounted ? getAssemblyCode() : ''),
@@ -5058,10 +5158,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       { value: '', label: 'Pick head of family' },
       ...members.map((member) => ({
         value: member.id,
-        label: member.name || member.epic || 'Member',
+        label: shouldMaskAvailableInEdit
+          ? `${maskMemberNameForDisplay(role, familyAvailability, member.name)} · ${maskMemberEpicForDisplay(role, familyAvailability, member.epic)}`
+          : (member.name || member.epic || 'Member'),
       })),
     ],
-    [members]
+    [members, shouldMaskAvailableInEdit, role, familyAvailability]
   );
 
   const familyPointSelectOptions = useMemo(
@@ -5186,8 +5288,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!wardItems.length) return;
-    if (activeTab === 'NEW' && !selectedWardId && !editingFamilyId && !editFamilyLoading) {
-      setSelectedWardId(wardItems[0].value);
+    if (!selectedWardId && !editingFamilyId && !editFamilyLoading) {
+      if (activeTab === 'NEW' || activeTab === 'LIST' || activeTab === 'MAP' || activeTab === 'PENDING_MAP') {
+        setSelectedWardId(wardItems[0].value);
+      }
     }
   }, [activeTab, wardItems, selectedWardId, editingFamilyId, editFamilyLoading]);
 
@@ -5406,7 +5510,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     } else if (activeTab === 'PENDING_MAP') {
       loadFamilyDetails(true);
     }
-  }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily]);
+  }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily, familyDataRefreshToken]);
 
   useEffect(() => {
     if (activeTab !== 'NEW') {
@@ -6102,6 +6206,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const openMemberVoterInfo = async (member) => {
     if (!member?.rawVoter) return;
+    if (shouldMaskAvailableInEdit) {
+      setError(FAMILY_VIEW_DENIED_MSG);
+      setSuccess('');
+      return;
+    }
     lastMemberSelectionRef.current = { member };
     setIsLocating(true);
     setError('');
@@ -6256,6 +6365,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       setFamilies(sortFamiliesByNumber(all));
       refreshFamilyAnalysisData();
       resetNewFamilyForm();
+      setActiveTab('LIST');
     } catch (err) {
       setError(formatApiError(err, 'Failed to save family'));
     } finally {
@@ -6347,13 +6457,25 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             </div>
 
             <div className="mobile-web-family-grid mt-3">
-              <FamilySuggestInput
-                label="Enter family name"
-                value={familyName}
-                onChange={setFamilyName}
-                suggestions={familyNameSuggestions}
-                placeholder="Family name"
-              />
+              {shouldMaskAvailableInEdit ? (
+                <MaskedFamilyField
+                  label="Enter family name"
+                  value={familyName}
+                  onChange={setFamilyName}
+                  mask
+                  maskMode="leading"
+                  readOnly
+                  placeholder="Family name"
+                />
+              ) : (
+                <FamilySuggestInput
+                  label="Enter family name"
+                  value={familyName}
+                  onChange={setFamilyName}
+                  suggestions={familyNameSuggestions}
+                  placeholder="Family name"
+                />
+              )}
               <label className="mobile-web-field">
                 <span>Family Number</span>
                 <input
@@ -6545,13 +6667,15 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 ) : (
                   members.map((member) => (
                     <div key={member.id} className="mobile-web-table-row">
-                      <button type="button" className="mobile-web-link-btn" onClick={() => openMemberVoterInfo(member)}>{member.name}</button>
-                      <button type="button" className="mobile-web-link-btn" onClick={() => openMemberVoterInfo(member)}>{member.epic}</button>
-                      <span>{member.relation || '-'}</span>
-                      <span>{member.phone}</span>
-                      <span>{member.houseNo}</span>
+                      <span>{shouldMaskAvailableInEdit ? maskMemberNameForDisplay(role, familyAvailability, member.name) : (member.name || '-')}</span>
+                      <span>{shouldMaskAvailableInEdit ? maskMemberEpicForDisplay(role, familyAvailability, member.epic) : (member.epic || '-')}</span>
+                      <span>{shouldMaskAvailableInEdit ? maskMemberEpicForDisplay(role, familyAvailability, member.relation) : (member.relation || '-')}</span>
+                      <span>{shouldMaskAvailableInEdit ? maskMemberPhoneForDisplay(role, familyAvailability, member.phone) : (member.phone || '-')}</span>
+                      <span>{shouldMaskAvailableInEdit ? maskMemberEpicForDisplay(role, familyAvailability, member.houseNo) : (member.houseNo || '-')}</span>
                       <span className="mobile-web-row-actions">
-                        <button type="button" className="mobile-web-secondary-btn" onClick={() => openMemberVoterInfo(member)}>View</button>
+                        {!shouldMaskAvailableInEdit ? (
+                          <button type="button" className="mobile-web-secondary-btn" onClick={() => openMemberVoterInfo(member)}>View</button>
+                        ) : null}
                         <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
                       </span>
                     </div>
@@ -6579,16 +6703,16 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   placeholder="Pick head of family"
                 />
               </label>
-              <label className="mobile-web-field">
-                <span>Family Head Phone Number</span>
-                <input
-                  className="mobile-web-input"
-                  placeholder="Phone number"
-                  value={headPhone}
-                  onChange={(e) => setHeadPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                  inputMode="numeric"
-                />
-              </label>
+              <MaskedFamilyField
+                label="Family Head Phone Number"
+                placeholder="Phone number"
+                value={headPhone}
+                onChange={(val) => setHeadPhone(String(val).replace(/\D/g, '').slice(0, 10))}
+                mask={shouldMaskAvailableInEdit}
+                maskMode="trailing"
+                readOnly={shouldMaskAvailableInEdit}
+                inputMode="numeric"
+              />
               <label className="mobile-web-field">
                 <span>Family Nature</span>
                 <PremiumSelect
@@ -6608,6 +6732,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 />
               </label>
             </div>
+            {shouldMaskAvailableInEdit ? (
+              <div className="mobile-web-muted" style={{ margin: '10px 0', fontSize: '0.85rem' }}>
+                Available family: names show first 4 letters and EPIC/phone show last 4 digits only. Ward and Assembly users see full data.
+              </div>
+            ) : null}
             {success ? <div className="mobile-web-success" style={{ margin: '10px 0' }}>{success}</div> : null}
             {error ? <div className="mobile-web-error" style={{ margin: '10px 0' }}>{error}</div> : null}
             <div className="mobile-web-actions">
@@ -6635,10 +6764,15 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 wardId={effectiveAnalysisWardId}
                 wardCode={mapWardCode}
                 assemblyCode={assemblyCodeForFamily}
-                showMemberDetails={false}
+                showMemberDetails={canViewFullFamilyData}
+                maskAvailableSensitive={maskAvailableSensitive}
                 mapHeight="420px"
                 availabilityFilter={pendingAvailabilityFilter}
-                infoMessage="Pending work map: tap any coloured dot for status and address (family voter details hidden)."
+                infoMessage={
+                  canViewFullFamilyData
+                    ? 'Pending work map: full family details for Ward / Assembly. Tap a dot to view or edit.'
+                    : 'Pending work map: Available families show masked names (first 4 letters) and EPIC (last 4 digits). Tap Edit to update.'
+                }
                 emptyHint={pendingMapEmptyHint}
                 allowMapEdit={canEditFamilyRecord}
                 onMapEditBlocked={handleFamilyEditBlocked}
@@ -6663,9 +6797,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                         <div key={family.familyId} className="mobile-web-family-pending-row">
                           <div>
                             <div style={{ fontWeight: 600 }}>
-                              {String(family.familyAvailability || '').trim() === 'Available'
-                                ? maskFamilySensitiveValue(family.familyName || 'Unnamed family')
-                                : (family.familyName || 'Unnamed family')}
+                              {displayPendingFamilyListName(family, role)}
                             </div>
                             <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
                               {formatFamilyAvailabilityLabel(family.familyAvailability || 'Available')}
@@ -6694,9 +6826,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                         <div key={family.familyId} className="mobile-web-family-pending-row mobile-web-family-pending-row--no-gps">
                           <div>
                             <div style={{ fontWeight: 600 }}>
-                              {String(family.familyAvailability || '').trim() === 'Available'
-                                ? maskFamilySensitiveValue(family.familyName || 'Unnamed family')
-                                : (family.familyName || 'Unnamed family')}
+                              {displayPendingFamilyListName(family, role)}
                             </div>
                             <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
                               {formatFamilyAvailabilityLabel(family.familyAvailability || 'Available')}
@@ -6755,6 +6885,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               wardCode={mapWardCode}
               assemblyCode={assemblyCodeForFamily}
               showMemberDetails={canViewFamilyMapMemberDetails}
+              maskAvailableSensitive={maskAvailableSensitive}
               mapHeight="480px"
               availabilityFilter={mapAvailabilityFilter}
               infoMessage="Family map (assembly / ward): tap a dot for address and member lines — Voter name | EPIC | Relation name | Relation type."
@@ -9923,7 +10054,13 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 export default function MobileDetailPage({ params }) {
   const [userRole, setUserRole] = useState('');
   const [assemblies, setAssemblies] = useState([]);
-  const [selectedAssembly, setSelectedAssembly] = useState('');
+  const [selectedAssembly, setSelectedAssembly] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    const code = getAssemblyCode();
+    if (!code) return '';
+    const asNum = parseInt(String(code), 10);
+    return Number.isFinite(asNum) ? String(asNum) : String(code);
+  });
   const [assemblyKey, setAssemblyKey] = useState(0);
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
