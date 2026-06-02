@@ -52,11 +52,7 @@ body.votabase-no-capture [contenteditable="true"] {
   user-select: text;
 }
 
-body.votabase-no-capture[data-votabase-shielded="1"] > *:not(.votabase-capture-shield):not(.votabase-capture-watermark) {
-  filter: blur(22px) brightness(0.72);
-}
-
-body.votabase-no-capture[data-votabase-print-blocked="1"] > *:not(.votabase-capture-shield):not(.votabase-capture-watermark) {
+body.votabase-no-capture[data-votabase-print-blocked="1"] > *:not(.votabase-capture-shield) {
   visibility: hidden !important;
 }
 
@@ -66,31 +62,6 @@ body.votabase-no-capture[data-votabase-print-blocked="1"]::before {
   display: block;
   padding: 2rem;
   font-weight: 600;
-}
-
-.votabase-capture-watermark {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483645;
-  pointer-events: none;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 3.5rem 1rem;
-  padding: 2rem 1rem;
-  overflow: hidden;
-  opacity: 0.14;
-}
-
-.votabase-capture-watermark span {
-  display: block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #0c4a6e;
-  transform: rotate(-24deg);
-  white-space: nowrap;
-  user-select: none;
 }
 
 .votabase-capture-shield {
@@ -1698,6 +1669,13 @@ textarea {
   overflow: visible;
 }
 
+.mobile-web-family-shell .mobile-web-field:has(.mobile-web-multiselect-wrap.open),
+.mobile-web-family-shell .mobile-web-field:has(.mobile-web-suggestion-panel) {
+  position: relative;
+  z-index: 120;
+  overflow: visible;
+}
+
 .mobile-web-family-shell,
 .mobile-web-meetings-shell,
 .mobile-web-pollday-shell,
@@ -1795,12 +1773,17 @@ textarea {
 }
 
 .mobile-web-field-suggestions {
-  max-height: 200px;
-  overflow: hidden;
+  max-height: min(50vh, 240px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .mobile-web-field-suggestions .mobile-web-suggestion-list {
-  max-height: 180px;
+  max-height: none;
+  overflow: visible;
 }
 
 .mobile-web-suggestion-panel {
@@ -3922,9 +3905,11 @@ textarea {
   position: relative;
 }
 
-.mobile-web-multiselect-wrap.is-disabled .mobile-web-multiselect-trigger {
+.mobile-web-multiselect-wrap.is-disabled .mobile-web-multiselect-trigger,
+.mobile-web-multiselect-wrap.is-disabled .mobile-web-multiselect-option-btn {
   cursor: not-allowed;
   opacity: 0.65;
+  pointer-events: none;
 }
 
 .mobile-web-multiselect-trigger {
@@ -4001,7 +3986,7 @@ textarea {
 .mobile-web-multiselect-options {
   flex: 1;
   min-height: 0;
-  max-height: min(58vh, 260px);
+  max-height: min(58vh, 320px);
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -4011,6 +3996,10 @@ textarea {
   scrollbar-color: rgba(37, 99, 235, 0.55) rgba(226, 232, 240, 0.9);
 }
 
+.mobile-web-multiselect-panel--checkbox .mobile-web-multiselect-options {
+  max-height: min(62vh, 360px);
+}
+
 .mobile-web-multiselect-empty {
   padding: 12px;
   text-align: center;
@@ -4018,8 +4007,12 @@ textarea {
   font-size: 0.9rem;
 }
 
-.mobile-web-premium-select-panel {
-  max-height: 240px;
+.mobile-web-multiselect-panel.mobile-web-premium-select-panel {
+  max-height: min(72vh, 320px);
+}
+
+.mobile-web-premium-select-panel .mobile-web-multiselect-options {
+  max-height: min(58vh, 280px);
 }
 
 .mobile-web-select-panel-portal {

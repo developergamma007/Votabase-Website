@@ -33,6 +33,7 @@ import {
   maskFamilySensitiveValue,
   maskFamilyNameLeading,
   canViewFullFamilySensitiveData,
+  canViewFamilyAnalysis,
   shouldMaskAvailableFamilyForRole,
   displayPendingFamilyListName,
   maskMemberNameForDisplay,
@@ -629,7 +630,62 @@ function formatLocationError(err) {
   if (err.code === 3) return 'Location request timed out. This often happens indoors; please try moving near a window or outdoors and retry.';
   return err?.message || 'Location access is required.';
 }
-function requestLocation({ allowCached = true } = {}) {
+function coordsFromPosition(pos) {
+  return {
+    latitude: pos.coords.latitude,
+    longitude: pos.coords.longitude,
+    accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+  };
+}
+
+/** Wait for a GPS fix at or below maxAccuracyMeters (typical phone GPS: 3–15 m). */
+function watchForAccurateGpsFix(maxAccuracyMeters = 20, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    if (!navigator?.geolocation?.watchPosition) {
+      reject(new Error('Accurate GPS is not supported in this browser.'));
+      return;
+    }
+    let best = null;
+    let watchId = null;
+    const finish = (result, err) => {
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      if (result) resolve(result);
+      else reject(err);
+    };
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const point = coordsFromPosition(pos);
+        if (!best || (point.accuracy != null && (best.accuracy == null || point.accuracy < best.accuracy))) {
+          best = point;
+        }
+        if (point.accuracy != null && point.accuracy <= maxAccuracyMeters) {
+          finish(point);
+        }
+      },
+      () => { /* ignore transient errors while GPS acquires */ },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
+    );
+    window.setTimeout(() => {
+      if (best?.accuracy != null && best.accuracy <= maxAccuracyMeters * 2) {
+        finish(best);
+        return;
+      }
+      if (best) {
+        finish(best);
+        return;
+      }
+      finish(null, new Error('Could not obtain an accurate GPS fix. Move outdoors or near a window and try again.'));
+    }, timeoutMs);
+  });
+}
+
+/**
+ * @param {object} opts
+ * @param {boolean} [opts.allowCached] - use last known coords only when not requiring exact GPS
+ * @param {boolean} [opts.requireHighAccuracy] - GPS only: no network/cell fallback, no stale cache
+ * @param {number} [opts.maxAccuracyMeters] - target horizontal accuracy (meters) when requireHighAccuracy
+ */
+function requestLocation({ allowCached = true, requireHighAccuracy = false, maxAccuracyMeters = 20 } = {}) {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Location access is unavailable.'));
@@ -646,22 +702,30 @@ function requestLocation({ allowCached = true } = {}) {
     const runGeo = (options) =>
       new Promise((geoResolve, geoReject) => {
         navigator.geolocation.getCurrentPosition(
-          (pos) => geoResolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          (pos) => geoResolve(coordsFromPosition(pos)),
           (err) => geoReject(err),
-          options
+          options,
         );
       });
-    const cached = allowCached ? getCachedLocation() : null;
+    const cached = allowCached && !requireHighAccuracy ? getCachedLocation() : null;
     const attempt = async () => {
       try {
-        // Higher timeout for initial acquisition
+        if (requireHighAccuracy) {
+          const position = await watchForAccurateGpsFix(maxAccuracyMeters, 25000);
+          setCachedLocation(position);
+          resolve(position);
+          return;
+        }
         const position = await runGeo({ enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
         setCachedLocation(position);
         resolve(position);
       } catch (err) {
+        if (requireHighAccuracy) {
+          reject(new Error(formatLocationError(err)));
+          return;
+        }
         if (err?.code === 2 || err?.code === 3) {
           try {
-            // Fallback: low accuracy with significantly longer timeout
             const position = await runGeo({ enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 });
             setCachedLocation(position);
             resolve(position);
@@ -698,6 +762,23 @@ function requestLocation({ allowCached = true } = {}) {
     attempt();
   });
 }
+
+function formatCapturedLocationMessage(loc) {
+  const lat = Number(loc?.latitude);
+  const lng = Number(loc?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Location captured successfully.';
+  const acc = Number.isFinite(loc?.accuracy) ? ` (±${Math.round(loc.accuracy)} m GPS)` : '';
+  return `Location captured: ${lat.toFixed(6)}, ${lng.toFixed(6)}${acc}`;
+}
+
+/** Fresh GPS fix — used whenever coordinates are saved (voter, family, meetings). */
+const ACCURATE_GPS_REQUEST = Object.freeze({
+  allowCached: false,
+  requireHighAccuracy: true,
+  maxAccuracyMeters: 20,
+});
+
+const requestAccurateLocation = () => requestLocation(ACCURATE_GPS_REQUEST);
 function buildVoterPayload(form, customValues) {
   const payload = {};
   Object.entries(form).forEach(([key, value]) => {
@@ -962,12 +1043,12 @@ function useDropdownDropUp(rootRef, open, panelRef, maxPanelHeight = 260) {
 const DROPDOWN_TOUCH_MOVE_THRESHOLD_PX = 14;
 
 /** Prevent accidental option selection while scrolling dropdown panels on touch devices. */
-function useDropdownPanelScrollGuard(open) {
-  const guardRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
+function useDropdownPanelScrollGuard(open, moveThresholdPx = DROPDOWN_TOUCH_MOVE_THRESHOLD_PX) {
+  const guardRef = useRef({ active: false, moved: false, startX: 0, startY: 0, scrollEl: null });
 
   useEffect(() => {
     if (!open) {
-      guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+      guardRef.current = { active: false, moved: false, startX: 0, startY: 0, scrollEl: null };
     }
   }, [open]);
 
@@ -975,11 +1056,13 @@ function useDropdownPanelScrollGuard(open) {
     onTouchStart: (event) => {
       const touch = event.touches[0];
       if (!touch) return;
+      const scrollEl = event.currentTarget;
       guardRef.current = {
         active: true,
         moved: false,
         startX: touch.clientX,
         startY: touch.clientY,
+        scrollEl,
       };
     },
     onTouchMove: (event) => {
@@ -988,7 +1071,13 @@ function useDropdownPanelScrollGuard(open) {
       if (!touch) return;
       const dx = Math.abs(touch.clientX - guardRef.current.startX);
       const dy = Math.abs(touch.clientY - guardRef.current.startY);
-      if (dx > DROPDOWN_TOUCH_MOVE_THRESHOLD_PX || dy > DROPDOWN_TOUCH_MOVE_THRESHOLD_PX) {
+      const scrollEl = guardRef.current.scrollEl;
+      const isScrollable = scrollEl && scrollEl.scrollHeight > scrollEl.clientHeight + 4;
+      if (isScrollable && dy > 6 && dy > dx) {
+        guardRef.current.moved = true;
+        return;
+      }
+      if (dx > moveThresholdPx || dy > moveThresholdPx) {
         guardRef.current.moved = true;
       }
     },
@@ -1004,7 +1093,7 @@ function useDropdownPanelScrollGuard(open) {
     onTouchCancel: () => {
       guardRef.current = { active: false, moved: false, startX: 0, startY: 0 };
     },
-  }), []);
+  }), [moveThresholdPx]);
 
   const shouldIgnoreOptionActivation = useCallback(() => guardRef.current.moved, []);
 
@@ -1020,6 +1109,29 @@ function activateDropdownOption(event, shouldIgnore, onActivate) {
   event.preventDefault();
   event.stopPropagation();
   onActivate();
+}
+
+/** Prevents pointerup + click from firing twice (toggle on then immediately off). */
+function useDedupedDropdownActivate() {
+  const lastActivationRef = useRef({ key: '', at: 0 });
+  return useCallback((activationKey, event, shouldIgnore, onActivate) => {
+    if (shouldIgnore()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const now = Date.now();
+    const key = String(activationKey);
+    if (lastActivationRef.current.key === key && now - lastActivationRef.current.at < 450) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    lastActivationRef.current = { key, at: now };
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate();
+  }, []);
 }
 
 function FeatureUnavailableScreen({ message = 'This feature will be available soon.' }) {
@@ -1124,6 +1236,7 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
+  const dropUp = useDropdownDropUp(rootRef, open, panelRef, 280);
   const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
   useDropdownDismiss(rootRef, () => setOpen(false), panelRef);
   const optionSet = new Set(options);
@@ -1133,7 +1246,10 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
   const otherValue = customValue || (isUnknown ? value : '');
 
   return (
-    <div className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={rootRef}>
+    <div
+      className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${dropUp ? 'drop-up' : ''} ${disabled ? 'is-disabled' : ''}`}
+      ref={rootRef}
+    >
       <button
         className="mobile-web-multiselect-trigger"
         type="button"
@@ -1149,36 +1265,37 @@ function SingleOptionSelect({ label, options, value, customValue, onSelect, onCu
       {open ? (
         <div
           ref={panelRef}
-          className="mobile-web-multiselect-panel mobile-web-premium-select-panel"
+          className="mobile-web-multiselect-panel mobile-web-multiselect-panel--checkbox mobile-web-premium-select-panel"
           role="listbox"
-          {...panelTouchHandlers}
         >
-          {options.map((option) => {
-            const checked = option === 'Others' ? showOther : value === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                role="option"
-                aria-selected={checked}
-                className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
-                onPointerUp={(event) => {
-                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
-                    onSelect(option);
-                    setOpen(false);
-                  });
-                }}
-                onClick={(event) => {
-                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
-                    onSelect(option);
-                    setOpen(false);
-                  });
-                }}
-              >
-                <span>{option}</span>
-              </button>
-            );
-          })}
+          <div className="mobile-web-multiselect-options" {...panelTouchHandlers}>
+            {options.map((option) => {
+              const checked = option === 'Others' ? showOther : value === option;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                  onPointerUp={(event) => {
+                    activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                      onSelect(option);
+                      setOpen(false);
+                    });
+                  }}
+                  onClick={(event) => {
+                    activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                      onSelect(option);
+                      setOpen(false);
+                    });
+                  }}
+                >
+                  <span>{option}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
       {showOther ? (
@@ -1228,36 +1345,37 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
       {open ? (
         <div
           ref={panelRef}
-          className="mobile-web-multiselect-panel mobile-web-premium-select-panel"
+          className="mobile-web-multiselect-panel mobile-web-multiselect-panel--checkbox mobile-web-premium-select-panel"
           role="listbox"
-          {...panelTouchHandlers}
         >
-          {normalized.map((option) => {
-            const checked = String(option.value) === String(value);
-            return (
-              <button
-                key={`${option.value}-${option.label}`}
-                type="button"
-                role="option"
-                aria-selected={checked}
-                className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
-                onPointerUp={(event) => {
-                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
-                    onChange(option.value);
-                    setOpen(false);
-                  });
-                }}
-                onClick={(event) => {
-                  activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
-                    onChange(option.value);
-                    setOpen(false);
-                  });
-                }}
-              >
-                <span>{option.label}</span>
-              </button>
-            );
-          })}
+          <div className="mobile-web-multiselect-options" {...panelTouchHandlers}>
+            {normalized.map((option) => {
+              const checked = String(option.value) === String(value);
+              return (
+                <button
+                  key={`${option.value}-${option.label}`}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  className={`mobile-web-single-select-option ${checked ? 'checked' : ''}`}
+                  onPointerUp={(event) => {
+                    activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                      onChange(option.value);
+                      setOpen(false);
+                    });
+                  }}
+                  onClick={(event) => {
+                    activateDropdownOption(event, shouldIgnoreOptionActivation, () => {
+                      onChange(option.value);
+                      setOpen(false);
+                    });
+                  }}
+                >
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
@@ -1269,7 +1387,8 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 300);
-  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open);
+  const { panelTouchHandlers, shouldIgnoreOptionActivation } = useDropdownPanelScrollGuard(open, 22);
+  const dedupedActivate = useDedupedDropdownActivate();
   useDropdownDismiss(rootRef, () => {
     setOpen(false);
     setSearch('');
@@ -1289,10 +1408,6 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
     if (!q) return options;
     return options.filter(opt => opt.toLowerCase().includes(q));
   }, [options, search]);
-
-  const activateToggle = (option, event, shouldIgnore) => {
-    activateDropdownOption(event, shouldIgnore, () => onToggle(option));
-  };
 
   return (
     <div
@@ -1326,6 +1441,8 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
                 placeholder="Search schemes..."
                 className="mobile-web-input"
                 style={{ minHeight: '40px', padding: '8px 12px' }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
               />
             </div>
           ) : null}
@@ -1342,12 +1459,11 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
                   role="checkbox"
                   aria-checked={checked}
                   className={`mobile-web-multiselect-option mobile-web-multiselect-option-btn ${checked ? 'checked' : ''}`}
+                  disabled={disabled}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onPointerUp={(event) => {
-                    activateToggle(option, event, shouldIgnoreOptionActivation);
-                  }}
                   onClick={(event) => {
-                    activateToggle(option, event, shouldIgnoreOptionActivation);
+                    if (disabled) return;
+                    dedupedActivate(option, event, shouldIgnoreOptionActivation, () => onToggle(option));
                   }}
                 >
                   <span className="mobile-web-multiselect-check" aria-hidden="true">
@@ -1642,10 +1758,10 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
   };
 
   const getLocation = () => {
-    requestLocation({ allowCached: false })
+    requestAccurateLocation()
       .then((pos) => {
         setLocation({ latitude: pos.latitude, longitude: pos.longitude });
-        setBanner({ type: 'success', text: 'Location captured successfully.' });
+        setBanner({ type: 'success', text: formatCapturedLocationMessage(pos) });
       })
       .catch((err) => setBanner({ type: 'error', text: err?.message || 'Unable to fetch current location.' }));
   };
@@ -2614,7 +2730,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setErrorText('');
     try {
-      const loc = await requestLocation({ allowCached: true });
+      const loc = await requestAccurateLocation();
       setSelectedVoter({ ...voter, ...loc });
     } catch (error) {
       setErrorText(error?.message || 'Location is required to view voter info.');
@@ -2625,7 +2741,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
     try {
-      const loc = await requestLocation({ allowCached: false });
+      const loc = await requestAccurateLocation();
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setErrorText('');
     } catch (error) {
@@ -2946,7 +3062,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setBoothError('');
     try {
-      const loc = await requestLocation({ allowCached: true });
+      const loc = await requestAccurateLocation();
       setSelectedVoter({ ...voter, ...loc });
     } catch (error) {
       setBoothError(error?.message || 'Location is required to view voter info.');
@@ -2957,7 +3073,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
     try {
-      const loc = await requestLocation({ allowCached: false });
+      const loc = await requestAccurateLocation();
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setBoothError('');
     } catch (error) {
@@ -5055,11 +5171,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const isSuperAdmin = role === 'SUPER_ADMIN';
   const isAdminUser = ['SUPER_ADMIN', 'ADMIN'].includes(role);
-  const canViewFamiliesList = ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD', 'BOOTH'].includes(role);
-  // Assembly / Ward volunteers; admins with assembly context in premium console can view maps too.
-  const canViewFamilyMapTab =
-    ['ASSEMBLY', 'WARD'].includes(role) ||
-    (Boolean(assemblyCodeProp) && isAdminUser);
+  const canViewFamilyAnalysisTabs = useMemo(
+    () => canViewFamilyAnalysis(userInfo),
+    [userInfo],
+  );
+  const canViewFamiliesList = canViewFamilyAnalysisTabs;
+  const canViewFamilyMapTab = canViewFamilyAnalysisTabs;
 
   const canViewFamilyMapMemberDetails = canViewFullFamilySensitiveData(role);
 
@@ -5079,6 +5196,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     [assemblyCodeProp],
   );
   const [activeTab, setActiveTab] = usePersistedSubtab(familySubtabKey, 'NEW', familyTabIds);
+
+  useEffect(() => {
+    if (!canViewFamilyAnalysisTabs && (activeTab === 'LIST' || activeTab === 'MAP')) {
+      setActiveTab('NEW');
+    }
+  }, [canViewFamilyAnalysisTabs, activeTab, setActiveTab]);
 
   const isFamilyEditMode = Boolean(editingFamilyId) && activeTab === 'NEW';
 
@@ -6167,12 +6290,15 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     }
   };
 
+  const captureHouseholdLocation = () => requestAccurateLocation();
+
   const handleCaptureLocation = async () => {
     setError('');
+    setSuccess('');
     try {
-      const pos = await requestLocation();
+      const pos = await captureHouseholdLocation();
       setLocation(pos);
-      setSuccess('Location captured successfully.');
+      setSuccess(formatCapturedLocationMessage(pos));
     } catch (err) {
       setError(err?.message || 'Unable to capture location.');
     }
@@ -6215,7 +6341,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setError('');
     try {
-      const loc = await requestLocation({ allowCached: true });
+      const loc = await requestAccurateLocation();
       setSelectedVoter({
         ...member.rawVoter,
         epicNo: member.rawVoter.epicNo || member.epic,
@@ -6288,10 +6414,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const handleGetLocation = async () => {
     setError('');
+    setSuccess('');
     try {
-      const loc = await requestLocation();
+      const loc = await captureHouseholdLocation();
       setLocation(loc);
-      setSuccess(`Location captured: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`);
+      setSuccess(formatCapturedLocationMessage(loc));
     } catch (err) {
       setError(err?.message || 'Unable to fetch location.');
     }
@@ -6585,7 +6712,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                   <iframe
                     className="mobile-web-map-frame"
                     title="Family location map"
-                    src={getGoogleEmbedUrl(location.latitude, location.longitude)}
+                    src={getGoogleEmbedUrl(location.latitude, location.longitude, 19)}
                     loading="lazy"
                   />
                 ) : (
@@ -7152,7 +7279,7 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
       let lat = null;
       let lng = null;
       try {
-        const pos = await requestLocation({ allowCached: false });
+        const pos = await requestAccurateLocation();
         lat = pos.latitude;
         lng = pos.longitude;
       } catch (err) {
@@ -7260,22 +7387,22 @@ function MeetingsScreen({ userRole, assemblyCodeProp }) {
   }, [newMeeting.latitude, newMeeting.longitude]);
 
   const handleUseMyLocation = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setNewMeeting((prev) => ({ ...prev, latitude: lat.toFixed(6), longitude: lng.toFixed(6) }));
-      },
-      () => { }
-    );
+    requestAccurateLocation()
+      .then((pos) => {
+        setNewMeeting((prev) => ({
+          ...prev,
+          latitude: Number(pos.latitude).toFixed(6),
+          longitude: Number(pos.longitude).toFixed(6),
+        }));
+      })
+      .catch(() => { });
   };
 
   useEffect(() => {
     if (activeMeetingTab !== 'new') return;
     if (newMeetingLocInitRef.current) return;
     newMeetingLocInitRef.current = true;
-    requestLocation({ allowCached: true })
+    requestAccurateLocation()
       .then((pos) => {
         setNewMeeting((prev) => ({
           ...prev,
@@ -8773,6 +8900,8 @@ const volunteerEnrichmentColumnLabel = (key) => ({
   epicNo: 'Voter EPIC No',
   boothNo: 'Booth No',
   voterSerialNo: 'Voter Serial No.',
+  gender: 'Gender',
+  age: 'Age',
   mobile: 'Voter Mobile',
   updatedByName: 'Agent Name',
   updatedByPhone: 'Agent Number',
@@ -8792,8 +8921,8 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     [assemblyCodeProp],
   );
   const [activeTab, setActiveTab] = usePersistedSubtab(volunteerAnalysisSubtabKey, 'table', ['table', 'map']);
-  const [tableDataMode, setTableDataMode] = useState('families');
-  const [mapDataMode, setMapDataMode] = useState('families');
+  const [tableDataMode, setTableDataMode] = useState('voters');
+  const [mapDataMode, setMapDataMode] = useState('volunteers');
   const [detailRows, setDetailRows] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -8825,6 +8954,10 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const masterUploadPollRef = useRef(null);
   const hasHydrated = useHasHydrated();
   const userInfo = useMemo(() => (hasHydrated ? getUserInfoSafe() : {}), [hasHydrated]);
+  const canViewFamilyAnalysisTabs = useMemo(
+    () => canViewFamilyAnalysis(userInfo),
+    [userInfo],
+  );
   const [role, setRole] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [wardItems, setWardItems] = useState([]);
@@ -9410,11 +9543,21 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   };
 
   useEffect(() => {
+    if (!canViewFamilyAnalysisTabs && tableDataMode === 'families') {
+      setTableDataMode('voters');
+    }
+    if (!canViewFamilyAnalysisTabs && mapDataMode === 'families') {
+      setMapDataMode('volunteers');
+    }
+  }, [canViewFamilyAnalysisTabs, tableDataMode, mapDataMode]);
+
+  useEffect(() => {
     if (!role || role === 'BOOTH') return;
+    if (tableDataMode === 'families' && !canViewFamilyAnalysisTabs) return;
     if (wardItems.length === 0) return;
     if (accessWardIds.length > 0 && !effectiveWard) return;
     loadAnalysis();
-  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode, tableDataMode]);
+  }, [role, effectiveWard, viewMode, wardItems.length, accessWardIds.length, effectiveAssemblyCode, tableDataMode, canViewFamilyAnalysisTabs]);
 
   const buildMap = async (points) => {
     if (!mapRef.current) return;
@@ -9521,6 +9664,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (activeTab !== 'map') return;
+    if (mapDataMode === 'families' && !canViewFamilyAnalysisTabs) return;
     loadMapPoints();
     return () => {
       if (osmMapRef.current) {
@@ -9528,7 +9672,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         osmMapRef.current = null;
       }
     };
-  }, [activeTab, effectiveWard, mapDataMode, effectiveAssemblyCode]);
+  }, [activeTab, effectiveWard, mapDataMode, effectiveAssemblyCode, canViewFamilyAnalysisTabs]);
 
   const detailColumns = useMemo(() => {
     const excluded = new Set([
@@ -9558,6 +9702,8 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
       'epicNo',
       'boothNo',
       'voterSerialNo',
+      'gender',
+      'age',
       'mobile',
       'updatedByName',
       'updatedByPhone',
@@ -9689,7 +9835,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           ) : null}
 
         </div>
-        {activeTab === 'table' ? (
+        {activeTab === 'table' && canViewFamilyAnalysisTabs ? (
           <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
             <div className="mobile-web-field mobile-web-field-span-2">
               <label>Data</label>
@@ -9735,21 +9881,23 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
             </>
           ) : (
             <div className="mobile-web-map-controls" style={{ flexWrap: 'wrap', gap: '8px' }}>
-              <div className="mobile-web-chip-row">
-                {[
-                  { label: 'Families', value: 'families' },
-                  { label: 'Users', value: 'volunteers' },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`mobile-web-chip${mapDataMode === opt.value ? ' active' : ''}`}
-                    onClick={() => setMapDataMode(opt.value)}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+              {canViewFamilyAnalysisTabs ? (
+                <div className="mobile-web-chip-row">
+                  {[
+                    { label: 'Families', value: 'families' },
+                    { label: 'Users', value: 'volunteers' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`mobile-web-chip${mapDataMode === opt.value ? ' active' : ''}`}
+                      onClick={() => setMapDataMode(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <button type="button" className="mobile-web-primary-btn mobile-web-map-refresh-btn" onClick={loadMapPoints} disabled={mapLoading}>
                 {mapLoading ? 'Loading Map...' : 'Refresh Map'}
               </button>

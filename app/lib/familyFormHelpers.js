@@ -47,6 +47,21 @@ export const canViewFullFamilySensitiveData = (role) => {
   return ['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD'].includes(r);
 };
 
+/** Family Analysis table/map: assembly, ward, and admin roles only (not booth). */
+export const canViewFamilyAnalysis = (userInfo = {}) => {
+  const role = normalizeFamilyRole(userInfo?.role);
+  const level = String(
+    userInfo?.workingLevel || userInfo?.assignmentType || userInfo?.assignment_type || '',
+  )
+    .replace(/^ROLE_/, '')
+    .toUpperCase();
+
+  if (role === 'BOOTH' || level === 'BOOTH') return false;
+  if (['SUPER_ADMIN', 'ADMIN', 'ASSEMBLY', 'WARD'].includes(role)) return true;
+  if (role === 'USER' && ['ASSEMBLY', 'WARD'].includes(level)) return true;
+  return ['ASSEMBLY', 'WARD'].includes(level);
+};
+
 export const isBoothFamilyRole = (role) => {
   const r = normalizeFamilyRole(role);
   return r === 'BOOTH' || r === 'USER';

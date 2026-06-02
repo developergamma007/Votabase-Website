@@ -1,153 +1,102 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 const BODY_CLASS = 'votabase-no-capture';
-/** Blur/shield content shortly after the user stops interacting (catches many mobile/desktop captures). */
-const IDLE_SHIELD_MS = 900;
-/** Keep content hidden briefly when a screenshot shortcut is detected. */
-const SHORTCUT_SHIELD_MS = 800;
-
-function readWatermarkLabel() {
-  if (typeof window === 'undefined') return 'Votabase';
-  try {
-    const name =
-      localStorage.getItem('userName') ||
-      localStorage.getItem('username') ||
-      localStorage.getItem('user');
-    const phone = localStorage.getItem('phone');
-    if (name && phone) return `${name} · ${phone}`;
-    if (name) return String(name);
-  } catch {
-    /* ignore */
-  }
-  return 'Votabase · confidential';
-}
+/** How long the “Protected content” screen stays up after a detected attempt. */
+const SHIELD_MS = 1800;
+/** Quick hide/show often means the OS screenshot UI opened (Android / some WebViews). */
+const MOBILE_QUICK_HIDE_MS = 700;
+/** Sustained hide with page still backgrounded — screenshot editor or capture chrome. */
+const MOBILE_SUSTAINED_HIDE_MS = 280;
 
 function isScreenshotShortcut(event) {
   const key = String(event.key || '').toLowerCase();
   const code = String(event.code || '');
 
   if (key === 'printscreen' || code === 'PrintScreen') return true;
-  // macOS: Cmd+Shift+3/4/5
   if (event.metaKey && event.shiftKey && ['3', '4', '5', 's'].includes(key)) return true;
-  // Windows: Win+Shift+S (Snipping Tool), Win+PrtScn
   if (event.shiftKey && key === 's' && (event.metaKey || event.getModifierState?.('OS'))) return true;
   if (code === 'PrintScreen' && (event.metaKey || event.ctrlKey)) return true;
 
   return false;
 }
 
-function shouldForceShield() {
-  return document.visibilityState === 'hidden' || !document.hasFocus();
-}
-
-function setShieldDataset(on) {
-  if (on) {
-    document.body.dataset.votabaseShielded = '1';
-  } else {
-    delete document.body.dataset.votabaseShielded;
-    delete document.body.dataset.votabaseIdleShield;
-  }
+function isMobileWebClient() {
+  if (typeof window === 'undefined') return false;
+  const coarse = window.matchMedia?.('(pointer: coarse)')?.matches;
+  const narrow = window.matchMedia?.('(max-width: 900px)')?.matches;
+  const ua = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  return ua || (coarse && narrow);
 }
 
 export default function ScreenshotProtection() {
   const [mounted, setMounted] = useState(false);
   const [shieldVisible, setShieldVisible] = useState(false);
-  const [watermark, setWatermark] = useState('Votabase');
+  const shieldTimerRef = useRef(null);
+  const hiddenAtRef = useRef(0);
+  const sustainedHideTimerRef = useRef(null);
 
-  const applyShield = useCallback((reason = 'manual') => {
+  const flashShield = useCallback(() => {
     setShieldVisible(true);
-    setShieldDataset(true);
-    if (reason === 'idle') {
-      document.body.dataset.votabaseIdleShield = '1';
-    }
-  }, []);
+    document.body.dataset.votabaseShielded = '1';
 
-  const clearShieldIfAllowed = useCallback(() => {
-    if (shouldForceShield()) {
-      applyShield('focus');
-      return;
+    if (shieldTimerRef.current != null) {
+      window.clearTimeout(shieldTimerRef.current);
     }
-    setShieldVisible(false);
-    setShieldDataset(false);
-  }, [applyShield]);
+
+    shieldTimerRef.current = window.setTimeout(() => {
+      setShieldVisible(false);
+      delete document.body.dataset.votabaseShielded;
+      shieldTimerRef.current = null;
+    }, SHIELD_MS);
+
+    navigator.clipboard?.writeText?.('').catch(() => {});
+  }, []);
 
   useEffect(() => {
     setMounted(true);
-    setWatermark(readWatermarkLabel());
-
-    const refreshWatermark = () => setWatermark(readWatermarkLabel());
-    window.addEventListener('storage', refreshWatermark);
-    window.addEventListener('votabase-auth-updated', refreshWatermark);
-
-    return () => {
-      window.removeEventListener('storage', refreshWatermark);
-      window.removeEventListener('votabase-auth-updated', refreshWatermark);
-    };
   }, []);
 
   useEffect(() => {
     if (!mounted || typeof document === 'undefined') return undefined;
 
+    const mobileWeb = isMobileWebClient();
     document.body.classList.add(BODY_CLASS);
 
-    let idleTimer = null;
-    let shortcutTimer = null;
-
-    const clearIdleTimer = () => {
-      if (idleTimer != null) {
-        window.clearTimeout(idleTimer);
-        idleTimer = null;
+    const clearSustainedHideTimer = () => {
+      if (sustainedHideTimerRef.current != null) {
+        window.clearTimeout(sustainedHideTimerRef.current);
+        sustainedHideTimerRef.current = null;
       }
     };
 
-    const scheduleIdleShield = () => {
-      clearIdleTimer();
-      if (shouldForceShield()) {
-        applyShield('focus');
+    const onVisibilityChange = () => {
+      if (!mobileWeb) return;
+
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+        clearSustainedHideTimer();
+        sustainedHideTimerRef.current = window.setTimeout(() => {
+          if (!document.hidden) return;
+          const hiddenFor = Date.now() - hiddenAtRef.current;
+          if (hiddenFor >= MOBILE_SUSTAINED_HIDE_MS) {
+            flashShield();
+          }
+        }, MOBILE_SUSTAINED_HIDE_MS);
         return;
       }
-      delete document.body.dataset.votabaseIdleShield;
-      setShieldVisible(false);
-      setShieldDataset(false);
 
-      idleTimer = window.setTimeout(() => {
-        if (!shouldForceShield()) {
-          applyShield('idle');
-        }
-      }, IDLE_SHIELD_MS);
-    };
+      clearSustainedHideTimer();
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = 0;
+      if (!hiddenAt) return;
 
-    const onActivity = () => {
-      if (shortcutTimer != null) return;
-      clearShieldIfAllowed();
-      scheduleIdleShield();
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        clearIdleTimer();
-        applyShield('hidden');
-      } else {
-        scheduleIdleShield();
+      const hiddenMs = Date.now() - hiddenAt;
+      if (hiddenMs > 0 && hiddenMs <= MOBILE_QUICK_HIDE_MS) {
+        flashShield();
       }
-    };
-
-    const onWindowBlur = () => {
-      clearIdleTimer();
-      applyShield('blur');
-    };
-
-    const onWindowFocus = () => {
-      if (shortcutTimer != null) return;
-      scheduleIdleShield();
-    };
-
-    const onPageHide = () => {
-      clearIdleTimer();
-      applyShield('pagehide');
     };
 
     const onContextMenu = (event) => {
@@ -155,26 +104,15 @@ export default function ScreenshotProtection() {
     };
 
     const onKeyDown = (event) => {
-      if (!isScreenshotShortcut(event)) {
-        onActivity();
-        return;
-      }
+      if (!isScreenshotShortcut(event)) return;
       event.preventDefault();
-      clearIdleTimer();
-      applyShield('shortcut');
-      if (shortcutTimer != null) window.clearTimeout(shortcutTimer);
-      shortcutTimer = window.setTimeout(() => {
-        shortcutTimer = null;
-        clearShieldIfAllowed();
-        scheduleIdleShield();
-      }, SHORTCUT_SHIELD_MS);
-      navigator.clipboard?.writeText?.('').catch(() => {});
+      flashShield();
     };
 
     const onKeyUp = (event) => {
       if (event.key === 'PrintScreen') {
         event.preventDefault();
-        onKeyDown(event);
+        flashShield();
       }
     };
 
@@ -186,77 +124,46 @@ export default function ScreenshotProtection() {
 
     const onBeforePrint = () => {
       document.body.dataset.votabasePrintBlocked = '1';
-      applyShield('print');
+      flashShield();
     };
 
     const onAfterPrint = () => {
       delete document.body.dataset.votabasePrintBlocked;
-      clearShieldIfAllowed();
-      scheduleIdleShield();
     };
 
-    const onCopy = (event) => {
-      const target = event.target;
-      const tag = target?.tagName?.toLowerCase?.() || '';
-      if (tag !== 'input' && tag !== 'textarea' && !target?.isContentEditable) {
-        event.preventDefault();
-      }
-    };
-
-    const events = ['pointerdown', 'pointermove', 'touchstart', 'touchmove', 'keydown', 'scroll', 'wheel'];
-    events.forEach((name) => document.addEventListener(name, onActivity, { passive: true }));
-
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('blur', onWindowBlur);
-    window.addEventListener('focus', onWindowFocus);
-    window.addEventListener('pagehide', onPageHide);
     document.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('keyup', onKeyUp, true);
     document.addEventListener('dragstart', onDragStart);
-    document.addEventListener('copy', onCopy);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('beforeprint', onBeforePrint);
     window.addEventListener('afterprint', onAfterPrint);
 
-    scheduleIdleShield();
-
     return () => {
-      clearIdleTimer();
-      if (shortcutTimer != null) window.clearTimeout(shortcutTimer);
+      clearSustainedHideTimer();
+      if (shieldTimerRef.current != null) {
+        window.clearTimeout(shieldTimerRef.current);
+      }
       document.body.classList.remove(BODY_CLASS);
-      setShieldDataset(false);
+      delete document.body.dataset.votabaseShielded;
       delete document.body.dataset.votabasePrintBlocked;
-      events.forEach((name) => document.removeEventListener(name, onActivity));
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('blur', onWindowBlur);
-      window.removeEventListener('focus', onWindowFocus);
-      window.removeEventListener('pagehide', onPageHide);
       document.removeEventListener('contextmenu', onContextMenu);
       document.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('keyup', onKeyUp, true);
       document.removeEventListener('dragstart', onDragStart);
-      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('beforeprint', onBeforePrint);
       window.removeEventListener('afterprint', onAfterPrint);
     };
-  }, [mounted, applyShield, clearShieldIfAllowed]);
+  }, [mounted, flashShield]);
 
-  if (!mounted) return null;
+  if (!mounted || !shieldVisible) return null;
 
   return createPortal(
-    <>
-      <div className="votabase-capture-watermark" aria-hidden="true">
-        {Array.from({ length: 18 }, (_, index) => (
-          <span key={index}>{watermark}</span>
-        ))}
-      </div>
-      {shieldVisible ? (
-        <div className="votabase-capture-shield" role="presentation">
-          <p>Protected content</p>
-          <span>Screenshots are disabled for this session</span>
-        </div>
-      ) : null}
-    </>,
+    <div className="votabase-capture-shield" role="presentation" aria-live="assertive">
+      <p>Protected content</p>
+      <span>Screenshots are not allowed</span>
+    </div>,
     document.body,
   );
 }
