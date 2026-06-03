@@ -296,7 +296,8 @@ export function buildGoogleWebViewHtml(lat, lng, options = {}) {
   const latN = Number(lat) || DEFAULT_CENTER.lat;
   const lngN = Number(lng) || DEFAULT_CENTER.lng;
   const zoom = options.zoom ?? 15;
-  const draggable = options.draggable ? 'true' : 'false';
+  const draggable = Boolean(options.draggable);
+  const clickable = Boolean(options.clickable);
   const key = getGoogleMapsApiKey();
 
   return `<!doctype html>
@@ -322,10 +323,15 @@ export function buildGoogleWebViewHtml(lat, lng, options = {}) {
         position: { lat: ${latN}, lng: ${lngN} },
         draggable: ${draggable}
       });
-      if (${draggable}) {
-        marker.addListener('dragend', function() {
-          var p = marker.getPosition();
-          post({ type: 'position', lat: p.lat(), lng: p.lng() });
+      function emit() {
+        var p = marker.getPosition();
+        post({ type: 'position', lat: p.lat(), lng: p.lng() });
+      }
+      if (${draggable}) marker.addListener('dragend', emit);
+      if (${clickable}) {
+        map.addListener('click', function(e) {
+          marker.setPosition(e.latLng);
+          post({ type: 'position', lat: e.latLng.lat(), lng: e.latLng.lng() });
         });
       }
     }

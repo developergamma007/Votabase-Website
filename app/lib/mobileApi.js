@@ -120,8 +120,12 @@ async function request(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
-    // Check for blocked/deleted user status (403 or specific message)
-    if (response.status === 403 || (payload && (payload.detail === 'Please contact Admin' || String(payload.detail).includes('blocked')))) {
+    const detailText = payload?.detail != null ? String(payload.detail) : '';
+    const isAccountBlocked =
+      detailText === 'Please contact Admin'
+      || /blocked|contact admin/i.test(detailText);
+    // Only force logout for account-level blocks — not feature 403s (e.g. family analysis).
+    if (response.status === 403 && isAccountBlocked) {
       if (typeof window !== 'undefined') {
         localStorage.clear();
         document.cookie = 'token=; path=/; max-age=0';

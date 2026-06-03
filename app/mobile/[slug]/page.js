@@ -63,9 +63,8 @@ import {
   formatApiError,
 } from '../../lib/familyFormHelpers';
 import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
+import FamilyLocationPicker from '../../components/FamilyLocationPicker';
 import {
-  buildClickableOsmMap,
-  buildDraggableOsmMap,
   buildFamilyOsmMap,
   buildPointsOsmMap,
   destroyOsmMap,
@@ -771,7 +770,7 @@ function formatCapturedLocationMessage(loc) {
   return `Location captured: ${lat.toFixed(6)}, ${lng.toFixed(6)}${acc}`;
 }
 
-/** Fresh GPS fix — used whenever coordinates are saved (voter, family, meetings). */
+/** Fresh GPS fix — household location, meetings, manual “Get location” on voter form. */
 const ACCURATE_GPS_REQUEST = Object.freeze({
   allowCached: false,
   requireHighAccuracy: true,
@@ -779,6 +778,14 @@ const ACCURATE_GPS_REQUEST = Object.freeze({
 });
 
 const requestAccurateLocation = () => requestLocation(ACCURATE_GPS_REQUEST);
+
+/** Opening voter info from a list — fast like before (cache / single fix, no long GPS wait). */
+const QUICK_GPS_FOR_VOTER_CARD = Object.freeze({
+  allowCached: true,
+  requireHighAccuracy: false,
+});
+
+const requestQuickLocationForVoter = () => requestLocation(QUICK_GPS_FOR_VOTER_CARD);
 function buildVoterPayload(form, customValues) {
   const payload = {};
   Object.entries(form).forEach(([key, value]) => {
@@ -2730,7 +2737,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setErrorText('');
     try {
-      const loc = await requestAccurateLocation();
+      const loc = await requestQuickLocationForVoter();
       setSelectedVoter({ ...voter, ...loc });
     } catch (error) {
       setErrorText(error?.message || 'Location is required to view voter info.');
@@ -2741,7 +2748,7 @@ function SearchVoterScreen({ assemblyCodeProp }) {
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
     try {
-      const loc = await requestAccurateLocation();
+      const loc = await requestLocation({ allowCached: false, requireHighAccuracy: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setErrorText('');
     } catch (error) {
@@ -3062,7 +3069,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setBoothError('');
     try {
-      const loc = await requestAccurateLocation();
+      const loc = await requestQuickLocationForVoter();
       setSelectedVoter({ ...voter, ...loc });
     } catch (error) {
       setBoothError(error?.message || 'Location is required to view voter info.');
@@ -3073,7 +3080,7 @@ function SearchBoothScreen({ assemblyCodeProp }) {
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
     try {
-      const loc = await requestAccurateLocation();
+      const loc = await requestLocation({ allowCached: false, requireHighAccuracy: false });
       setSelectedVoter({ ...lastSelectionRef.current.voter, ...loc });
       setBoothError('');
     } catch (error) {
@@ -5000,7 +5007,7 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
                         </button> */}
                         <button
                           type="button"
-                          onClick={() => handleDelete(v.userName, false)}
+                          onClick={() => handleDelete(v.userName, true)}
                           disabled={actionLoading[`delete-${v.userName}`]}
                           className="px-4 py-2 text-sm font-medium text-white rounded-lg transition bg-gray-600 hover:bg-gray-700 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -5628,12 +5635,14 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   useEffect(() => {
     if (!mounted) return;
     if (activeTab === 'LIST') {
-      loadFamilyAnalysis();
+      if (canViewFamilyAnalysisTabs) {
+        loadFamilyAnalysis();
+      }
       loadFamilyDetails(true);
     } else if (activeTab === 'PENDING_MAP') {
       loadFamilyDetails(true);
     }
-  }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily, familyDataRefreshToken]);
+  }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily, familyDataRefreshToken, canViewFamilyAnalysisTabs]);
 
   useEffect(() => {
     if (activeTab !== 'NEW') {
@@ -5773,7 +5782,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const refreshFamilyAnalysisData = () => {
     setFamilyDataRefreshToken((token) => token + 1);
-    loadFamilyAnalysis();
+    if (canViewFamilyAnalysisTabs) {
+      loadFamilyAnalysis();
+    }
     loadFamilyDetails(true);
   };
 
@@ -6341,7 +6352,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     setIsLocating(true);
     setError('');
     try {
-      const loc = await requestAccurateLocation();
+      const loc = await requestQuickLocationForVoter();
       setSelectedVoter({
         ...member.rawVoter,
         epicNo: member.rawVoter.epicNo || member.epic,
@@ -6707,22 +6718,12 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
             </div>
 
             <div className="my-4">
-              <div className="mobile-web-map-card mb-3">
-                {location ? (
-                  <iframe
-                    className="mobile-web-map-frame"
-                    title="Family location map"
-                    src={getGoogleEmbedUrl(location.latitude, location.longitude, 19)}
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="mobile-web-map-placeholder">Capture location to preview household map.</div>
-                )}
-              </div>
-              <button className="mobile-web-location-btn w-full" onClick={handleGetLocation} type="button">
-                <LocationOnOutlined />
-                <span>{location ? 'Location Captured' : 'Capture Household Location'}</span>
-              </button>
+              <FamilyLocationPicker
+                location={location}
+                onLocationChange={setLocation}
+                onCaptureGps={handleGetLocation}
+                captureLabel={location ? 'Refresh GPS location' : 'Capture Household Location (GPS)'}
+              />
             </div>
 
             <div className="mobile-web-family-members">
