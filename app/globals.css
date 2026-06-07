@@ -4926,6 +4926,12 @@ body:has(.login-screen) {
   font-size: 1.1rem;
 }
 
+.privacy-policy-page h3 {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 .privacy-policy-page p,
 .privacy-policy-page li {
   line-height: 1.6;

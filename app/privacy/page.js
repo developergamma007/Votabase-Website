@@ -1,6 +1,7 @@
 export const metadata = {
-  title: 'Privacy Policy | Votabase',
-  description: 'How Votabase collects, uses, and protects information for authorized volunteer accounts.',
+  title: 'Privacy Policy & Child Safety Standards | Votabase',
+  description:
+    'Votabase privacy policy and published child safety standards against child sexual abuse and exploitation (CSAE).',
 };
 
 const SUPPORT_EMAILS = ['admin@iswot.in', 'venugopalagowda9999@gmail.com'];
@@ -12,7 +13,11 @@ export default function PrivacyPolicyPage() {
         <header className="privacy-policy-page__header">
           <h1>Privacy Policy</h1>
           <p className="privacy-policy-page__meta">
-            Effective date: 31 May 2026 · Service: Votabase (web and mobile apps)
+            Effective date: 7 June 2026 · Service: Votabase (web and mobile apps)
+          </p>
+          <p className="privacy-policy-page__meta">
+            This page is publicly published and includes our standards against child sexual abuse
+            and exploitation (CSAE), as required by app store child safety policies.
           </p>
         </header>
 
@@ -98,11 +103,100 @@ export default function PrivacyPolicyPage() {
           </ul>
         </section>
 
-        <section>
-          <h2>8. Children</h2>
+        <section id="child-safety-standards">
+          <h2>8. Child safety standards (CSAE)</h2>
           <p>
-            Votabase is not directed at children under 13. Accounts are created only for authorized
-            adult volunteers and administrators.
+            Votabase maintains <strong>zero tolerance</strong> for child sexual abuse and exploitation
+            (CSAE) and for any content, conduct, or use of our service that endangers minors. These
+            published standards apply to the Votabase website and mobile application worldwide.
+          </p>
+
+          <h3>8.1 Purpose and audience</h3>
+          <p>
+            Votabase is a <strong>professional volunteer operations tool</strong> for authorized adult
+            campaign and outreach workers. It is <strong>not</strong> a social network, dating service,
+            or consumer app directed at children. Accounts are created only by program administrators
+            for adults (typically 18 years or older) performing legitimate field work under
+            organizational supervision.
+          </p>
+
+          <h3>8.2 Prohibited conduct and content</h3>
+          <p>The following are strictly prohibited on Votabase:</p>
+          <ul>
+            <li>
+              Creating, uploading, storing, sharing, or soliciting child sexual abuse material (CSAM)
+              or any sexual content involving minors.
+            </li>
+            <li>
+              Grooming, exploitation, trafficking, or any communication intended to abuse or exploit a
+              child.
+            </li>
+            <li>
+              Using voter or household records to target, contact, or harm minors in any unlawful way.
+            </li>
+            <li>
+              Misrepresenting age or identity to obtain access, or allowing minors to use volunteer
+              credentials.
+            </li>
+            <li>Any other activity that violates child protection laws or endangers minors.</li>
+          </ul>
+
+          <h3>8.3 Prevention and access controls</h3>
+          <ul>
+            <li>Login requires administrator-issued volunteer credentials; there is no open public signup.</li>
+            <li>Role-based access limits which data each user can view or edit.</li>
+            <li>
+              Sensitive screens may use additional device protections (for example, discouraging
+              screenshots on supported platforms).
+            </li>
+            <li>
+              We do not operate public user-to-user messaging, open profiles, or open media sharing
+              features that could be used to distribute abusive material.
+            </li>
+          </ul>
+
+          <h3>8.4 Reporting child safety concerns</h3>
+          <p>
+            If you believe Votabase is being misused in a way that involves CSAE or puts a child at
+            risk, report it immediately to us using the contacts below. Include as much detail as you
+            can (account name, phone, date/time, and description). We treat urgent child-safety reports
+            as highest priority.
+          </p>
+          <ul>
+            {SUPPORT_EMAILS.map((email) => (
+              <li key={`safety-${email}`}>
+                <a href={`mailto:${email}?subject=Votabase%20Child%20Safety%20Report`}>{email}</a>
+              </li>
+            ))}
+          </ul>
+          <p>
+            If a child is in immediate danger, contact <strong>local emergency services</strong> first,
+            then notify us. In India you may also contact the National Cyber Crime Reporting Portal
+            at <a href="https://cybercrime.gov.in" rel="noopener noreferrer">cybercrime.gov.in</a>.
+          </p>
+
+          <h3>8.5 Our response</h3>
+          <ul>
+            <li>
+              We investigate credible reports promptly and may suspend or permanently disable accounts
+              involved in suspected CSAE or child endangerment.
+            </li>
+            <li>
+              We preserve relevant logs and cooperate with law enforcement and authorized child
+              protection agencies as required by law.
+            </li>
+            <li>
+              We do not allow users to edit or delete this published safety policy; changes are made
+              only by ISWOT through an updated effective date on this page.
+            </li>
+          </ul>
+
+          <h3>8.6 Children under 13</h3>
+          <p>
+            Votabase is not directed at children under 13, and we do not knowingly collect personal
+            information from children under 13. If we learn that a child under 13 has been given
+            account access, we will take steps to deactivate the account and delete associated data
+            where appropriate.
           </p>
         </section>
 
@@ -116,7 +210,7 @@ export default function PrivacyPolicyPage() {
 
         <section>
           <h2>10. Contact</h2>
-          <p>For privacy questions or requests:</p>
+          <p>For privacy questions, data requests, or child safety reports:</p>
           <ul>
             {SUPPORT_EMAILS.map((email) => (
               <li key={email}>
