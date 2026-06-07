@@ -228,6 +228,7 @@ function FamilyMapSection({
   title = 'Family map',
   showRefresh = true,
   availabilityFilter = null,
+  syncPoints = null,
   onFamilyEdit = null,
   updatedFrom = '',
   updatedTo = '',
@@ -284,10 +285,28 @@ function FamilyMapSection({
     });
   };
 
+  const normalizeMapPoints = useCallback((rows) => {
+    let points = (Array.isArray(rows) ? rows : [])
+      .map(normalizeFamilyMapPoint)
+      .map((p) => ({ ...p, __maskAvailable: maskAvailableSensitive }))
+      .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+    if (Array.isArray(availabilityFilter) && availabilityFilter.length) {
+      const allowed = new Set(availabilityFilter.map((v) => String(v).trim()));
+      if (allowed.size < FAMILY_AVAILABILITY_OPTIONS.length) {
+        points = points.filter((p) => allowed.has(String(p.familyAvailability || '').trim()));
+      }
+    }
+    return points;
+  }, [availabilityFilterKey, maskAvailableSensitive]);
+
   const loadMapPoints = useCallback(async () => {
     setMapLoading(true);
     setMapError('');
     try {
+      const merged = new Map();
+      normalizeMapPoints(syncPoints).forEach((p) => {
+        if (p.familyId != null) merged.set(String(p.familyId), p);
+      });
       const res = await mobileApi.fetchFamilyLocationPoints(
         wardId || undefined,
         boothId || undefined,
@@ -297,14 +316,10 @@ function FamilyMapSection({
         updatedTo || undefined,
       );
       const payload = res?.data?.result || res?.result || [];
-      let points = (Array.isArray(payload) ? payload : [])
-        .map(normalizeFamilyMapPoint)
-        .map((p) => ({ ...p, __maskAvailable: maskAvailableSensitive }))
-        .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
-      if (Array.isArray(availabilityFilter) && availabilityFilter.length) {
-        const allowed = new Set(availabilityFilter.map((v) => String(v).trim()));
-        points = points.filter((p) => allowed.has(String(p.familyAvailability || '').trim()));
-      }
+      normalizeMapPoints(payload).forEach((p) => {
+        if (p.familyId != null) merged.set(String(p.familyId), p);
+      });
+      const points = [...merged.values()];
       setPointCount(points.length);
       if (points.length === 0) {
         cleanupMapInstances();
@@ -328,7 +343,8 @@ function FamilyMapSection({
     updatedTo,
     availabilityFilterKey,
     refreshToken,
-    maskAvailableSensitive,
+    syncPoints,
+    normalizeMapPoints,
   ]);
 
   useEffect(() => {
@@ -386,7 +402,9 @@ function FamilyMapSection({
       {!mapLoading && pointCount === 0 && !mapError ? (
         <div className="mobile-web-empty">
           {emptyHint
-            || (wardId || wardCode ? 'No families with GPS on the map for this ward.' : 'No families with GPS on the map for the current filters.')}
+            || (wardId || wardCode
+              ? 'No saved families with GPS in this ward. Families appear here only after Save Family with Pin Mark or GPS.'
+              : 'No saved families with GPS for the current filters. Try All Wards or save a family with location on New Family.')}
         </div>
       ) : null}
       <div className="mobile-web-map-container" ref={mapRef} style={{ height: mapHeight, minHeight: mapHeight }} />
@@ -637,6 +655,49 @@ function coordsFromPosition(pos) {
   };
 }
 
+function runGeoGet(options) {
+  return new Promise((resolve, reject) => {
+    if (!navigator?.geolocation?.getCurrentPosition) {
+      reject(new Error('Location access is not supported in this browser.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve(coordsFromPosition(pos)),
+      (err) => reject(err),
+      options,
+    );
+  });
+}
+
+/** First watchPosition fix — often faster than getCurrentPosition indoors. */
+function watchForFirstGeoFix(timeoutMs = 10000, enableHighAccuracy = false) {
+  return new Promise((resolve, reject) => {
+    if (!navigator?.geolocation?.watchPosition) {
+      reject(new Error('Geolocation watch is not supported.'));
+      return;
+    }
+    let settled = false;
+    let watchId = null;
+    const finish = (point, err) => {
+      if (settled) return;
+      settled = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      clearTimeout(timer);
+      if (point) resolve(point);
+      else reject(err || new Error('Location request timed out.'));
+    };
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => finish(coordsFromPosition(pos)),
+      () => { /* wait for first successful reading or timeout */ },
+      { enableHighAccuracy, maximumAge: 300000, timeout: timeoutMs },
+    );
+    const timer = setTimeout(() => finish(null, { code: 3 }), timeoutMs);
+  });
+}
+
+const HOUSEHOLD_GPS_TIMEOUT_MSG =
+  'Could not get your location. Use Pin Mark on the map (drag/tap), or allow location and retry GPS near a window.';
+
 /** Wait for a GPS fix at or below maxAccuracyMeters (typical phone GPS: 3–15 m). */
 function watchForAccurateGpsFix(maxAccuracyMeters = 20, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
@@ -684,7 +745,12 @@ function watchForAccurateGpsFix(maxAccuracyMeters = 20, timeoutMs = 20000) {
  * @param {boolean} [opts.requireHighAccuracy] - GPS only: no network/cell fallback, no stale cache
  * @param {number} [opts.maxAccuracyMeters] - target horizontal accuracy (meters) when requireHighAccuracy
  */
-function requestLocation({ allowCached = true, requireHighAccuracy = false, maxAccuracyMeters = 20 } = {}) {
+function requestLocation({
+  allowCached = true,
+  requireHighAccuracy = false,
+  maxAccuracyMeters = 20,
+  fast = false,
+} = {}) {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Location access is unavailable.'));
@@ -712,6 +778,11 @@ function requestLocation({ allowCached = true, requireHighAccuracy = false, maxA
         if (requireHighAccuracy) {
           const position = await watchForAccurateGpsFix(maxAccuracyMeters, 25000);
           setCachedLocation(position);
+          resolve(position);
+          return;
+        }
+        if (fast) {
+          const position = await requestFastHouseholdLocation();
           resolve(position);
           return;
         }
@@ -766,11 +837,12 @@ function formatCapturedLocationMessage(loc) {
   const lat = Number(loc?.latitude);
   const lng = Number(loc?.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Location captured successfully.';
-  const acc = Number.isFinite(loc?.accuracy) ? ` (±${Math.round(loc.accuracy)} m GPS)` : '';
-  return `Location captured: ${lat.toFixed(6)}, ${lng.toFixed(6)}${acc}`;
+  const acc = Number.isFinite(loc?.accuracy) ? ` (±${Math.round(loc.accuracy)} m)` : '';
+  const cachedNote = loc?.cached ? ' · last known position' : '';
+  return `Location captured: ${lat.toFixed(6)}, ${lng.toFixed(6)}${acc}${cachedNote}`;
 }
 
-/** Fresh GPS fix — household location, meetings, manual “Get location” on voter form. */
+/** Fresh GPS fix — meetings, manual “Get location” on voter form (not household button). */
 const ACCURATE_GPS_REQUEST = Object.freeze({
   allowCached: false,
   requireHighAccuracy: true,
@@ -778,6 +850,76 @@ const ACCURATE_GPS_REQUEST = Object.freeze({
 });
 
 const requestAccurateLocation = () => requestLocation(ACCURATE_GPS_REQUEST);
+
+function requestFastHouseholdLocation() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Location access is unavailable.'));
+      return;
+    }
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      reject(new Error('Location requires HTTPS (or localhost).'));
+      return;
+    }
+    if (!navigator?.geolocation) {
+      reject(new Error('Location access is not supported in this browser.'));
+      return;
+    }
+    const cached = getCachedLocation();
+    const attempt = async () => {
+      if (cached && Date.now() - cached.timestamp < 1000 * 60 * 3) {
+        resolve({
+          latitude: cached.latitude,
+          longitude: cached.longitude,
+          accuracy: cached.accuracy ?? null,
+          cached: true,
+        });
+        return;
+      }
+      const tries = [
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 },
+        () => watchForFirstGeoFix(10000, false),
+        () => watchForFirstGeoFix(8000, true),
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 },
+      ];
+      for (const opts of tries) {
+        try {
+          const position = typeof opts === 'function' ? await opts() : await runGeoGet(opts);
+          setCachedLocation(position);
+          resolve(position);
+          return;
+        } catch {
+          /* try next strategy */
+        }
+      }
+      if (cached) {
+        resolve({
+          latitude: cached.latitude,
+          longitude: cached.longitude,
+          accuracy: cached.accuracy ?? null,
+          cached: true,
+        });
+        return;
+      }
+      reject(new Error(HOUSEHOLD_GPS_TIMEOUT_MSG));
+    };
+    if (navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'geolocation' })
+        .then((res) => {
+          if (res.state === 'denied') {
+            reject(new Error('Location permission denied. Please allow it in browser settings and retry.'));
+            return;
+          }
+          attempt();
+        })
+        .catch(attempt);
+      return;
+    }
+    attempt();
+  });
+}
 
 /** Opening voter info from a list — fast like before (cache / single fix, no long GPS wait). */
 const QUICK_GPS_FOR_VOTER_CARD = Object.freeze({
@@ -5418,10 +5560,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   useEffect(() => {
     if (!wardItems.length) return;
-    if (!selectedWardId && !editingFamilyId && !editFamilyLoading) {
-      if (activeTab === 'NEW' || activeTab === 'LIST' || activeTab === 'MAP' || activeTab === 'PENDING_MAP') {
-        setSelectedWardId(wardItems[0].value);
-      }
+    if (!selectedWardId && !editingFamilyId && !editFamilyLoading && activeTab === 'NEW') {
+      setSelectedWardId(wardItems[0].value);
     }
   }, [activeTab, wardItems, selectedWardId, editingFamilyId, editFamilyLoading]);
 
@@ -5639,7 +5779,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
         loadFamilyAnalysis();
       }
       loadFamilyDetails(true);
-    } else if (activeTab === 'PENDING_MAP') {
+    } else if (activeTab === 'PENDING_MAP' || activeTab === 'MAP') {
       loadFamilyDetails(true);
     }
   }, [activeTab, mounted, selectedWardId, analysisViewMode, familyDetailFrom, familyDetailTo, assemblyCodeForFamily, familyDataRefreshToken, canViewFamilyAnalysisTabs]);
@@ -5714,6 +5854,32 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     [pendingFilteredDetailRows],
   );
 
+  const mapTabFilteredRows = useMemo(() => {
+    const allowed = new Set(mapAvailabilityFilter.map((v) => String(v).trim()));
+    if (!allowed.size || allowed.size >= FAMILY_AVAILABILITY_OPTIONS.length) return familyDetailRows;
+    return familyDetailRows.filter((row) => allowed.has(String(row.familyAvailability || '').trim()));
+  }, [familyDetailRows, mapAvailabilityFilter]);
+
+  const mapTabOnMapRows = useMemo(
+    () => mapTabFilteredRows.filter((row) => hasValidFamilyMapLocation(row)),
+    [mapTabFilteredRows],
+  );
+
+  const mapTabNoMapRows = useMemo(
+    () => mapTabFilteredRows.filter((row) => !hasValidFamilyMapLocation(row)),
+    [mapTabFilteredRows],
+  );
+
+  const pendingMapSyncPoints = useMemo(
+    () => pendingFilteredOnMapRows,
+    [pendingFilteredOnMapRows],
+  );
+
+  const analysisMapSyncPoints = useMemo(
+    () => mapTabOnMapRows,
+    [mapTabOnMapRows],
+  );
+
   const pendingListVisibleSections = useMemo(() => {
     const onMap = pendingFilteredOnMapRows;
     const noMap = pendingFilteredNoMapRows;
@@ -5741,6 +5907,19 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   useEffect(() => {
     setPendingListVisibleCount(PENDING_FAMILY_LIST_LAZY_STEP);
   }, [selectedWardId, pendingAvailabilityFilter.join('|'), activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'PENDING_MAP' && activeTab !== 'MAP') return;
+    if (familyDetailHasMore && !familyDetailLoading && !familyDetailLoadingMore) {
+      loadFamilyDetails(false);
+    }
+  }, [
+    activeTab,
+    familyDetailHasMore,
+    familyDetailLoading,
+    familyDetailLoadingMore,
+    familyDetailRows.length,
+  ]);
 
   useEffect(() => {
     if (!editingFamilyId || editFamilyLoading || !wardItems.length || editingFamilyMeta?.wardId == null) {
@@ -6301,7 +6480,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     }
   };
 
-  const captureHouseholdLocation = () => requestAccurateLocation();
+  const captureHouseholdLocation = () => requestFastHouseholdLocation();
 
   const handleCaptureLocation = async () => {
     setError('');
@@ -6426,13 +6605,9 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const handleGetLocation = async () => {
     setError('');
     setSuccess('');
-    try {
-      const loc = await captureHouseholdLocation();
-      setLocation(loc);
-      setSuccess(formatCapturedLocationMessage(loc));
-    } catch (err) {
-      setError(err?.message || 'Unable to fetch location.');
-    }
+    const loc = await captureHouseholdLocation();
+    setLocation({ ...loc, source: 'gps' });
+    setSuccess(formatCapturedLocationMessage(loc));
   };
 
   const handleUpdate = async () => {
@@ -6722,7 +6897,10 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 location={location}
                 onLocationChange={setLocation}
                 onCaptureGps={handleGetLocation}
-                captureLabel={location ? 'Refresh GPS location' : 'Capture Household Location (GPS)'}
+                onPinMarkConfirm={() => {
+                  setError('');
+                  setSuccess('Household location saved from map pin.');
+                }}
               />
             </div>
 
@@ -6892,6 +7070,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                 wardId={effectiveAnalysisWardId}
                 wardCode={mapWardCode}
                 assemblyCode={assemblyCodeForFamily}
+                syncPoints={pendingMapSyncPoints}
                 showMemberDetails={canViewFullFamilyData}
                 maskAvailableSensitive={maskAvailableSensitive}
                 mapHeight="420px"
@@ -6911,8 +7090,22 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               <div className="mobile-web-section-title">Edit family</div>
               {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
               {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
-              {!familyDetailLoading && pendingFilteredDetailRows.length === 0 ? (
-                <div className="mobile-web-empty">No families match the selected filters.</div>
+              {!familyDetailLoading && familyDetailRows.length === 0 && !familyDetailError ? (
+                <div className="mobile-web-empty">
+                  No families saved in this ward yet. Use <strong>New Family</strong>, capture location (Pin Mark or GPS), then tap <strong>Save Family</strong>.
+                </div>
+              ) : null}
+              {!familyDetailLoading && familyDetailRows.length > 0 && pendingFilteredDetailRows.length === 0 ? (
+                <div className="mobile-web-empty">No families match the selected status filters.</div>
+              ) : null}
+              {!familyDetailLoading && pendingFilteredDetailRows.length > 0 ? (
+                <div className="mobile-web-muted" style={{ fontSize: '0.85rem', marginBottom: '8px' }}>
+                  {pendingFilteredDetailRows.length} famil{pendingFilteredDetailRows.length === 1 ? 'y' : 'ies'} in ward
+                  {' · '}
+                  {pendingFilteredOnMapRows.length} on map
+                  {' · '}
+                  {pendingFilteredNoMapRows.length} need location
+                </div>
               ) : null}
               {!familyDetailLoading && pendingFilteredDetailRows.length > 0 ? (
                 <div className="mobile-web-family-pending-list">
@@ -7012,6 +7205,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               wardId={effectiveAnalysisWardId}
               wardCode={mapWardCode}
               assemblyCode={assemblyCodeForFamily}
+              syncPoints={analysisMapSyncPoints}
               showMemberDetails={canViewFamilyMapMemberDetails}
               maskAvailableSensitive={maskAvailableSensitive}
               mapHeight="480px"
@@ -7021,6 +7215,79 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
               onMapEditBlocked={handleFamilyEditBlocked}
               onFamilyEdit={handleAnalysisMapFamilyEdit}
             />
+            <div className="mobile-web-stack" style={{ marginTop: '16px' }}>
+              <div className="mobile-web-section-title">Families with location</div>
+              {familyDetailLoading ? <div className="mobile-web-empty">Loading families...</div> : null}
+              {familyDetailError ? <div className="mobile-web-error">{familyDetailError}</div> : null}
+              {!familyDetailLoading && familyDetailRows.length === 0 && !familyDetailError ? (
+                <div className="mobile-web-empty">
+                  No families in this view. Select <strong>All Wards</strong> to see every saved household with GPS.
+                </div>
+              ) : null}
+              {!familyDetailLoading && mapTabFilteredRows.length > 0 ? (
+                <div className="mobile-web-muted" style={{ fontSize: '0.85rem', marginBottom: '8px' }}>
+                  {mapTabFilteredRows.length} famil{mapTabFilteredRows.length === 1 ? 'y' : 'ies'}
+                  {' · '}
+                  {mapTabOnMapRows.length} on map
+                  {' · '}
+                  {mapTabNoMapRows.length} need location
+                </div>
+              ) : null}
+              {!familyDetailLoading && mapTabOnMapRows.length > 0 ? (
+                <div className="mobile-web-family-pending-list">
+                  <div className="mobile-web-muted" style={{ fontSize: '0.8rem', marginBottom: '6px', fontWeight: 600 }}>
+                    On map ({mapTabOnMapRows.length})
+                  </div>
+                  {mapTabOnMapRows.map((family) => (
+                    <div key={family.familyId} className="mobile-web-family-pending-row">
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {displayPendingFamilyListName(family, role)}
+                        </div>
+                        <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
+                          {Number(family.latitude).toFixed(6)}, {Number(family.longitude).toFixed(6)}
+                          {family.roadName ? ` · ${family.roadName}` : ''}
+                          {family.familyNumber ? ` · ${family.familyNumber}` : ''}
+                        </div>
+                      </div>
+                      {canEditFamilyRecord ? (
+                        <button
+                          type="button"
+                          className="mobile-web-secondary-btn"
+                          onClick={() => tryOpenFamilyEdit(family.familyId, 'MAP')}
+                          disabled={editFamilyLoading}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {!familyDetailLoading && mapTabNoMapRows.length > 0 ? (
+                <div className="mobile-web-family-pending-list" style={{ marginTop: '12px' }}>
+                  <div className="mobile-web-muted" style={{ fontSize: '0.8rem', marginBottom: '6px', fontWeight: 600 }}>
+                    No map pin ({mapTabNoMapRows.length})
+                  </div>
+                  {mapTabNoMapRows.slice(0, 20).map((family) => (
+                    <div key={family.familyId} className="mobile-web-family-pending-row mobile-web-family-pending-row--no-gps">
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {displayPendingFamilyListName(family, role)}
+                        </div>
+                        <div className="mobile-web-muted" style={{ fontSize: '0.8rem' }}>
+                          {formatFamilyAvailabilityLabel(family.familyAvailability || 'Available')}
+                          {family.roadName ? ` · ${family.roadName}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {familyDetailLoadingMore ? (
+                <div className="mobile-web-muted" style={{ marginTop: '8px', fontSize: '0.85rem' }}>Loading more families...</div>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div className="mobile-web-families-list">
@@ -10223,11 +10490,11 @@ export default function MobileDetailPage({ params }) {
     }
 
     const info = getUserInfoSafe();
-    setUserRole(info?.role || '');
+    setUserRole(String(info?.role || '').replace('ROLE_', '').toUpperCase());
     const initialAsm = getAssemblyCode();
     const normalizedInitial = initialAsm ? String(parseInt(String(initialAsm), 10)) : '';
 
-    if (info?.userName === 'admin@iswot.io' || info?.role === 'SUPER_ADMIN') {
+    if (info?.role === 'SUPER_ADMIN' || String(info?.userName || '').toLowerCase().startsWith('admin@iswot')) {
       mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
         const formatted = raw.map((item) => ({
@@ -10274,7 +10541,12 @@ export default function MobileDetailPage({ params }) {
 
   const slug = params.slug;
   const screen = labels[slug] || { title: 'Mobile Screen', description: 'This mobile module is being converted for the web experience.' };
-  const isSuperAdmin = userInfo?.userName === 'admin@iswot.io' || userRole === 'SUPER_ADMIN';
+  const normalizedRole = String(userRole || userInfo?.role || '')
+    .replace('ROLE_', '')
+    .toUpperCase();
+  const isSuperAdmin =
+    normalizedRole === 'SUPER_ADMIN'
+    || String(userInfo?.userName || '').toLowerCase().startsWith('admin@iswot');
 
   const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && slug !== 'add-volunteer' && (
     <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 shadow-sm">
@@ -10311,7 +10583,16 @@ export default function MobileDetailPage({ params }) {
   const renderScreen = () => {
     const commonProps = { assemblyCodeProp: selectedAssembly };
     if (slug === 'meetings' || slug === 'poll-day' || slug === 'print') {
-      return <FeatureUnavailableScreen />;
+      if (!isSuperAdmin) {
+        return <FeatureUnavailableScreen />;
+      }
+      if (slug === 'meetings') {
+        return <MeetingsScreen key={assemblyKey} userRole={normalizedRole} {...commonProps} />;
+      }
+      if (slug === 'poll-day') {
+        return <PollDayScreen key={assemblyKey} isSuperAdmin={isSuperAdmin} {...commonProps} />;
+      }
+      return <PrintScreen key={assemblyKey} {...commonProps} />;
     }
     if (slug === 'search-voter') return <SearchVoterScreen key={assemblyKey} {...commonProps} />;
     if (slug === 'search-booth') return <SearchBoothScreen key={assemblyKey} {...commonProps} />;

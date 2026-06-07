@@ -559,10 +559,12 @@ export const mobileApi = {
   fetchFamilyLocationPoints: async (wardId, boothId, wardCode, assemblyCode, updatedFrom, updatedTo) => {
     const wardIdStr = wardId != null && String(wardId).trim() !== '' ? String(wardId) : '';
     const wardCodeStr = wardCode != null && String(wardCode).trim() !== '' ? String(wardCode).trim() : '';
-    const filterPoints = (rows) =>
+    const filterPoints = (rows, { trustServerWardScope = false } = {}) =>
       (Array.isArray(rows) ? rows : []).filter((item) => {
-        if (!Number.isFinite(Number(item?.latitude)) || !Number.isFinite(Number(item?.longitude))) return false;
-        if (!wardIdStr && !wardCodeStr) return true;
+        const lat = Number(item?.latitude);
+        const lng = Number(item?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return false;
+        if (trustServerWardScope || (!wardIdStr && !wardCodeStr)) return true;
         const itemWardId = String(item?.wardId ?? item?.ward_id ?? '').trim();
         const itemWardCode = String(item?.wardCode ?? item?.ward_code ?? '').trim();
         if (wardIdStr && itemWardId === wardIdStr) return true;
@@ -581,7 +583,7 @@ export const mobileApi = {
       const query = params.toString();
       const res = await request(`/votebase/v1/api/families/map-points${query ? `?${query}` : ''}`);
       const payload = res?.data?.result ?? res?.result ?? [];
-      return { data: { result: filterPoints(payload) } };
+      return { data: { result: filterPoints(payload, { trustServerWardScope: Boolean(wardIdStr || boothId) }) } };
     } catch (apiErr) {
       console.warn('Family map-points API fallback to family list.', apiErr);
       try {

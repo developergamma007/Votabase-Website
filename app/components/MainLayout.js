@@ -25,8 +25,6 @@ import {
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { mobileApi } from '../lib/mobileApi';
-
 const menuItems = [
   // Mobile suite (these paths are more specific than '/mobile', so should come first)
   { label: 'Search Voter', path: '/mobile/search-voter', icon: <SearchIcon fontSize="small" /> },
@@ -49,8 +47,6 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
   const pathname = usePathname();
   const [userInfo, setUserInfo] = useState({});
   const [role, setRole] = useState('');
-  const [printEnabled, setPrintEnabled] = useState(true);
-
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
@@ -64,17 +60,6 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
       setRole(rawRole.replace('ROLE_', '').toUpperCase());
     }
   }, []);
-
-  useEffect(() => {
-    if (role && role !== 'BOOTH') {
-      mobileApi.fetchMessageTemplate(null, 'PRINT')
-        .then(res => {
-          const enabled = res?.data?.result?.enabled;
-          if (enabled !== undefined) setPrintEnabled(enabled);
-        })
-        .catch(() => setPrintEnabled(true)); // default to true if failed
-    }
-  }, [role]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -106,17 +91,13 @@ export default function MainLayout({ children, hidePrimaryNav = false }) {
     if (role !== 'SUPER_ADMIN') {
       items = items.filter(item => item.path !== '/mobile/promotions');
     }
-    
-    // Voters Family and Meetings restricted to specific volunteer levels
+
     if (!['SUPER_ADMIN', 'ADMIN', 'WARD', 'BOOTH', 'USER'].includes(role)) {
-      items = items.filter(item => !['/mobile/voters-family', '/mobile/meetings'].includes(item.path));
+      items = items.filter(item => item.path !== '/mobile/voters-family');
     }
 
-    if (!printEnabled && role !== 'SUPER_ADMIN') {
-      items = items.filter(item => item.path !== '/mobile/print');
-    }
     return items;
-  }, [role, printEnabled]);
+  }, [role]);
 
   const activeLabel = useMemo(() => {
     const found = filteredMenuItems.find((item) => pathname.startsWith(item.path));

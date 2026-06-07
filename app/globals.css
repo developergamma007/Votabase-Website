@@ -3431,10 +3431,35 @@ textarea {
 }
 
 .mobile-web-family-location-map {
-  height: 280px;
-  min-height: 240px;
+  height: 560px;
+  min-height: 480px;
   width: 100%;
   overflow: hidden;
+}
+
+.mobile-web-family-location-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-web-location-btn-gps {
+  background: linear-gradient(135deg, #0c7bb3 0%, #0b3d5c 100%);
+}
+
+.mobile-web-location-btn-pin {
+  background: linear-gradient(135deg, #475569 0%, #334155 100%);
+}
+
+.mobile-web-family-location-pin-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #047857;
+  font-weight: 600;
+}
+
+.mobile-web-family-location-gps-error {
+  color: #b91c1c;
 }
 
 .mobile-web-family-location-map > div {
