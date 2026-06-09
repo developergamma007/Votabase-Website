@@ -669,32 +669,6 @@ function runGeoGet(options) {
   });
 }
 
-/** First watchPosition fix — often faster than getCurrentPosition indoors. */
-function watchForFirstGeoFix(timeoutMs = 10000, enableHighAccuracy = false) {
-  return new Promise((resolve, reject) => {
-    if (!navigator?.geolocation?.watchPosition) {
-      reject(new Error('Geolocation watch is not supported.'));
-      return;
-    }
-    let settled = false;
-    let watchId = null;
-    const finish = (point, err) => {
-      if (settled) return;
-      settled = true;
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
-      clearTimeout(timer);
-      if (point) resolve(point);
-      else reject(err || new Error('Location request timed out.'));
-    };
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => finish(coordsFromPosition(pos)),
-      () => { /* wait for first successful reading or timeout */ },
-      { enableHighAccuracy, maximumAge: 300000, timeout: timeoutMs },
-    );
-    const timer = setTimeout(() => finish(null, { code: 3 }), timeoutMs);
-  });
-}
-
 const HOUSEHOLD_GPS_TIMEOUT_MSG =
   'Could not get your location. Use Pin Mark on the map (drag/tap), or allow location and retry GPS near a window.';
 
@@ -876,12 +850,11 @@ function requestFastHouseholdLocation() {
         });
         return;
       }
+      // Simple two-step: cached/network fix first (usually instant),
+      // then one fresh high-accuracy attempt.
       const tries = [
-        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 },
-        () => watchForFirstGeoFix(10000, false),
-        () => watchForFirstGeoFix(8000, true),
-        { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
       ];
       for (const opts of tries) {
         try {
@@ -1488,7 +1461,10 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
           setOpen((current) => !current);
         }}
       >
-        <span className={selected ? 'has-value' : 'is-placeholder'}>{display}</span>
+        <span className={`mobile-web-select-value ${selected ? 'has-value' : 'is-placeholder'}`}>
+          {selected?.dotColor ? <i className="legend-dot" style={{ background: selected.dotColor }} /> : null}
+          {display}
+        </span>
         <ExpandMoreRounded className="mobile-web-select-icon" />
       </button>
       {open ? (
@@ -1520,6 +1496,7 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
                     });
                   }}
                 >
+                  {option.dotColor ? <i className="legend-dot" style={{ background: option.dotColor }} /> : null}
                   <span>{option.label}</span>
                 </button>
               );
@@ -5295,7 +5272,8 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const familyAvailabilitySelectOptions = useMemo(
     () => FAMILY_AVAILABILITY_OPTIONS.map((item) => ({
       value: item,
-      label: formatFamilyAvailabilityLabel(item),
+      label: item,
+      dotColor: getFamilyAvailabilityMapColor(item),
     })),
     [],
   );
@@ -5428,12 +5406,14 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   const headOfFamilyOptions = useMemo(
     () => [
       { value: '', label: 'Pick head of family' },
-      ...members.map((member) => ({
-        value: member.id,
-        label: shouldMaskAvailableInEdit
-          ? `${maskMemberNameForDisplay(role, familyAvailability, member.name)} · ${maskMemberEpicForDisplay(role, familyAvailability, member.epic)}`
-          : (member.name || member.epic || 'Member'),
-      })),
+      ...[...members]
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }))
+        .map((member) => ({
+          value: member.id,
+          label: shouldMaskAvailableInEdit
+            ? maskMemberNameForDisplay(role, familyAvailability, member.name)
+            : (member.name || member.epic || 'Member'),
+        })),
     ],
     [members, shouldMaskAvailableInEdit, role, familyAvailability]
   );
@@ -6433,7 +6413,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       if (!hasHouseMarkingFields(buildingNumber, buildingName, flatNumber)) {
         throw new Error('Building/Apartment Number, Building/Apartment Name, and Flat Number are required');
       }
-      const wardIdForUpdate = editingFamilyMeta.wardId || selectedWardId || wardItems[0]?.value;
+      const wardIdForUpdate = editingFamilyMeta.wardId || selectedWardId || selectedWard?.value || wardItems[0]?.value;
       const boothIdForUpdate = editingFamilyMeta.boothId
         || members.map((m) => m.boothId).find(Boolean)
         || resolveFamilyCreateBoothId(boothItems, '');
@@ -6482,6 +6462,21 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const captureHouseholdLocation = () => requestFastHouseholdLocation();
 
+  // Auto-center the New Family map on the phone's current location
+  // (silent — user can still use the GPS button or Pin Mark).
+  useEffect(() => {
+    let cancelled = false;
+    captureHouseholdLocation()
+      .then((loc) => {
+        if (cancelled) return;
+        setLocation((prev) => (prev?.latitude != null ? prev : { ...loc, source: 'gps' }));
+      })
+      .catch(() => { /* keep default map center */ });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleCaptureLocation = async () => {
     setError('');
     setSuccess('');
@@ -6522,11 +6517,6 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
 
   const openMemberVoterInfo = async (member) => {
     if (!member?.rawVoter) return;
-    if (shouldMaskAvailableInEdit) {
-      setError(FAMILY_VIEW_DENIED_MSG);
-      setSuccess('');
-      return;
-    }
     lastMemberSelectionRef.current = { member };
     setIsLocating(true);
     setError('');
@@ -6626,7 +6616,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       const headMember = members.find((m) => m.id === headOfFamily);
       if (!headMember || !headMember.epic) throw new Error('Invalid head of family selected');
 
-      const wardIdForCreate = selectedWardId || wardItems[0]?.value;
+      const wardIdForCreate = selectedWardId || selectedWard?.value || wardItems[0]?.value;
       if (!wardIdForCreate) throw new Error('Please select a ward.');
       const invalidMember = members.find((m) => m.boothId && !isMemberBoothInWard(m.boothId, boothItems));
       if (invalidMember) {
@@ -6979,9 +6969,7 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
                       <span>{shouldMaskAvailableInEdit ? maskMemberPhoneForDisplay(role, familyAvailability, member.phone) : (member.phone || '-')}</span>
                       <span>{shouldMaskAvailableInEdit ? maskMemberEpicForDisplay(role, familyAvailability, member.houseNo) : (member.houseNo || '-')}</span>
                       <span className="mobile-web-row-actions">
-                        {!shouldMaskAvailableInEdit ? (
-                          <button type="button" className="mobile-web-secondary-btn" onClick={() => openMemberVoterInfo(member)}>View</button>
-                        ) : null}
+                        <button type="button" className="mobile-web-secondary-btn" onClick={() => openMemberVoterInfo(member)}>View</button>
                         <button type="button" className="mobile-web-secondary-btn" onClick={() => setMembers((m) => m.filter((x) => x.id !== member.id))}>Remove</button>
                       </span>
                     </div>

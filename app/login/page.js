@@ -217,6 +217,22 @@ export default function LoginPage() {
           </p>
         </form>
 
+        <div className="login-apk">
+          <p className="login-apk__text">Prefer the mobile app? Download the Votabase Android app and sign in on the go.</p>
+          <a href="/ui/downloads/votabase.apk" download="votabase.apk" className="login-apk__btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span>Download Android App (APK)</span>
+          </a>
+        </div>
+
         <footer className="login-footer">© {new Date().getFullYear()} Votabase. All rights reserved.</footer>
       </div>
     </div>
