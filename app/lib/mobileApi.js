@@ -200,9 +200,18 @@ const PUBLIC_VOTER_UPDATE_FIELDS = new Set([
   'team',
 ]);
 
+const isNonemptyUpdateValue = (value) => {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+};
+
 function buildPublicVoterUpdatePayload(jsonReq = {}, options = {}) {
   const updateRequest = Object.entries(jsonReq?.updateRequest || {}).reduce((acc, [key, value]) => {
-    if (PUBLIC_VOTER_UPDATE_FIELDS.has(key)) acc[key] = value;
+    if (!PUBLIC_VOTER_UPDATE_FIELDS.has(key)) return acc;
+    if (!isNonemptyUpdateValue(value)) return acc;
+    acc[key] = value;
     return acc;
   }, {});
 

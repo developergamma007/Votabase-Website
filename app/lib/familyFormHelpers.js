@@ -426,6 +426,30 @@ export const isMemberBoothInWard = (memberBoothId, boothItems = []) => {
   return allowed.includes(boothId);
 };
 
+/** Build voter payload for Voter Info from a family member row. */
+export const buildVoterFromFamilyMember = (member = {}, fallback = {}) => {
+  const raw = member.rawVoter && typeof member.rawVoter === 'object' ? member.rawVoter : member;
+  const voterName = String(member.voterName || member.name || raw.voterName || '').trim();
+  const firstMiddle = String(
+    raw.firstMiddleNameEn || raw.first_middle_name_en || raw.name_en || raw.name || voterName,
+  ).trim();
+  const lastName = String(raw.lastNameEn || raw.last_name_en || '').trim();
+  const epicNo = raw.epicNo || member.epicNo || member.epic || '';
+  const boothId = member.boothId || raw.boothId || raw.booth_id || fallback.boothId || '';
+  return {
+    ...raw,
+    epicNo,
+    voterName: voterName || firstMiddle,
+    firstMiddleNameEn: firstMiddle || voterName,
+    lastNameEn: lastName,
+    name: voterName || firstMiddle,
+    boothId,
+    boothNo: raw.boothNo || member.boothNo || fallback.boothNo || '',
+    wardCode: raw.wardCode || member.wardCode || fallback.wardCode || '',
+    wardNameEn: raw.wardNameEn || member.wardNameEn || fallback.wardNameEn || '',
+  };
+};
+
 /** Relation label for family member rows (API uses relationFirstMiddleNameEn, not relationNameEn). */
 export const getVoterRelationDisplay = (voter = {}) => {
   const nameEn = [voter.relationFirstMiddleNameEn, voter.relationLastNameEn]

@@ -61,6 +61,7 @@ import {
   resolveFamilyCreateBoothId,
   isMemberBoothInWard,
   formatApiError,
+  buildVoterFromFamilyMember,
 } from '../../lib/familyFormHelpers';
 import { downloadCsvFile, downloadXlsFile } from '../../lib/spreadsheetExport';
 import FamilyLocationPicker from '../../components/FamilyLocationPicker';
@@ -1615,7 +1616,7 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
 }
 function PrintableVoterSlip({ voter, booth, template, isPreview = false }) {
   const election = template?.electionName || 'Election-2024';
-  const voterName = voter?.name || '-';
+  const voterName = voter?.name || voter?.firstMiddleNameEn || voter?.voterName || '-';
   const relationLabel = voter?.relationLabel || voter?.relationType || 'Relation';
   const relationName = voter?.relationName || '-';
   const epic = voter?.epicNo || '-';
@@ -2228,7 +2229,7 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
           ) : null}
           <p>
             <strong>Name</strong>
-            <span>{voter?.name || '-'}</span>
+            <span>{voter?.name || voter?.firstMiddleNameEn || voter?.voterName || '-'}</span>
           </p>
           <p>
             <strong>EPIC / Voter ID</strong>
@@ -6302,7 +6303,11 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
       phone: '',
       houseNo: '',
       boothId: fam.boothId || '',
-      rawVoter: { epicNo: m.epicNo, firstMiddleNameEn: m.voterName },
+      rawVoter: buildVoterFromFamilyMember(m, {
+        boothId: fam.boothId,
+        boothNo: fam.boothNo,
+        wardCode: fam.wardCode,
+      }),
     }));
     setFamilyName(fam.familyName || '');
     setRoadName(fam.roadName || '');
@@ -6516,18 +6521,22 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
   };
 
   const openMemberVoterInfo = async (member) => {
-    if (!member?.rawVoter) return;
+    const baseVoter = buildVoterFromFamilyMember(member, editingFamilyMeta || {});
+    if (!baseVoter.epicNo) return;
     lastMemberSelectionRef.current = { member };
     setIsLocating(true);
     setError('');
     try {
       const loc = await requestQuickLocationForVoter();
-      setSelectedVoter({
-        ...member.rawVoter,
-        epicNo: member.rawVoter.epicNo || member.epic,
-        boothId: member.boothId || member.rawVoter.boothId,
-        ...loc,
-      });
+      setSelectedVoter(
+        normalizeVoter(
+          {
+            ...baseVoter,
+            ...loc,
+          },
+          { boothId: baseVoter.boothId },
+        ),
+      );
     } catch (err) {
       setError(err?.message || 'Location is required to view voter info.');
     } finally {
