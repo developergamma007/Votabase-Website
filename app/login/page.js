@@ -55,7 +55,11 @@ export default function LoginPage() {
   const [formData, setFormData] = useState({ firstName: '', phone: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [apkDownloading, setApkDownloading] = useState(false);
+  const [apkProgress, setApkProgress] = useState(0);
+  const [apkStatus, setApkStatus] = useState('');
   const router = useRouter();
+  const apkUrls = ['/downloads/votabase.apk', '/ui/downloads/votabase.apk'];
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -114,6 +118,58 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleApkDownload = () => {
+    if (apkDownloading) return;
+    setApkDownloading(true);
+    setApkProgress(0);
+    setApkStatus('Checking APK file...');
+
+    const tryDownload = (urlIndex = 0) => {
+      const apkUrl = apkUrls[urlIndex];
+      if (!apkUrl) {
+        setApkStatus('APK file is not uploaded yet. Add it as public/downloads/votabase.apk and redeploy.');
+        setApkDownloading(false);
+        return;
+      }
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', apkUrl, true);
+      xhr.responseType = 'blob';
+      xhr.onprogress = (event) => {
+        if (!event.lengthComputable) {
+          setApkStatus('Downloading APK...');
+          return;
+        }
+        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+        setApkProgress(percent);
+        setApkStatus(`Downloading APK: ${percent}%`);
+      };
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          tryDownload(urlIndex + 1);
+          return;
+        }
+        const blobUrl = URL.createObjectURL(xhr.response);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = 'votabase.apk';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(blobUrl);
+        setApkProgress(100);
+        setApkStatus('Download complete. Open the APK on Android to install.');
+        setApkDownloading(false);
+      };
+      xhr.onerror = () => {
+        tryDownload(urlIndex + 1);
+      };
+      xhr.send();
+    };
+
+    tryDownload();
   };
 
   return (
@@ -219,7 +275,7 @@ export default function LoginPage() {
 
         <div className="login-apk">
           <p className="login-apk__text">Prefer the mobile app? Download the Votabase Android app and sign in on the go.</p>
-          <a href="/ui/downloads/votabase.apk" download="votabase.apk" className="login-apk__btn">
+          <button type="button" className="login-apk__btn" onClick={handleApkDownload} disabled={apkDownloading}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
                 d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
@@ -229,8 +285,16 @@ export default function LoginPage() {
                 strokeLinejoin="round"
               />
             </svg>
-            <span>Download Android App (APK)</span>
-          </a>
+            <span>{apkDownloading ? `Downloading ${apkProgress}%` : 'Download Android App (APK)'}</span>
+          </button>
+          {(apkDownloading || apkStatus) ? (
+            <div className="login-apk__progress" aria-live="polite">
+              <div className="login-apk__progress-track">
+                <span style={{ width: `${apkProgress}%` }} />
+              </div>
+              <p>{apkStatus}</p>
+            </div>
+          ) : null}
         </div>
 
         <footer className="login-footer">© {new Date().getFullYear()} Votabase. All rights reserved.</footer>

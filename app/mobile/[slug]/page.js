@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -186,6 +187,12 @@ function hasValidFamilyMapLocation(family = {}) {
   const lat = Number(family?.latitude);
   const lng = Number(family?.longitude);
   return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+}
+
+function isAdminIswotUser(userInfo = {}) {
+  const userName = String(userInfo?.userName || '').trim().toLowerCase();
+  const email = String(userInfo?.email || '').trim().toLowerCase();
+  return userName === 'admin@iswot.io' || email === 'admin@iswot.io';
 }
 
 function FamilyAvailabilityFilterChips({ selected, onChange }) {
@@ -1022,7 +1029,6 @@ function buildWhatsAppMessage(voter, booth, template) {
     '***************************',
     candidateParty ? `Kindly do Cast Your Valuable Vote for ${candidateParty}` : 'Kindly do Cast Your Valuable Vote',
     candidateName,
-    candidateParty,
     candidateWard,
     socialLink ? `Follow us: ${socialLink}` : '',
     template?.bannerUrl && template.bannerUrl.startsWith('http') ? `Banner: ${template.bannerUrl}` : '',
@@ -1072,7 +1078,6 @@ function buildSMSMessage(voter, booth, template) {
     '***************************',
     candidateParty ? `Kindly do Cast Your Valuable Vote for ${candidateParty}` : 'Kindly do Cast Your Valuable Vote',
     candidateName,
-    candidateParty,
     candidateWard,
     socialLink,
     template?.bannerUrl && template.bannerUrl.startsWith('http') ? `Banner: ${template.bannerUrl}` : '',
@@ -1511,6 +1516,7 @@ function PremiumSelect({ label, options = [], value, onChange, disabled = false,
 function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onCustomValueChange, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [panelStyle, setPanelStyle] = useState(null);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const dropUp = useDropdownDropUp(rootRef, open, panelRef, 300);
@@ -1536,6 +1542,100 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
     return options.filter(opt => opt.toLowerCase().includes(q));
   }, [options, search]);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelStyle(null);
+      return undefined;
+    }
+    const updatePanelPosition = () => {
+      const trigger = rootRef.current;
+      if (!trigger || typeof window === 'undefined') return;
+      const rect = trigger.getBoundingClientRect();
+      const margin = 12;
+      const gap = 10;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const spaceBelow = Math.max(120, viewportHeight - rect.bottom - margin);
+      const spaceAbove = Math.max(120, rect.top - margin);
+      const shouldDropUp = spaceBelow < 300 && spaceAbove > spaceBelow;
+      const maxHeight = Math.min(360, shouldDropUp ? spaceAbove - gap : spaceBelow - gap);
+      setPanelStyle({
+        position: 'fixed',
+        left: `${Math.max(margin, rect.left)}px`,
+        top: shouldDropUp ? 'auto' : `${rect.bottom + gap}px`,
+        bottom: shouldDropUp ? `${Math.max(margin, viewportHeight - rect.top + gap)}px` : 'auto',
+        right: 'auto',
+        width: `${rect.width}px`,
+        maxHeight: `${Math.max(180, maxHeight)}px`,
+        zIndex: 2147483000,
+      });
+    };
+    updatePanelPosition();
+    const raf = requestAnimationFrame(updatePanelPosition);
+    window.addEventListener('resize', updatePanelPosition);
+    window.addEventListener('scroll', updatePanelPosition, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', updatePanelPosition);
+      window.removeEventListener('scroll', updatePanelPosition, true);
+    };
+  }, [open]);
+
+  const panel = open && typeof document !== 'undefined' ? createPortal(
+    <div
+      ref={panelRef}
+      className="mobile-web-multiselect-panel mobile-web-multiselect-panel--checkbox mobile-web-multiselect-panel-portal"
+      style={panelStyle || undefined}
+    >
+      {options.length > 5 ? (
+        <div
+          className="mobile-web-multiselect-search"
+          onPointerDown={(event) => event.stopPropagation()}
+          onTouchStart={(event) => event.stopPropagation()}
+        >
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search schemes..."
+            className="mobile-web-input"
+            style={{ minHeight: '40px', padding: '8px 12px' }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      ) : null}
+      <div className="mobile-web-multiselect-options" {...panelTouchHandlers}>
+        {filteredOptions.length === 0 ? (
+          <div className="mobile-web-multiselect-empty">No matches found</div>
+        ) : null}
+        {filteredOptions.map((option) => {
+          const checked = option === 'Others' ? showOther : safeValue.includes(option);
+          return (
+            <button
+              key={option}
+              type="button"
+              role="checkbox"
+              aria-checked={checked}
+              className={`mobile-web-multiselect-option mobile-web-multiselect-option-btn ${checked ? 'checked' : ''}`}
+              disabled={disabled}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                if (disabled) return;
+                dedupedActivate(option, event, shouldIgnoreOptionActivation, () => onToggle(option));
+              }}
+            >
+              <span className="mobile-web-multiselect-check" aria-hidden="true">
+                {checked ? '✓' : ''}
+              </span>
+              <span className="mobile-web-multiselect-option-label">{option}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
   return (
     <div
       className={`mobile-web-multiselect-wrap ${open ? 'open' : ''} ${dropUp ? 'drop-up' : ''} ${disabled ? 'is-disabled' : ''}`}
@@ -1553,56 +1653,7 @@ function MultiCheckboxSelect({ label, options, value, customValue, onToggle, onC
         <span className={summaryItems.length ? 'has-value' : 'is-placeholder'}>{summary}</span>
         <ExpandMoreRounded className="mobile-web-select-icon" />
       </button>
-      {open ? (
-        <div ref={panelRef} className="mobile-web-multiselect-panel mobile-web-multiselect-panel--checkbox">
-          {options.length > 5 ? (
-            <div
-              className="mobile-web-multiselect-search"
-              onPointerDown={(event) => event.stopPropagation()}
-              onTouchStart={(event) => event.stopPropagation()}
-            >
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search schemes..."
-                className="mobile-web-input"
-                style={{ minHeight: '40px', padding: '8px 12px' }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => event.stopPropagation()}
-              />
-            </div>
-          ) : null}
-          <div className="mobile-web-multiselect-options" {...panelTouchHandlers}>
-            {filteredOptions.length === 0 ? (
-              <div className="mobile-web-multiselect-empty">No matches found</div>
-            ) : null}
-            {filteredOptions.map((option) => {
-              const checked = option === 'Others' ? showOther : safeValue.includes(option);
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={checked}
-                  className={`mobile-web-multiselect-option mobile-web-multiselect-option-btn ${checked ? 'checked' : ''}`}
-                  disabled={disabled}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    if (disabled) return;
-                    dedupedActivate(option, event, shouldIgnoreOptionActivation, () => onToggle(option));
-                  }}
-                >
-                  <span className="mobile-web-multiselect-check" aria-hidden="true">
-                    {checked ? '✓' : ''}
-                  </span>
-                  <span className="mobile-web-multiselect-option-label">{option}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+      {panel}
       {showOther ? (
         <input
           className="mobile-web-input mobile-web-other-input"
@@ -1898,15 +1949,20 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
     setSaving(true);
     setBanner({ type: '', text: '' });
     try {
+      let updateLocation = location;
+      if (!updateLocation?.latitude || !updateLocation?.longitude) {
+        updateLocation = await requestAccurateLocation();
+        setLocation({ latitude: updateLocation.latitude, longitude: updateLocation.longitude });
+      }
       const updateRequest = {};
       Object.keys(currentPayload).forEach((key) => {
         if (voterFieldChanged(currentPayload[key], basePayload[key])) {
           updateRequest[key] = currentPayload[key];
         }
       });
-      if (location?.latitude && location?.longitude) {
-        updateRequest.latitude = location.latitude;
-        updateRequest.longitude = location.longitude;
+      if (updateLocation?.latitude && updateLocation?.longitude) {
+        updateRequest.latitude = updateLocation.latitude;
+        updateRequest.longitude = updateLocation.longitude;
       }
       const res = await mobileApi.updateVoter(
         voter.epicNo,
@@ -1927,8 +1983,8 @@ function VoterInfoScreen({ voter, booth, onBack, onSave }) {
         ...currentPayload,
         volunteerMet: true,
         updatedFields: saved.updatedFields || Object.keys(currentPayload),
-        latitude: location?.latitude ?? saved.latitude ?? voter?.latitude,
-        longitude: location?.longitude ?? saved.longitude ?? voter?.longitude,
+        latitude: updateLocation?.latitude ?? saved.latitude ?? voter?.latitude,
+        longitude: updateLocation?.longitude ?? saved.longitude ?? voter?.longitude,
       });
     } catch (error) {
       setBanner({ type: 'error', text: error?.message || error?.detail || 'Update failed' });
@@ -2854,16 +2910,8 @@ function SearchVoterScreen({ assemblyCodeProp }) {
 
   const handleSelectVoter = async (voter) => {
     lastSelectionRef.current = { voter };
-    setIsLocating(true);
     setErrorText('');
-    try {
-      const loc = await requestQuickLocationForVoter();
-      setSelectedVoter({ ...voter, ...loc });
-    } catch (error) {
-      setErrorText(error?.message || 'Location is required to view voter info.');
-    } finally {
-      setIsLocating(false);
-    }
+    setSelectedVoter(voter);
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
@@ -3186,16 +3234,8 @@ function SearchBoothScreen({ assemblyCodeProp }) {
 
   const handleSelectBoothVoter = async (voter) => {
     lastSelectionRef.current = { voter };
-    setIsLocating(true);
     setBoothError('');
-    try {
-      const loc = await requestQuickLocationForVoter();
-      setSelectedVoter({ ...voter, ...loc });
-    } catch (error) {
-      setBoothError(error?.message || 'Location is required to view voter info.');
-    } finally {
-      setIsLocating(false);
-    }
+    setSelectedVoter(voter);
   };
   const retryLocation = async () => {
     if (!lastSelectionRef.current?.voter) return;
@@ -4997,20 +5037,11 @@ function MyVolunteersScreen({ assemblyCodeProp }) {
   const renderDropdownList = (items, placeholder) => {
     if (!items || items.length === 0) return <strong>{placeholder || '-'}</strong>;
     const formatName = (name) => name.length > 25 ? name.substring(0, 25) + '...' : name;
-    if (items.length === 1) return <strong title={items[0]} className="cursor-help">{formatName(items[0])}</strong>;
+    if (items.length === 1) return <strong title={items[0]} className="mobile-web-copyable-text">{formatName(items[0])}</strong>;
     return (
-      <div className="relative group inline-block">
-        <strong className="cursor-help text-blue-700 decoration-dotted underline underline-offset-2 break-all sm:break-normal">
-          {formatName(items[0])} <span className="text-gray-500 font-medium text-xs ml-1 whitespace-nowrap">(+ {items.length - 1} more)</span>
-        </strong>
-        <div className="hidden group-hover:block absolute z-50 left-0 top-full mt-1 p-3 bg-white rounded-lg shadow-xl border border-gray-200 text-sm max-h-48 overflow-y-auto w-max min-w-[200px] max-w-xs md:max-w-md">
-          <ul className="list-disc pl-4 whitespace-normal text-gray-700 m-0">
-            {items.map((item, idx) => (
-              <li key={idx} className="py-1 border-b border-gray-50 last:border-0">{item}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <strong className="mobile-web-copyable-text text-blue-700 break-all sm:break-normal">
+        {items.join(', ')}
+      </strong>
     );
   };
 
@@ -6524,24 +6555,13 @@ function VotersFamilyScreen({ assemblyCodeProp }) {
     const baseVoter = buildVoterFromFamilyMember(member, editingFamilyMeta || {});
     if (!baseVoter.epicNo) return;
     lastMemberSelectionRef.current = { member };
-    setIsLocating(true);
     setError('');
-    try {
-      const loc = await requestQuickLocationForVoter();
-      setSelectedVoter(
-        normalizeVoter(
-          {
-            ...baseVoter,
-            ...loc,
-          },
-          { boothId: baseVoter.boothId },
-        ),
-      );
-    } catch (err) {
-      setError(err?.message || 'Location is required to view voter info.');
-    } finally {
-      setIsLocating(false);
-    }
+    setSelectedVoter(
+      normalizeVoter(
+        baseVoter,
+        { boothId: baseVoter.boothId },
+      ),
+    );
   };
 
   const handleSaveVoter = (updatedVoter) => {
@@ -9231,6 +9251,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
   const [assemblies, setAssemblies] = useState([]);
   const mapRef = useRef(null);
   const osmMapRef = useRef(null);
+  const canSwitchAssembly = isAdminIswotUser(userInfo);
 
   useEffect(() => {
     if (assemblyCodeProp) {
@@ -9246,7 +9267,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
     setSelectedAssembly(initialAssembly);
     setHydrated(true);
 
-    if (userInfo?.role === 'SUPER_ADMIN' || userInfo?.role === 'ADMIN') {
+    if (canSwitchAssembly) {
       mobileApi.fetchVolunteerDropdown('ASSEMBLY').then(res => {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
         const formatted = raw.map(item => ({
@@ -9262,8 +9283,10 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
           return formatted.some(a => String(a.value) === normalizedPrev) ? normalizedPrev : (formatted.length > 0 ? formatted[0].value : '');
         });
       });
+    } else {
+      setAssemblies([]);
     }
-  }, [userInfo]);
+  }, [userInfo, canSwitchAssembly]);
 
   const accessWardIds = useMemo(() => {
     const ids = [];
@@ -10040,7 +10063,7 @@ function VolunteerAnalysisScreen({ assemblyCodeProp }) {
         <div className="mobile-web-stack">
         {hydrated && role === 'WARD' ? <div className="mobile-web-info-pill">Showing volunteer enrichment locations for your ward access.</div> : null}
         <div className="mobile-web-form-grid" style={{ marginBottom: '12px' }}>
-          {role === 'SUPER_ADMIN' && assemblies.length > 0 && (
+          {canSwitchAssembly && assemblies.length > 0 && (
             <div className="mobile-web-field">
               <label>Assembly</label>
               <SingleOptionSelect
@@ -10491,7 +10514,7 @@ export default function MobileDetailPage({ params }) {
     const initialAsm = getAssemblyCode();
     const normalizedInitial = initialAsm ? String(parseInt(String(initialAsm), 10)) : '';
 
-    if (info?.role === 'SUPER_ADMIN' || String(info?.userName || '').toLowerCase().startsWith('admin@iswot')) {
+    if (isAdminIswotUser(info)) {
       mobileApi.fetchVolunteerDropdown('ASSEMBLY').then((res) => {
         const raw = Array.isArray(res) ? res : (res?.data?.result || res?.result || []);
         const formatted = raw.map((item) => ({
@@ -10513,6 +10536,7 @@ export default function MobileDetailPage({ params }) {
         setSelectedAssembly(normalizedInitial);
       });
     } else {
+      setAssemblies([]);
       setSelectedAssembly(normalizedInitial || initialAsm);
     }
 
@@ -10541,11 +10565,12 @@ export default function MobileDetailPage({ params }) {
   const normalizedRole = String(userRole || userInfo?.role || '')
     .replace('ROLE_', '')
     .toUpperCase();
+  const canSwitchAssembly = isAdminIswotUser(userInfo);
   const isSuperAdmin =
     normalizedRole === 'SUPER_ADMIN'
-    || String(userInfo?.userName || '').toLowerCase().startsWith('admin@iswot');
+    || canSwitchAssembly;
 
-  const globalAssemblySelector = isSuperAdmin && assemblies.length > 0 && slug !== 'add-volunteer' && (
+  const globalAssemblySelector = canSwitchAssembly && assemblies.length > 0 && slug !== 'add-volunteer' && (
     <div className="mobile-web-global-assembly-bar bg-white border-b border-slate-200 px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3 max-w-lg mx-auto">
         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Context</label>
