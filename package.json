@@ -8,12 +8,15 @@
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
     "@mui/x-data-grid": "^8.17.0",
+    "@serwist/next": "^9.5.11",
     "@tailwindcss/postcss": "^4.1.18",
     "next": "^14.2.0",
     "postcss": "^8.5.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-is": "^19.2.7",
     "recharts": "^3.6.0",
+    "serwist": "^9.5.11",
     "tailwindcss": "^4.1.18"
   },
   "scripts": {
@@ -25,6 +28,6 @@
   "devDependencies": {
     "@types/node": "25.0.3",
     "eslint": "^8",
-    "eslint-config-next": "^16.1.1"
+    "eslint-config-next": "14.2.35"
   }
 }

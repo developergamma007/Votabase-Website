@@ -4903,6 +4903,86 @@ body:has(.login-screen) {
   text-align: center;
 }
 
+.login-pwa {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 20px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: rgba(15, 23, 42, 0.42);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.login-pwa__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.login-pwa__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.login-pwa__title {
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.login-pwa__text {
+  margin: 0 0 12px;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: #cbd5e1;
+}
+
+.login-pwa__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.login-pwa__install,
+.login-pwa__dismiss {
+  border: none;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-pwa__install {
+  color: #0f172a;
+  background: linear-gradient(135deg, #38bdf8, #22d3ee);
+  box-shadow: 0 8px 18px rgba(56, 189, 248, 0.28);
+}
+
+.login-pwa__install:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.login-pwa__dismiss {
+  color: #94a3b8;
+  background: transparent;
+}
+
+.login-pwa__dismiss:hover {
+  color: #e2e8f0;
+}
+
 .login-apk__text {
   margin: 0 0 12px;
   font-size: 0.8125rem;
@@ -5039,4 +5119,57 @@ body:has(.login-screen) {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   font-size: 0.9rem;
+}
+
+.offline-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(165deg, #0b3d5c 0%, #0c7bb3 48%, #0a5f7a 100%);
+}
+
+.offline-page__card {
+  width: min(100%, 420px);
+  padding: 32px 28px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  text-align: center;
+}
+
+.offline-page__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  margin-bottom: 16px;
+  border-radius: 999px;
+  color: var(--brand);
+  background: rgba(12, 123, 179, 0.12);
+}
+
+.offline-page h1 {
+  margin: 0 0 12px;
+  font-size: 1.5rem;
+  color: var(--text);
+}
+
+.offline-page p {
+  margin: 0 0 20px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.offline-page__retry {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  box-shadow: 0 10px 24px rgba(12, 123, 179, 0.28);
 }

@@ -5,9 +5,11 @@ export function middleware(request) {
   const { pathname } = request.nextUrl;
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/login', '/privacy'];
+  const publicRoutes = ['/login', '/privacy', '/~offline'];
   const isPublicRoute =
-    publicRoutes.includes(pathname) || pathname.startsWith('/downloads');
+    publicRoutes.includes(pathname) ||
+    pathname.startsWith('/downloads') ||
+    pathname === '/manifest.webmanifest';
 
   // If accessing a protected route without a token, redirect to login
   if (!isPublicRoute && !token) {
@@ -26,7 +28,7 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|downloads).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|downloads|sw.js|manifest.webmanifest|icons).*)',
   ],
 };
 

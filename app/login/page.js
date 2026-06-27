@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { mobileApi } from '../lib/mobileApi';
+import PwaInstallPrompt from '../components/PwaInstallPrompt';
 
 function ShieldIcon() {
   return (
@@ -272,6 +273,8 @@ export default function LoginPage() {
             </a>
           </p>
         </form>
+
+        <PwaInstallPrompt />
 
         <div className="login-apk">
           <p className="login-apk__text">Prefer the mobile app? Download the Votabase Android app and sign in on the go.</p>
