@@ -4983,6 +4983,108 @@ body:has(.login-screen) {
   color: #e2e8f0;
 }
 
+.login-pwa-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.login-pwa-guide__backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(2, 6, 23, 0.72);
+  cursor: pointer;
+}
+
+.login-pwa-guide__sheet {
+  position: relative;
+  width: min(100%, 440px);
+  max-height: 88vh;
+  overflow: auto;
+  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: #ffffff;
+  box-shadow: 0 -20px 60px rgba(15, 23, 42, 0.28);
+}
+
+.login-pwa-guide__handle {
+  width: 42px;
+  height: 4px;
+  margin: 0 auto 16px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.login-pwa-guide__title {
+  margin: 0 0 8px;
+  font-size: 1.125rem;
+  color: #0f172a;
+}
+
+.login-pwa-guide__intro {
+  margin: 0 0 18px;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.login-pwa-guide__steps {
+  margin: 0 0 20px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 14px;
+}
+
+.login-pwa-guide__steps li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border-radius: 14px;
+  background: #f8fbff;
+  border: 1px solid #dbeafe;
+}
+
+.login-pwa-guide__step-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: #0c7bb3;
+  background: rgba(12, 123, 179, 0.12);
+}
+
+.login-pwa-guide__step-icon--text {
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.login-pwa-guide__steps strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.9375rem;
+  color: #0f172a;
+}
+
+.login-pwa-guide__steps p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.login-pwa-guide__done {
+  width: 100%;
+}
+
 .login-apk__text {
   margin: 0 0 12px;
   font-size: 0.8125rem;

@@ -22,6 +22,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "build:server": "NODE_OPTIONS=--max-old-space-size=1536 next build",
     "start": "next start -p 3001",
     "lint": "next lint"
   },

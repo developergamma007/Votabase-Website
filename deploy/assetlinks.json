@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "in.iswot.votabase",
+      "sha256_cert_fingerprints": [
+        "5E:B6:79:9A:19:8A:DD:6C:F5:C5:CF:2F:2E:46:A1:F8:A7:BB:AF:77:1A:83:8D:73:C2:31:E7:61:75:03:70:08"
+      ]
+    }
+  }
+]

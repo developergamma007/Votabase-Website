@@ -33,6 +33,11 @@ const withSerwist = withSerwistInit({
 const nextConfig = {
   basePath: '/ui',
   reactStrictMode: true,
+  experimental: {
+    // Reduce parallel work during build on small EC2 instances.
+    cpus: 1,
+    workerThreads: false,
+  },
   async headers() {
     return [
       {
