@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "in.iswot.votabase.pwa",
       "sha256_cert_fingerprints": [
-        "E3:64:E6:E8:7E:74:64:95:DA:B6:AA:B6:B2:67:C5:A0:64:BE:2C:7D:A9:7D:6D:DE:EA:77:85:8B:0E:B3:4D:5B"
+        "E3:64:E6:E8:7E:74:64:95:DA:B6:AA:B6:B2:67:C5:A0:64:BE:2C:7D:A9:7D:6D:DE:EA:77:85:8B:0E:B3:4D:5B",
+        "4A:A4:E6:AF:90:B9:CA:D9:3D:A9:08:82:07:45:05:88:96:9A:3E:F6:64:5F:AB:A0:99:DC:62:DA:E8:C7:28:FB"
       ]
     }
   }
